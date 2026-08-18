@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Check out exact source and submodules
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
 
@@ -56,10 +56,10 @@ jobs:
 
       - name: Record pristine source provenance
         run: |
-          git rev-parse HEAD > SOURCE_COMMIT.txt
-          git status --porcelain=v1 > SOURCE_STATUS_BEFORE_BUILD.txt
-          test ! -s SOURCE_STATUS_BEFORE_BUILD.txt
-          git submodule status --recursive > SUBMODULES.txt
+          git status --porcelain=v1 > "$RUNNER_TEMP/SOURCE_STATUS_BEFORE_BUILD.txt"
+          test ! -s "$RUNNER_TEMP/SOURCE_STATUS_BEFORE_BUILD.txt"
+          git rev-parse HEAD > "$RUNNER_TEMP/SOURCE_COMMIT.txt"
+          git submodule status --recursive > "$RUNNER_TEMP/SUBMODULES.txt"
 
       - name: Configure the full Windows x64 build
         run: |
@@ -182,9 +182,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cp SOURCE_COMMIT.txt "$PACKAGE_DIR/"
-          cp SOURCE_STATUS_BEFORE_BUILD.txt "$PACKAGE_DIR/"
-          cp SUBMODULES.txt "$PACKAGE_DIR/"
+          cp "$RUNNER_TEMP/SOURCE_COMMIT.txt" "$PACKAGE_DIR/"
+          cp "$RUNNER_TEMP/SOURCE_STATUS_BEFORE_BUILD.txt" "$PACKAGE_DIR/"
+          cp "$RUNNER_TEMP/SUBMODULES.txt" "$PACKAGE_DIR/"
           git status --porcelain=v1 > "$PACKAGE_DIR/SOURCE_STATUS_AFTER_BUILD.txt"
           {
             cmake --version
@@ -206,7 +206,7 @@ jobs:
           sha256sum "$ARCHIVE_PATH" > "$ARCHIVE_PATH.sha256"
 
       - name: Upload the x64 package
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: OpenJKDF2-Windows-x64-${{ github.sha }}
           path: |
