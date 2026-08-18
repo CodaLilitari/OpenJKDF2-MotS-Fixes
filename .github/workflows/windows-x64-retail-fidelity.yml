@@ -93,7 +93,11 @@ jobs:
           for dll in "$BUILD_DIR"/*.dll; do
             cp "$dll" "$PACKAGE_DIR/"
           done
-          cp "$BUILD_DIR/freeglut/bin/freeglut.dll" "$PACKAGE_DIR/"
+          freeglut_dll="$(
+            find "$BUILD_DIR/freeglut" -type f -iname '*freeglut.dll' -print -quit
+          )"
+          test -n "$freeglut_dll"
+          cp "$freeglut_dll" "$PACKAGE_DIR/"
           for crash_file in \
             exchndl.dll \
             mgwhelp.dll \
