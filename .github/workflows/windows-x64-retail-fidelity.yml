@@ -195,7 +195,7 @@ jobs:
             x86_64-w64-mingw32-gcc --version
             x86_64-w64-mingw32-g++ --version
             python3 --version
-            cog --version
+            "$RUNNER_TEMP/openjkdf2-cog/bin/python" -m pip show cogapp
           } > "$PACKAGE_DIR/BUILD_TOOLCHAIN.txt"
           (
             cd "$PACKAGE_DIR"
