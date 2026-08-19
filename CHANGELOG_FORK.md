@@ -32,8 +32,8 @@ the fork-specific delta and the evidence used to justify it.
   and the compiler/toolchain record.  It does not upload the resulting binary.
 - Grouped the MinGW static runtime archives so their circular references are
   resolved by current linkers.  This restores x64 cross-build compatibility
-  with MinGW-w64 13, whose `msvcrt` math thunks can call back into
-  `libmingwex` after a single-pass link has already scanned that archive.
+  with MinGW-w64 13, whose `libmsvcrt.a` math wrappers can call back into
+  MinGW runtime archives after a single-pass link has already scanned them.
 - Added host-side regression tests for JK/MotS default inventory bindings and
   20/32-slot capacity, plus JkGfxMod path/signature lookup, signature
   precedence, first-claim behavior, and non-mutating cache misses.
