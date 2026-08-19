@@ -65,11 +65,14 @@ set(CMAKE_C_STANDARD_LIBRARIES
 # Everything but the system CRT (msvcrt) and kernel32 is pulled from static libs,
 # so the .exe imports only guaranteed Windows system DLLs. libssp is statically
 # linked here so stack-protected objects don't drag in libssp-0.dll.
-    "-Wl,-Bstatic,-lssp,-lpthread,-lmingwex,-lmingw32,-lgcc,-Bdynamic,-lmsvcrt,-lkernel32"
+# Keep these archives in a linker group.  MinGW-w64 13's msvcrt math thunks can
+# call back into libmingwex (for example __mingw_raise_matherr); a single left-to-
+# right archive scan therefore leaves valid symbols unresolved.
+    "-Wl,--start-group,-Bstatic,-lssp,-lpthread,-lmingwex,-lmingw32,-lgcc,-Bdynamic,-lmsvcrt,-lkernel32,--end-group"
     CACHE INTERNAL CMAKE_C_STANDARD_LIBRARIES # there are nasty interdependencies between libpthread and libgcc/libgcc_eh
 )
 set(CMAKE_CXX_STANDARD_LIBRARIES
-    "-Wl,-Bstatic,-lstdc++,-lssp,-lpthread,-lmingwex,-lmingw32,-lgcc,-lgcc_eh,-Bdynamic,-lmsvcrt,-lkernel32"
+    "-Wl,--start-group,-Bstatic,-lstdc++,-lssp,-lpthread,-lmingwex,-lmingw32,-lgcc,-lgcc_eh,-Bdynamic,-lmsvcrt,-lkernel32,--end-group"
     CACHE INTERNAL CMAKE_CXX_STANDARD_LIBRARIES # there are nasty interdependencies between libpthread and libgcc/libgcc_eh
 )
 
