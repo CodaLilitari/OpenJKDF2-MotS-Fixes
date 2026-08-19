@@ -177,10 +177,9 @@ jobs:
               >> "$PACKAGE_DIR/licenses/MinGW-static-runtime-PACKAGES.txt"
 
             if [[ -z "${copied_runtime_packages[$archive_package]+x}" ]]; then
-              package_copyright="$(
-                dpkg-query -L "$archive_package" \
-                  | sed -n '/\/copyright$/ {p;q;}'
-              )"
+              package_name="${archive_package%%:*}"
+              # Debian package lists may expose only this doc-directory symlink.
+              package_copyright="/usr/share/doc/$package_name/copyright"
               test -f "$package_copyright"
               safe_package="${archive_package//[^A-Za-z0-9_.-]/_}"
               cp -L \
