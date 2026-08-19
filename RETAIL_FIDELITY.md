@@ -1,8 +1,9 @@
 # Retail-fidelity Windows x64 fork and evaluation build
 
 This fork tracks `shinyquagsire23/OpenJKDF2` without granting its `upstream`
-remote a push URL. Development is isolated on the `retail-fidelity-x64`
-branch. No upstream pull request is created by this workflow.
+remote a push URL. Changes are validated on `retail-fidelity-x64` before the
+fork's default branch is fast-forwarded. No upstream pull request is created
+by this workflow. Fork-specific history is summarized in `CHANGELOG_FORK.md`.
 
 ## Baseline
 
@@ -37,18 +38,59 @@ The change applies when creating a profile or choosing **Restore Defaults**.
 Existing profile bindings are intentionally not rewritten, so custom layouts
 remain intact.
 
+## JK/MotS inventory activation capacity
+
+The original JK input table processes and registers 20 inventory activation
+slots. MotS expands the same table to 32. The shared OpenJKDF2 implementation
+hardcoded the JK limit in both live input handling and registration; a second
+translated bound compared a struct pointer with the address of an `idk` field,
+which accidentally processed a 21st entry in JK.
+
+The fork uses indexed, mode-aware bounds in both paths: 20 for JK and 32 for
+MotS. Save and network synchronization deliberately continue to choose 20 or
+32 from the serialized protocol/save version, not the current launch mode.
+The counts were confirmed in the official JK demo (`sithInventory_KeybindInit`
+at VA `0x004D33D0`) and both the official MotS demo (VA `0x005212D0`) and owned
+US 1.0 retail `JKM.EXE` (VA `0x00521DE0`, SHA-256
+`23CD064217F904D36D896F52D3CDD17635BB85441A12E0415C0637504191D974`).
+
+## JkGfxMod texture-signature fallback
+
+JkGfxMod metadata may identify a replacement by material path/cel, by the MD5
+signature of the original texture, or by both. The previous lookup detected a
+signature hit but then unconditionally indexed the path cache. On a
+signature-only match, that inserted and selected a blank path entry; the
+matched signature entry was never used.
+
+The fork now follows JkGfxMod's signature identity first and keeps OpenJKDF2's
+path/cel mapping as a fallback for metadata that omits a signature. The first
+material to claim a signature remains authoritative, as in JkGfxMod. Lookup
+uses `find()` only, so a miss cannot mutate either cache. A synthetic host
+regression test verifies path-only lookup, signature-only lookup, deliberate
+signature precedence, complete misses, and repeated non-mutating misses
+without requiring game or mod assets.
+
+JkGfxMod's first-claim rule still leaves a separate pack-order ambiguity when
+different materials claim the same signature. The inspected Remastered 5.11
+corpus contains 652 duplicated signature values, including cross-pack JK/MotS
+claims. Directory traversal does not define a semantic game-specific priority.
+A future hardening change should make traversal deterministic, report
+conflicting claims, and prefer the active game's material set without falling
+back to globally path-first matching.
+
 ## Automated x64 verification
 
 The fork-only `Windows x64 retail-fidelity` workflow:
 
 1. checks out the exact source and recursive submodule commits;
-2. builds the full `openjkdf2-64` MinGW target;
-3. packages the executable, non-system runtime DLLs, and license notices;
-4. requires every packaged PE to use COFF machine `0x8664` and optional-header
+2. runs the fork's asset-free host regression tests;
+3. builds the full `openjkdf2-64` MinGW target;
+4. packages the executable, non-system runtime DLLs, and license notices;
+5. requires every packaged PE to use COFF machine `0x8664` and optional-header
    magic `0x020B`;
-5. checks that every imported non-system DLL is packaged;
-6. records source, submodule, import, architecture, and toolchain evidence; and
-7. creates SHA-256 manifests for the files and final archive.
+6. checks that every imported non-system DLL is packaged;
+7. records source, submodule, import, architecture, and toolchain evidence; and
+8. creates SHA-256 manifests for the files and final archive.
 
 The generated package contains no LucasArts assets. A licensed Jedi Knight or
 MotS installation is still required to run the engine.
@@ -74,8 +116,20 @@ fully hermetic.
 
 ## Current validation boundary
 
-No licensed JK or MotS installation was found on the build workstation during
-this change. Source-level verification, original-demo differential analysis,
-and a Windows x64 build are therefore in scope now. An in-game test using a new
-MotS profile or **Restore Defaults** remains required once licensed game data is
-available locally.
+A pristine Steam Jedi Knight installation and a verified US 1.0 MotS disc data
+track were staged into isolated test lanes outside the repository. The source
+media and Steam installation were not patched or modified. No LucasArts game
+asset is stored in Git or sent to the build workflow.
+
+The existing PE32+ AMD64 fork build completed twenty-second headless smoke runs
+for each title without a crash dump, missing-container error, or assertion.
+Interactive validation reached playable first-person Nar Shaddaa rendering in
+Jedi Knight and rendered the opening New Republic Base sequence in MotS. This
+establishes licensed-data startup and basic rendering, not full retail parity.
+Full-campaign, multiplayer, save-version, audio-track, mod-matrix, and long-soak
+testing remain required.
+
+The Desktop unofficial-patch bundle was not applied. Its payload replaces the
+original 32-bit `JK.EXE`/`JKM.EXE` code and removes legacy CD checks; OpenJKDF2
+does not execute those binaries, so copying them into the clean data lane would
+not repair the 64-bit source rebuild and would contaminate the retail oracle.

@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 #include <filesystem>
 #include <unordered_map>
+#include "Platform/GL/jkgm_cache_lookup.hpp"
 #include "General/md5.h"
 #include "Engine/rdMaterial.h"
 #include "Platform/std3D.h"
@@ -483,7 +484,10 @@ void jkgm_populate_cache()
                     
                     //print_hash(bytes.data());
                     //std::cout << hash_it << std::endl;
-                    jkgm_cache_hash[hash_it] = entry;
+                    // Match JkGfxMod's signature map: the first material that
+                    // claims a texture signature remains authoritative.
+                    jkgm_register_signature(
+                        jkgm_cache_hash, hash_it.get<std::string>(), entry);
                 }
             }
         }
@@ -581,17 +585,13 @@ void jkgm_populate_shortcuts(tVBuffer *vbuf, rdDDrawSurface *texture, rdMaterial
 
     //printf("%s %s %s\n", full_fpath_str.c_str(), cache_key.c_str(), hash.c_str());
 
-    texture->cache_entry = NULL;
-
-    if (jkgm_cache.find(cache_key) != jkgm_cache.end()) {
-        texture->skip_jkgm = 0;
-    }
-    else if (jkgm_cache_hash.find(hash) != jkgm_cache_hash.end()) {
-        texture->skip_jkgm = 0;
-    }
-    else {
-        texture->skip_jkgm = 1;
-    }
+    // Prefer the JkGfxMod-compatible signature match so JK and MotS textures
+    // that share a filename can still select different replacements.  The old
+    // operator[] assignment always selected the path map and silently created
+    // an empty entry on signature-only matches.
+    texture->cache_entry = jkgm_find_cache_entry(
+        jkgm_cache, cache_key, jkgm_cache_hash, hash);
+    texture->skip_jkgm = texture->cache_entry == NULL;
 
     // Also preload non-PNG textures
     if (texture->skip_jkgm) {
@@ -603,8 +603,6 @@ void jkgm_populate_shortcuts(tVBuffer *vbuf, rdDDrawSurface *texture, rdMaterial
         }
         return;
     }
-
-    texture->cache_entry = &jkgm_cache[cache_key];
 
     rdTexture *pRdTexture = &material->textures[cel];
     //pRdTexture->has_jkgm_override = 1;

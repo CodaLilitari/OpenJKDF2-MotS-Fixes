@@ -13,6 +13,7 @@
 #include "Engine/sithKeyFrame.h"
 #include "Dss/sithMulti.h"
 #include "Gameplay/sithEvent.h"
+#include "Gameplay/sithInventoryKeybinds.h"
 #include "Devices/sithComm.h"
 #include "World/jkPlayer.h"
 
@@ -877,7 +878,12 @@ void sithDSS_SyncGameState(int idTo, int outstream)
     NETMSG_PUSHU32(sithPlayer_g_pLocalPlayer->curWeaponID);
     NETMSG_PUSHU32(sithPlayer_g_pLocalPlayer->curPower);
 
-    for (int i = 0; i < ((sithComm_version == 0x7D6) ? 32 : 20); i++)
+    // Serialized inventory width follows the save/network format version, not
+    // the currently selected runtime mode.
+    const int powerKeybindCount =
+        sithInventory_GetPowerKeybindCountForSerializedVersion(
+            sithComm_version);
+    for (int i = 0; i < powerKeybindCount; i++)
     {
         NETMSG_PUSHU32(sithInventory_powerKeybinds[i].idk);
     }
@@ -945,7 +951,11 @@ int sithDSS_ProcessSyncGameState(SithMessage *pMsg)
     sithPlayer_g_pLocalPlayer->curWeaponID = NETMSG_POPU32();
     sithPlayer_g_pLocalPlayer->curPower = NETMSG_POPU32();
 
-    for (int i = 0; i < ((sithComm_version == 0x7D6) ? 32 : 20); i++)
+    // Keep deserialization symmetric with the versioned width written above.
+    const int powerKeybindCount =
+        sithInventory_GetPowerKeybindCountForSerializedVersion(
+            sithComm_version);
+    for (int i = 0; i < powerKeybindCount; i++)
     {
         sithInventory_powerKeybinds[i].idk = NETMSG_POPU32();
     }

@@ -66,6 +66,20 @@ jobs:
             exit 1
           fi
 
+      - name: Run fork regression tests on the host
+        run: |
+          g++ \
+            -std=c++17 \
+            -Wall \
+            -Wextra \
+            -Werror \
+            -pedantic \
+            -DQOL_IMPROVEMENTS \
+            -Isrc \
+            src/Tests/fork_regression_test.cpp \
+            -o "$RUNNER_TEMP/fork_regression_test"
+          "$RUNNER_TEMP/fork_regression_test"
+
       - name: Configure the full Windows x64 build
         run: |
           OPENJKDF2_RELEASE_COMMIT="$(git rev-parse HEAD)" \
@@ -95,6 +109,7 @@ jobs:
           mkdir -p "$PACKAGE_DIR/licenses"
           cp "$BUILD_DIR/openjkdf2-64.exe" "$PACKAGE_DIR/"
           cp README.md "$PACKAGE_DIR/README-OpenJKDF2.md"
+          cp CHANGELOG_FORK.md "$PACKAGE_DIR/"
           cp RETAIL_FIDELITY.md "$PACKAGE_DIR/README-RETAIL-FIDELITY.md"
           cp THIRD_PARTY_NOTICES.md "$PACKAGE_DIR/"
           shopt -s nullglob

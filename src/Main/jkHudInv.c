@@ -10,6 +10,7 @@
 #include "Cog/sithCog.h"
 #include "Gameplay/sithInventory.h"
 #include "Main/Main.h"
+#include "Main/jkHudInvDefaultBindings.h"
 #include "Platform/std3D.h"
 #include "World/jkPlayer.h"
 #include "jk.h"
@@ -751,19 +752,13 @@ void jkHudInv_InputInit()
 {
     // TODO: what is the second param, DIK?
     sithControl_BindControl(INPUT_FUNC_CAMERAMODE, DIK_F1, 0);
-    if (Main_bMotsCompat)
-    {
-        // Added: MotS has three additional hotkeyable Force powers before these items.
-        sithControl_BindControl(INPUT_FUNC_ACTIVATE19, DIK_F2, 0);
-        sithControl_BindControl(INPUT_FUNC_ACTIVATE18, DIK_F3, 0);
-        sithControl_BindControl(INPUT_FUNC_ACTIVATE17, DIK_F4, 0);
-    }
-    else
-    {
-        sithControl_BindControl(INPUT_FUNC_ACTIVATE16, DIK_F2, 0);
-        sithControl_BindControl(INPUT_FUNC_ACTIVATE15, DIK_F3, 0);
-        sithControl_BindControl(INPUT_FUNC_ACTIVATE14, DIK_F4, 0);
-    }
+    // Use the mode flag rather than the loaded inventory table: dedicated
+    // startup can create a profile before MotS items have been initialized.
+    const int inventoryHotkeyBase =
+        jkHudInv_GetDefaultInventoryHotkeyBase(Main_bMotsCompat);
+    sithControl_BindControl(inventoryHotkeyBase, DIK_F2, 0);
+    sithControl_BindControl(inventoryHotkeyBase - 1, DIK_F3, 0);
+    sithControl_BindControl(inventoryHotkeyBase - 2, DIK_F4, 0);
     sithControl_BindControl(INPUT_FUNC_ACTIVATE0, DIK_F5, 0);
     sithControl_BindControl(INPUT_FUNC_ACTIVATE1, DIK_F6, 0);
     sithControl_BindControl(INPUT_FUNC_ACTIVATE2, DIK_F7, 0);

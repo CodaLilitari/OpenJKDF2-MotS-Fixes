@@ -3,6 +3,7 @@
 #include "jk.h"
 #include "Cog/sithCog.h"
 #include "Gameplay/sithTime.h"
+#include "Gameplay/sithInventoryKeybinds.h"
 #include "General/stdConffile.h"
 #include "stdPlatform.h"
 #include "World/sithSector.h"
@@ -1120,6 +1121,8 @@ int sithInventory_HandleInvSkillKeys(SithThing *player, flex_t deltaSecs)
     SithInventoryType *v38; // ebp
     int v40; // [esp+10h] [ebp-4h]
     int keyRead;
+    const int powerKeybindCount =
+        sithInventory_GetPowerKeybindCountForMode(Main_bMotsCompat);
 
     v1 = player;
     if ( player->type != SITH_THING_PLAYER ) {
@@ -1132,9 +1135,12 @@ int sithInventory_HandleInvSkillKeys(SithThing *player, flex_t deltaSecs)
 
     if ( (player->actorParams.flags & SITH_AF_CONTROLSDISABLED) != 0 )
     {
-        v2 = &sithInventory_powerKeybinds[0];
-        do
+        // Retail JK walks 20 entries and MotS walks all 32.  Indexed bounds
+        // avoid the old decompiler artifact that treated an idk-field cursor
+        // as a struct pointer and accidentally processed a 21st JK entry.
+        for (int i = 0; i < powerKeybindCount; i++)
         {
+            v2 = &sithInventory_powerKeybinds[i];
             if ( v2->enabled == 1 )
                 v3 = v2->binding;
             else
@@ -1153,9 +1159,7 @@ int sithInventory_HandleInvSkillKeys(SithThing *player, flex_t deltaSecs)
                         sithCog_SendMessage(v4, SITH_MESSAGE_DEACTIVATED, SENDERTYPE_0, v3, SENDERTYPE_THING, v1->idx, SENDERTYPE_0);
                 }
             }
-            v2++;
         }
-        while ( (intptr_t)v2 < (intptr_t)&sithInventory_powerKeybinds[20] );
         if ( sithInventory_g_bSendDeactivateMessage == 1 )
         {
             sithInventory_g_bSendDeactivateMessage = 0;
@@ -1294,10 +1298,9 @@ int sithInventory_HandleInvSkillKeys(SithThing *player, flex_t deltaSecs)
             }
         }
 
-        v40 = 0;
-        v20 = &sithInventory_powerKeybinds[0];
-        do
+        for (v40 = 0; v40 < powerKeybindCount; v40++)
         {
+            v20 = &sithInventory_powerKeybinds[v40];
             if ( v20->enabled == 1 )
             {
                 int v21 = sithControl_GetKey(v40 + INPUT_FUNC_ACTIVATE0, &keyRead) == 0;
@@ -1354,15 +1357,15 @@ int sithInventory_HandleInvSkillKeys(SithThing *player, flex_t deltaSecs)
                         sithInventory_8339EC = 1;
                         if ( (v25 & 8) != 0 )
                         {
-                            if (!sithThing_MotsTick(11, 0, (flex_t)v23)) goto skip_cog; // FLEXTODO
+                            if (!sithThing_MotsTick(11, 0, (flex_t)v23)) continue; // FLEXTODO
                             sithInventory_SelectPower(v1, v23);
-                            if (!sithThing_MotsTick(13, 1, (flex_t)v23)) goto skip_cog; // FLEXTODO
+                            if (!sithThing_MotsTick(13, 1, (flex_t)v23)) continue; // FLEXTODO
                         }
                         else if ( (v25 & 2) != 0 )
                         {
-                            if (!sithThing_MotsTick(10, 0, (flex_t)v23)) goto skip_cog; // FLEXTODO
+                            if (!sithThing_MotsTick(10, 0, (flex_t)v23)) continue; // FLEXTODO
                             sithInventory_SelectItem(v1, v23);
-                            if (!sithThing_MotsTick(12, 1, (flex_t)v23)) goto skip_cog; // FLEXTODO
+                            if (!sithThing_MotsTick(12, 1, (flex_t)v23)) continue; // FLEXTODO
                         }
 
                         if ( sithTime_g_secGameTime >= (flex_d_t)v1->actorParams.pPlayer->aItems[v23].binWait && v23 >= 0 )
@@ -1394,11 +1397,7 @@ int sithInventory_HandleInvSkillKeys(SithThing *player, flex_t deltaSecs)
                     }
                 }
             }
-skip_cog:
-            v20++;
-            ++v40;
         }
-        while ( (intptr_t)v20 < (intptr_t)&sithInventory_powerKeybinds[20].idk );
 
         sithControl_GetKey(INPUT_FUNC_NEXTINV, &keyRead);
         while (keyRead--)
@@ -1542,9 +1541,11 @@ SithInventoryType* sithInventory_GetInventoryType(SithThing *pThing, int typeId)
 int sithInventory_KeybindInit()
 {
     int v0; // ebx
+    const int powerKeybindCount =
+        sithInventory_GetPowerKeybindCountForMode(Main_bMotsCompat);
 
     v0 = 0;
-    for (int i = 0; i < 20; i++)
+    for (int i = 0; i < powerKeybindCount; i++)
     {
         sithInventory_powerKeybinds[i].enabled = 0;
     }
@@ -1553,13 +1554,13 @@ int sithInventory_KeybindInit()
     {
         if ( (sithInventory_g_aTypes[i].flags & 0x100) != 0 )
         {
-            sithControl_RegisterKeyFunction(v0 + 42);
+            sithControl_RegisterKeyFunction(v0 + INPUT_FUNC_ACTIVATE0);
             sithInventory_powerKeybinds[v0].enabled = 1;
             sithInventory_powerKeybinds[v0].binding = i;
             sithInventory_powerKeybinds[v0].idk = 0;
             ++v0;
             
-            if (v0 >= 20)
+            if (v0 >= powerKeybindCount)
             {
                 break;
             }
