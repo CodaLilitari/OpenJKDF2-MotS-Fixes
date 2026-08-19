@@ -1,4 +1,4 @@
-name: Windows x64 retail-fidelity
+name: Windows x64 retail-fidelity evaluation
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ jobs:
     env:
       BUILD_DIR: ${{ github.workspace }}/build_win64
       PACKAGE_DIR: ${{ github.workspace }}/package_win64
-      ARCHIVE_PATH: ${{ github.workspace }}/OpenJKDF2-retail-fidelity-windows-x64.zip
+      ARCHIVE_PATH: ${{ github.workspace }}/OpenJKDF2-retail-fidelity-windows-x64-evaluation.zip
 
     steps:
       - name: Check out exact source and submodules
@@ -60,6 +60,11 @@ jobs:
           test ! -s "$RUNNER_TEMP/SOURCE_STATUS_BEFORE_BUILD.txt"
           git rev-parse HEAD > "$RUNNER_TEMP/SOURCE_COMMIT.txt"
           git submodule status --recursive > "$RUNNER_TEMP/SUBMODULES.txt"
+          if grep -Eq '^[-+U]' "$RUNNER_TEMP/SUBMODULES.txt"; then
+            cat "$RUNNER_TEMP/SUBMODULES.txt" >&2
+            echo 'Submodules are not initialized at their recorded commits.' >&2
+            exit 1
+          fi
 
       - name: Configure the full Windows x64 build
         run: |
@@ -87,8 +92,11 @@ jobs:
         run: |
           set -euo pipefail
           zsh scripts/helper_CopyMinGWDLLs.sh || true
-          mkdir -p "$PACKAGE_DIR"
+          mkdir -p "$PACKAGE_DIR/licenses"
           cp "$BUILD_DIR/openjkdf2-64.exe" "$PACKAGE_DIR/"
+          cp README.md "$PACKAGE_DIR/README-OpenJKDF2.md"
+          cp RETAIL_FIDELITY.md "$PACKAGE_DIR/README-RETAIL-FIDELITY.md"
+          cp THIRD_PARTY_NOTICES.md "$PACKAGE_DIR/"
           shopt -s nullglob
           for dll in "$BUILD_DIR"/*.dll; do
             cp "$dll" "$PACKAGE_DIR/"
@@ -98,46 +106,144 @@ jobs:
           )"
           test -n "$freeglut_dll"
           cp "$freeglut_dll" "$PACKAGE_DIR/"
-          for crash_file in \
-            exchndl.dll \
-            mgwhelp.dll \
-            symsrv.dll \
-            symsrv.yes; do
-            cp \
-              "$GITHUB_WORKSPACE/3rdparty/drmingw-0.9.3-win64/bin/$crash_file" \
-              "$PACKAGE_DIR/"
+          test -f "$PACKAGE_DIR/OpenAL32.dll"
+          test -f "$PACKAGE_DIR/libGameNetworkingSockets.dll"
+          copy_license() {
+            local source="$1"
+            local destination="$2"
+            test -f "$source"
+            cp "$source" "$PACKAGE_DIR/licenses/$destination"
+          }
+
+          copy_license LICENSE.md OpenJKDF2-LICENSE.md
+          copy_license 3rdparty/json/LICENSE.MIT nlohmann-json-LICENSE.MIT
+          copy_license src/external/libsmacker/COPYING libsmacker-COPYING-LGPL-2.1.txt
+          copy_license src/external/libsmusher/LICENSE libsmusher-LICENSE.txt
+          copy_license src/external/fcaseopen/LICENSE.txt fcaseopen-LICENSE.txt
+          copy_license src/external/nativefiledialog-extended/LICENSE nativefiledialog-extended-LICENSE.txt
+          copy_license flex/COPYING flex-COPYING.txt
+          copy_license byacc/README byacc-README.txt
+          copy_license byacc/NO_WARRANTY byacc-NO_WARRANTY.txt
+          copy_license lib/SDL/LICENSE.txt SDL-LICENSE.txt
+          copy_license lib/SDL/src/hidapi/LICENSE.txt SDL-hidapi-LICENSE-selector.txt
+          copy_license lib/SDL/src/hidapi/LICENSE-bsd.txt SDL-hidapi-LICENSE-BSD.txt
+          copy_license lib/SDL/src/video/yuv2rgb/LICENSE SDL-yuv2rgb-LICENSE.txt
+          copy_license lib/SDL_mixer/LICENSE.txt SDL_mixer-LICENSE.txt
+          copy_license lib/SDL_mixer/src/dr_libs/LICENSE dr_libs-LICENSE.txt
+          copy_license lib/SDL_mixer/external/ogg/COPYING ogg-COPYING.txt
+          copy_license lib/SDL_mixer/external/vorbis/COPYING vorbis-COPYING.txt
+          copy_license lib/SDL_mixer/external/opus/COPYING opus-COPYING.txt
+          copy_license lib/SDL_mixer/external/opus/LICENSE_PLEASE_READ.txt opus-LICENSE_PLEASE_READ.txt
+          copy_license lib/SDL_mixer/external/opusfile/COPYING opusfile-COPYING.txt
+          copy_license lib/freeglut/COPYING freeglut-COPYING.txt
+          copy_license lib/glew/LICENSE.txt GLEW-LICENSE.txt
+          copy_license lib/libpng/LICENSE libpng-LICENSE.txt
+          copy_license lib/zlib/LICENSE zlib-LICENSE.txt
+          copy_license lib/physfs/LICENSE.txt PhysicsFS-LICENSE.txt
+          copy_license lib/openal/COPYING OpenAL-Soft-COPYING-LGPL-2.0.txt
+          copy_license lib/openal/BSD-3Clause OpenAL-Soft-BSD-3-Clause.txt
+          copy_license lib/GameNetworkingSockets/LICENSE GameNetworkingSockets-LICENSE.txt
+          copy_license lib/GameNetworkingSockets/src/external/picojson/LICENSE picojson-LICENSE.txt
+          copy_license lib/GameNetworkingSockets/src/external/abseil/LICENSE Abseil-LICENSE.txt
+          copy_license lib/GameNetworkingSockets/src/external/abseil/LICENSE Apache-2.0.txt
+          copy_license lib/GameNetworkingSockets/src/external/webrtc/LICENSE WebRTC-LICENSE.txt
+          copy_license lib/protobuf/LICENSE protobuf-LICENSE.txt
+          copy_license resource/ssl/cacert.pem Mozilla-NSS-cacert-source.pem
+
+          : > "$PACKAGE_DIR/licenses/MinGW-static-runtime-PACKAGES.txt"
+          declare -A copied_runtime_packages=()
+          for archive_name in \
+            libstdc++.a \
+            libssp.a \
+            libwinpthread.a \
+            libmingwex.a \
+            libmingw32.a \
+            libgcc.a \
+            libgcc_eh.a; do
+            archive_path="$(
+              readlink -f "$(
+                x86_64-w64-mingw32-gcc -print-file-name="$archive_name"
+              )"
+            )"
+            test -f "$archive_path"
+            archive_package="$(
+              dpkg-query -S "$archive_path" \
+                | sed -n '1s/: .*//p'
+            )"
+            test -n "$archive_package"
+            printf '%s: ' "$archive_name" \
+              >> "$PACKAGE_DIR/licenses/MinGW-static-runtime-PACKAGES.txt"
+            dpkg-query -W -f='${Package} ${Version}\n' "$archive_package" \
+              >> "$PACKAGE_DIR/licenses/MinGW-static-runtime-PACKAGES.txt"
+
+            if [[ -z "${copied_runtime_packages[$archive_package]+x}" ]]; then
+              package_copyright="$(
+                dpkg-query -L "$archive_package" \
+                  | sed -n '/\/copyright$/ {p;q;}'
+              )"
+              test -f "$package_copyright"
+              safe_package="${archive_package//[^A-Za-z0-9_.-]/_}"
+              cp -L \
+                "$package_copyright" \
+                "$PACKAGE_DIR/licenses/MinGW-$safe_package-COPYRIGHT.txt"
+              copied_runtime_packages[$archive_package]=1
+            fi
           done
 
       - name: Prove PE32+ AMD64 architecture
         shell: bash
         run: |
           set -euo pipefail
-          x86_64-w64-mingw32-objdump -f \
-            "$PACKAGE_DIR/openjkdf2-64.exe" \
-            | tee "$PACKAGE_DIR/PE_ARCHITECTURE.txt"
-          file "$PACKAGE_DIR/openjkdf2-64.exe" \
-            | tee -a "$PACKAGE_DIR/PE_ARCHITECTURE.txt"
-          grep -q 'file format pei-x86-64' "$PACKAGE_DIR/PE_ARCHITECTURE.txt"
-          grep -q 'architecture: i386:x86-64' "$PACKAGE_DIR/PE_ARCHITECTURE.txt"
-          grep -q 'PE32+.*x86-64' "$PACKAGE_DIR/PE_ARCHITECTURE.txt"
+          : > "$PACKAGE_DIR/PE_ARCHITECTURE.txt"
+          mapfile -d '' pe_files < <(
+            find "$PACKAGE_DIR" -type f \
+              \( -iname '*.exe' -o -iname '*.dll' \) \
+              -print0 \
+              | sort -z
+          )
+          test "${#pe_files[@]}" -gt 0
+          for binary in "${pe_files[@]}"; do
+            printf '### %s\n' "$(basename "$binary")" \
+              | tee -a "$PACKAGE_DIR/PE_ARCHITECTURE.txt"
+            objdump_output="$(x86_64-w64-mingw32-objdump -f "$binary")"
+            file_output="$(file "$binary")"
+            printf '%s\n%s\n' "$objdump_output" "$file_output" \
+              | tee -a "$PACKAGE_DIR/PE_ARCHITECTURE.txt"
+            grep -q 'file format pei-x86-64' <<< "$objdump_output"
+            grep -q 'architecture: i386:x86-64' <<< "$objdump_output"
+            grep -q 'PE32+.*x86-64' <<< "$file_output"
+          done
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path("package_win64/openjkdf2-64.exe")
-          data = path.read_bytes()
-          assert data[:2] == b"MZ", "Missing DOS MZ signature"
-          pe_offset = int.from_bytes(data[0x3C:0x40], "little")
-          assert data[pe_offset:pe_offset + 4] == b"PE\0\0", "Missing PE signature"
-          machine = int.from_bytes(data[pe_offset + 4:pe_offset + 6], "little")
-          optional_magic = int.from_bytes(data[pe_offset + 24:pe_offset + 26], "little")
-          assert machine == 0x8664, f"Expected AMD64 0x8664, found 0x{machine:04X}"
-          assert optional_magic == 0x020B, (
-              f"Expected PE32+ 0x020B, found 0x{optional_magic:04X}"
+          package = Path("package_win64")
+          paths = sorted(
+              path
+              for path in package.rglob("*")
+              if path.is_file() and path.suffix.lower() in {".exe", ".dll"}
           )
-          print(
-              f"{path}: AMD64 machine=0x{machine:04X}, "
-              f"PE32+ magic=0x{optional_magic:04X}"
-          )
+          assert paths, "No packaged PE files found"
+          for path in paths:
+              data = path.read_bytes()
+              assert data[:2] == b"MZ", f"{path}: missing DOS MZ signature"
+              pe_offset = int.from_bytes(data[0x3C:0x40], "little")
+              assert data[pe_offset:pe_offset + 4] == b"PE\0\0", (
+                  f"{path}: missing PE signature"
+              )
+              machine = int.from_bytes(data[pe_offset + 4:pe_offset + 6], "little")
+              optional_magic = int.from_bytes(
+                  data[pe_offset + 24:pe_offset + 26], "little"
+              )
+              assert machine == 0x8664, (
+                  f"{path}: expected AMD64 0x8664, found 0x{machine:04X}"
+              )
+              assert optional_magic == 0x020B, (
+                  f"{path}: expected PE32+ 0x020B, found 0x{optional_magic:04X}"
+              )
+              print(
+                  f"{path}: AMD64 machine=0x{machine:04X}, "
+                  f"PE32+ magic=0x{optional_magic:04X}"
+              )
           PY
 
       - name: Audit packaged DLL closure
@@ -159,10 +265,18 @@ jobs:
             esac
           }
 
-          shopt -s nullglob
-          for binary in "$PACKAGE_DIR"/*.exe "$PACKAGE_DIR"/*.dll; do
+          mapfile -d '' pe_files < <(
+            find "$PACKAGE_DIR" -type f \
+              \( -iname '*.exe' -o -iname '*.dll' \) \
+              -print0 \
+              | sort -z
+          )
+          test "${#pe_files[@]}" -gt 0
+          for binary in "${pe_files[@]}"; do
             printf '### %s\n' "$(basename "$binary")" >> "$PACKAGE_DIR/PE_IMPORTS.txt"
+            objdump_output="$(x86_64-w64-mingw32-objdump -p "$binary")"
             while IFS= read -r dll; do
+              test -n "$dll" || continue
               printf 'DLL Name: %s\n' "$dll" >> "$PACKAGE_DIR/PE_IMPORTS.txt"
               if is_windows_system_dll "$dll"; then
                 continue
@@ -174,10 +288,9 @@ jobs:
               printf 'Missing non-system dependency: %s (imported by %s)\n' \
                 "$dll" "$(basename "$binary")" >&2
               missing=1
-            done < <(
-              x86_64-w64-mingw32-objdump -p "$binary" \
-                | sed -n 's/^[[:space:]]*DLL Name: //p'
-            )
+            done <<< "$(
+              sed -n 's/^[[:space:]]*DLL Name: //p' <<< "$objdump_output"
+            )"
           done
 
           test "$missing" -eq 0
@@ -189,32 +302,76 @@ jobs:
           cp "$RUNNER_TEMP/SOURCE_COMMIT.txt" "$PACKAGE_DIR/"
           cp "$RUNNER_TEMP/SOURCE_STATUS_BEFORE_BUILD.txt" "$PACKAGE_DIR/"
           cp "$RUNNER_TEMP/SUBMODULES.txt" "$PACKAGE_DIR/"
+          {
+            printf 'Fork source: %s/%s/tree/%s\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA"
+            printf 'Upstream project: https://github.com/shinyquagsire23/OpenJKDF2\n'
+            printf '\nExact engine, vendored, and submodule source checkout:\n'
+            printf '  git clone --recurse-submodules %s/%s.git\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY"
+            printf '  git -C OpenJKDF2 checkout %s\n' "$GITHUB_SHA"
+            printf '  git -C OpenJKDF2 submodule update --init --recursive\n'
+            printf 'Compiler runtime package/version records are in licenses/MinGW-static-runtime-PACKAGES.txt.\n'
+            printf 'Game data is not included; a licensed JK or MotS installation is required.\n'
+          } > "$PACKAGE_DIR/SOURCE_URL.txt"
           git status --porcelain=v1 > "$PACKAGE_DIR/SOURCE_STATUS_AFTER_BUILD.txt"
+          while IFS= read -r status_line; do
+            case "$status_line" in
+              ' M lib/GameNetworkingSockets'|' M lib/SDL_mixer'|' M lib/physfs'|'?? package_win64/')
+                ;;
+              *)
+                printf 'Unexpected source-tree mutation: %s\n' "$status_line" >&2
+                exit 1
+                ;;
+            esac
+          done < "$PACKAGE_DIR/SOURCE_STATUS_AFTER_BUILD.txt"
+          git submodule foreach --recursive '
+            printf "### %s (%s)\n" "$displaypath" "$(git rev-parse HEAD)"
+            git status --short
+            git diff --binary
+          ' > "$PACKAGE_DIR/SUBMODULE_WORKTREES_AFTER_BUILD.txt"
           {
             cmake --version
             x86_64-w64-mingw32-gcc --version
             x86_64-w64-mingw32-g++ --version
+            x86_64-w64-mingw32-ld --version
             python3 --version
             "$RUNNER_TEMP/openjkdf2-cog/bin/python" -m pip show cogapp
+            printf '\nUbuntu MinGW package versions:\n'
+            dpkg-query -W -f='${Package} ${Version}\n' \
+              binutils-mingw-w64-x86-64 \
+              gcc-mingw-w64-x86-64-posix \
+              gcc-mingw-w64-x86-64-posix-runtime \
+              g++-mingw-w64-x86-64-posix \
+              mingw-w64-common \
+              mingw-w64-x86-64-dev
           } > "$PACKAGE_DIR/BUILD_TOOLCHAIN.txt"
           (
             cd "$PACKAGE_DIR"
-            find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%P\0' \
+            find . -type f ! -path './SHA256SUMS.txt' -printf '%P\0' \
               | sort -z \
               | xargs -0 sha256sum
           ) > "$PACKAGE_DIR/SHA256SUMS.txt"
           (
             cd "$PACKAGE_DIR"
+            sha256sum -c SHA256SUMS.txt
+          )
+          (
+            cd "$PACKAGE_DIR"
             zip -9 -r "$ARCHIVE_PATH" .
           )
-          sha256sum "$ARCHIVE_PATH" > "$ARCHIVE_PATH.sha256"
+          zip -T "$ARCHIVE_PATH"
+          (
+            cd "$(dirname "$ARCHIVE_PATH")"
+            sha256sum "$(basename "$ARCHIVE_PATH")"
+          ) > "$ARCHIVE_PATH.sha256"
 
       - name: Upload the x64 package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: OpenJKDF2-Windows-x64-${{ github.sha }}
+          name: OpenJKDF2-Windows-x64-Evaluation-${{ github.sha }}
           path: |
             ${{ env.ARCHIVE_PATH }}
             ${{ env.ARCHIVE_PATH }}.sha256
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1

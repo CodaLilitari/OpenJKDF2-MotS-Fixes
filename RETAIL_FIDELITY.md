@@ -1,4 +1,4 @@
-# Retail-fidelity Windows x64 fork
+# Retail-fidelity Windows x64 fork and evaluation build
 
 This fork tracks `shinyquagsire23/OpenJKDF2` without granting its `upstream`
 remote a push URL. Development is isolated on the `retail-fidelity-x64`
@@ -43,14 +43,33 @@ The fork-only `Windows x64 retail-fidelity` workflow:
 
 1. checks out the exact source and recursive submodule commits;
 2. builds the full `openjkdf2-64` MinGW target;
-3. packages the executable and non-system runtime DLLs;
-4. requires COFF machine `0x8664` and optional-header magic `0x020B`;
+3. packages the executable, non-system runtime DLLs, and license notices;
+4. requires every packaged PE to use COFF machine `0x8664` and optional-header
+   magic `0x020B`;
 5. checks that every imported non-system DLL is packaged;
 6. records source, submodule, import, architecture, and toolchain evidence; and
 7. creates SHA-256 manifests for the files and final archive.
 
 The generated package contains no LucasArts assets. A licensed Jedi Knight or
 MotS installation is still required to run the engine.
+
+## Distribution and provenance boundary
+
+The workflow artifact is a short-lived engineering evaluation build, not a
+public release. During the audit, pre-existing upstream source comments were
+found that explicitly describe some engine code as derived from OpenJones3D,
+whose public repository is AGPL-3.0. No independent provenance or compatible
+dual-license grant for those portions was verified in this work. This is not a
+finding that the upstream project violated a license, but it is an unresolved
+redistribution question. Do not publish or broadly redistribute this binary
+until the relevant authors establish compatible provenance or the affected
+implementations receive a documented clean replacement.
+
+The workflow records source commits, submodule revisions, nested build-time
+patches, exact compiler package versions, and hashes. This provides a strong
+audit trail, but the build is not claimed to be bit-for-bit reproducible: the
+Ubuntu package repository, archive metadata, and compiler environment are not
+fully hermetic.
 
 ## Current validation boundary
 
