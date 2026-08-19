@@ -45,12 +45,27 @@ the fork-specific delta and the evidence used to justify it.
 - Preserved the Steam Jedi Knight installation and a verified US 1.0 MotS disc
   image as read-only sources, then created separate clean and mutable test
   lanes outside the repository.
-- Confirmed the existing Windows x64 fork build launches both licensed games.
-  Jedi Knight reached playable Nar Shaddaa first-person rendering; MotS loaded
-  and rendered the opening New Republic Base sequence.  Twenty-second headless
-  smoke runs for both games produced no crash dump, missing-container error, or
-  assertion.  Full-campaign, multiplayer, save-compatibility, and long-soak
-  testing remain open.
+- Built implementation commit `a857b632` in full Release configuration with
+  MinGW-w64 13.  The resulting `openjkdf2-64.exe` has SHA-256
+  `C9B403134D65BF27FC3398B6E30D94E4AD24CECFD63FB1AA5CD4F6671381799E`;
+  an independent PE parser confirmed COFF machine `0x8664` and PE32+ magic
+  `0x020B` for the executable and all three packaged runtime DLLs.
+- Ran fresh twenty-second headless smoke tests against clean JK Steam and MotS
+  US 1.0 retail-data copies.  Both processes remained in their main loops until
+  the harness stopped their exact PIDs.  OpenAL and GameNetworkingSockets came
+  from the isolated x64 runtime directories, while `WINMM.dll`, `KERNEL32.dll`,
+  and `msvcrt.dll` resolved from `System32`.  There was no crash report,
+  assertion, missing GOB/GOO error, fatal error, or exception; the only log
+  output was the pre-existing UNI declared-line-count diagnostic.
+- Re-hashed both clean baselines after the runs.  Their deterministic manifest
+  digests remained
+  `4DA0D81CCD14FD5352B4A94DEF0BE2425A59450F18DD4C98A2635BE99C466149`
+  (JK) and
+  `751111429BCAAD8524BB1D71216C4644D438A1471B46CBDCC9EB5441D4F9B0C`
+  (MotS), proving that validation changed only the disposable lanes.  Earlier
+  interactive validation reached playable Nar Shaddaa rendering and rendered
+  MotS's opening New Republic Base sequence.  Full-campaign, multiplayer,
+  save-compatibility, and long-soak testing remain open.
 
 ### Patch and mod triage
 

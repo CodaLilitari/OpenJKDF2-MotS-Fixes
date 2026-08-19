@@ -8,6 +8,7 @@ by this workflow. Fork-specific history is summarized in `CHANGELOG_FORK.md`.
 ## Baseline
 
 - Upstream commit: `0dbd1ea8bb2211c158f6af928b5e4fb14dfa0dac`
+- Validated implementation commit: `a857b6320af71c0e7a526dfc9d8441a43bac0723`
 - Target: Windows x64 (`openjkdf2-64.exe`)
 - Build configuration: full MinGW x86-64 Release build, without the reduced
   `GITHUB_RUNNER_COMPILE` dependency set
@@ -121,13 +122,33 @@ track were staged into isolated test lanes outside the repository. The source
 media and Steam installation were not patched or modified. No LucasArts game
 asset is stored in Git or sent to the build workflow.
 
-The existing PE32+ AMD64 fork build completed twenty-second headless smoke runs
-for each title without a crash dump, missing-container error, or assertion.
-Interactive validation reached playable first-person Nar Shaddaa rendering in
-Jedi Knight and rendered the opening New Republic Base sequence in MotS. This
-establishes licensed-data startup and basic rendering, not full retail parity.
-Full-campaign, multiplayer, save-version, audio-track, mod-matrix, and long-soak
-testing remain required.
+Implementation commit `a857b632` completed a full Release build under Ubuntu
+26.04 with MinGW-w64 13. The resulting `openjkdf2-64.exe` has SHA-256
+`C9B403134D65BF27FC3398B6E30D94E4AD24CECFD63FB1AA5CD4F6671381799E`.
+An independent Windows PE parser confirmed COFF machine `0x8664` and optional-
+header magic `0x020B` for the executable, OpenAL, GameNetworkingSockets, and
+FreeGLUT. Static import inspection found no unprovided non-system dependency.
+
+Fresh disposable JK and MotS lanes each completed a twenty-second headless
+smoke run: both processes remained in their main loops until the harness stopped
+their exact PIDs. `OpenAL32.dll` and `libGameNetworkingSockets.dll` loaded from
+the isolated x64 runtime directories; `WINMM.dll`, `KERNEL32.dll`, and
+`msvcrt.dll` loaded from Windows `System32`. No crash report, missing GOB/GOO
+container, assertion, fatal error, or exception was produced. The only debug-log
+messages were the same pre-existing UNI declared-line-count diagnostics seen in
+the earlier build. Standard output and standard error were empty.
+
+The clean-source manifests were re-hashed after both runs and remained exactly
+`4DA0D81CCD14FD5352B4A94DEF0BE2425A59450F18DD4C98A2635BE99C466149`
+for the 64-file Steam JK tree and
+`751111429BCAAD8524BB1D71216C4644D438A1471B46CBDCC9EB5441D4F9B0C`
+for the 48-file MotS tree. Interactive validation with the earlier x64 build
+reached playable first-person Nar Shaddaa rendering and rendered the opening
+New Republic Base sequence in MotS. These checks establish licensed-data
+startup, parser/resource compatibility, runtime dependency resolution, and
+basic rendering; they do not establish full retail parity. Full-campaign,
+multiplayer, save-version, audio-track, mod-matrix, graphical texture-override,
+interactive default-binding, and long-soak testing remain required.
 
 The Desktop unofficial-patch bundle was not applied. Its payload replaces the
 original 32-bit `JK.EXE`/`JKM.EXE` code and removes legacy CD checks; OpenJKDF2
