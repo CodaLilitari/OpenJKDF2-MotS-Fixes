@@ -55,14 +55,15 @@ MotS installation is still required to run the engine.
 
 ## Distribution and provenance boundary
 
-The workflow artifact is a short-lived engineering evaluation build, not a
-public release. During the audit, pre-existing upstream source comments were
-found that explicitly describe some engine code as derived from OpenJones3D,
-whose public repository is AGPL-3.0. No independent provenance or compatible
+The workflow produces and verifies an engineering evaluation package only in
+its ephemeral runner workspace; it deliberately does not upload a binary
+artifact. During the audit, pre-existing upstream source comments were found
+that explicitly describe some engine code as derived from OpenJones3D, whose
+public repository is AGPL-3.0. No independent provenance or compatible
 dual-license grant for those portions was verified in this work. This is not a
 finding that the upstream project violated a license, but it is an unresolved
-redistribution question. Do not publish or broadly redistribute this binary
-until the relevant authors establish compatible provenance or the affected
+redistribution question. Do not publish or broadly redistribute a binary until
+the relevant authors establish compatible provenance or the affected
 implementations receive a documented clean replacement.
 
 The workflow records source commits, submodule revisions, nested build-time

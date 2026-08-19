@@ -1,4 +1,4 @@
-name: Windows x64 retail-fidelity evaluation
+name: Windows x64 retail-fidelity build verification
 
 on:
   workflow_dispatch:
@@ -365,13 +365,3 @@ jobs:
             cd "$(dirname "$ARCHIVE_PATH")"
             sha256sum "$(basename "$ARCHIVE_PATH")"
           ) > "$ARCHIVE_PATH.sha256"
-
-      - name: Upload the x64 package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: OpenJKDF2-Windows-x64-Evaluation-${{ github.sha }}
-          path: |
-            ${{ env.ARCHIVE_PATH }}
-            ${{ env.ARCHIVE_PATH }}.sha256
-          if-no-files-found: error
-          retention-days: 1
