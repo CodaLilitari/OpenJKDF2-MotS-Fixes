@@ -27,6 +27,11 @@ The fork currently includes:
 - JkGfxMod signature-first texture matching, first-claim duplicate handling, and
   cache lookups that do not insert entries on a miss.
 - MinGW-w64 13 runtime archive linking fixes and Windows x64 verification.
+- Autostart profile loading after mod hotkey registration, and repairs to
+  headless startup and depth-buffer handling for multiplayer validation.
+
+See [MotS mod compatibility](MOD_COMPATIBILITY.md) for one-mod-at-a-time loading,
+the SBX/Manowar test cases, and the remaining gameplay acceptance checks.
 
 See the [fork changelog](CHANGELOG_FORK.md) for changes and the
 [retail-fidelity record](RETAIL_FIDELITY.md) for evidence, validation limits,

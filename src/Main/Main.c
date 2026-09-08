@@ -139,6 +139,14 @@ int Main_StartupDedicated(int bFullyDedicated)
     strcat(Main_strMap, ".jkl");
     stdPlatform_Printf("Autostarting level: `%s`\n", Main_strMap);
 
+    // Match the title/menu path: inventory functions must be registered before
+    // profile defaults or saved binds are applied. CreateConf writes the profile
+    // back, so loading it earlier would discard unregistered mod hotkeys.
+    std3D_StartScene();
+    std3D_EndScene();
+    sithOpenStatic("static.jkl");
+    jkHudInv_InitItems();
+
     if (bFullyDedicated) {
         strcpy(aTmpPlayerShortName, "ServerDed");
         stdString_CharToWchar(jkPlayer_playerShortName, aTmpPlayerShortName, 31);
@@ -147,6 +155,11 @@ int Main_StartupDedicated(int bFullyDedicated)
     }
     else {
         wuRegistry_GetStr("playerShortName", aTmpPlayerShortName, 32, "ServerDed");
+        // GUI startup can persist an empty name before the autostart path runs.
+        // Treat that as unset so profile and local-option files have a name.
+        if (!aTmpPlayerShortName[0]) {
+            stdString_SafeStrCopy(aTmpPlayerShortName, "ServerDed", sizeof(aTmpPlayerShortName));
+        }
         stdString_CharToWchar(jkPlayer_playerShortName, aTmpPlayerShortName, 31);
         jkPlayer_playerShortName[31] = 0;
         jkPlayer_CreateConf(jkPlayer_playerShortName);
@@ -243,11 +256,6 @@ int Main_StartupDedicated(int bFullyDedicated)
     }
     
     
-    std3D_StartScene();
-    std3D_EndScene();
-    sithOpenStatic("static.jkl");
-    jkHudInv_InitItems();
-
     if (!Main_bAutostartSp) {
         if (jkMain_loadFile2(v34.episodeGobName, v34.mapJklFname))
         {

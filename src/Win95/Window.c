@@ -369,6 +369,7 @@ int Window_DefaultHandler(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam, voi
 SDL_Window* displayWindow = NULL;
 SDL_Event event;
 SDL_GLContext glWindowContext;
+static int Window_bHeadlessStartup = 0;
 
 int Window_lastXRel = 0;
 int Window_lastYRel = 0;
@@ -570,55 +571,39 @@ void Window_HandleWindowEvent(SDL_Event* event)
 
 #if defined(WIN64_MINGW) || defined(_WIN32)
 CHAR my_getch() {
-    DWORD mode, cc;
-    DWORD num;
+    DWORD mode;
+    DWORD num = 0;
     INPUT_RECORD irInBuf[1];
     HANDLE h = GetStdHandle( STD_INPUT_HANDLE );
 
-    if (h == NULL) {
-        return 0; // console not found
+    if (h == NULL || h == INVALID_HANDLE_VALUE || !GetConsoleMode(h, &mode)) {
+        return 0; // No console input (including redirected files and pipes).
     }
 
-    GetConsoleMode( h, &mode );
-    SetConsoleMode( h, mode & ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT) );
-    TCHAR c = 0;
-    GetNumberOfConsoleInputEvents(h, &num);
-    if (num)
-    {
-        if (!ReadConsoleInput(
-            h,      // input buffer handle 
-            irInBuf,     // buffer to read into 
-            1,         // size of read buffer 
-            &num))
-        {
-
-        }
-        else
-        {
-            if (irInBuf[0].EventType == KEY_EVENT && irInBuf[0].Event.KeyEvent.bKeyDown) {
-                c = irInBuf[0].Event.KeyEvent.uChar.AsciiChar;
-            }
-        }
+    if (!GetNumberOfConsoleInputEvents(h, &num) || !num) {
+        return 0;
     }
-    SetConsoleMode( h, mode );
-    return c;
+
+    // ReadConsoleInput reads events directly; line/echo modes only govern
+    // ReadConsole/ReadFile and need not be changed on an inherited console.
+    if (!ReadConsoleInput(h, irInBuf, 1, &num) || !num) {
+        return 0;
+    }
+    if (irInBuf[0].EventType == KEY_EVENT && irInBuf[0].Event.KeyEvent.bKeyDown) {
+        return irInBuf[0].Event.KeyEvent.uChar.AsciiChar;
+    }
+    return 0;
 }
 
 int my_kbhit() {
-    DWORD num;
-    DWORD mode, cc;
+    DWORD num = 0;
+    DWORD mode;
     HANDLE h = GetStdHandle( STD_INPUT_HANDLE );
-    if (h == NULL) {
-        return 0; // console not found
+    if (h == NULL || h == INVALID_HANDLE_VALUE || !GetConsoleMode(h, &mode)) {
+        return 0; // No console input (including redirected files and pipes).
     }
 
-    GetConsoleMode( h, &mode );
-    SetConsoleMode( h, mode & ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT) );
-    
-    GetNumberOfConsoleInputEvents(h, &num);
-    SetConsoleMode( h, mode );
-
-    return num;
+    return GetNumberOfConsoleInputEvents(h, &num) && num > 0;
 }
 #else
 int my_kbhit() {
@@ -1350,6 +1335,12 @@ void Window_RecreateSDL2Window()
     flags = SDL_WINDOW_OPENGL;
 #endif
 
+    // SDL/GL initialization precedes Main_Startup's command-line parsing.
+    // Keep that bootstrap context, but never show or focus its headless window.
+    if (Window_bHeadlessStartup) {
+        flags |= SDL_WINDOW_HIDDEN;
+    }
+
     // SDL3 SDL_CreateWindow() dropped the x/y position params; position is set
     // separately below via SDL_SetWindowPosition() on desktop.
 #ifdef ARCH_WASM
@@ -1362,7 +1353,12 @@ void Window_RecreateSDL2Window()
     if (!displayWindow) {
         char errtmp[256];
         snprintf(errtmp, 256, "!! Failed to create SDL2 window !!\n%s", SDL_GetError());
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", errtmp, NULL);
+        if (Window_bHeadlessStartup) {
+            fprintf(stderr, "%s\n", errtmp);
+        }
+        else {
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", errtmp, NULL);
+        }
         exit (-1);
     }
     //SDL_SetRenderDrawBlendMode(displayRenderer, SDL_BLENDMODE_BLEND);
@@ -1371,8 +1367,10 @@ void Window_RecreateSDL2Window()
     SDL_SetWindowPosition(displayWindow, Window_xPos, Window_yPos);
 #endif
 
-    SDL_SetWindowFullscreen(displayWindow, Window_isFullscreen ? true : false);
-    SDL_RaiseWindow(displayWindow);
+    if (!Window_bHeadlessStartup) {
+        SDL_SetWindowFullscreen(displayWindow, Window_isFullscreen ? true : false);
+        SDL_RaiseWindow(displayWindow);
+    }
 
     glWindowContext = SDL_GL_CreateContext(displayWindow);
     
@@ -1401,14 +1399,21 @@ void Window_RecreateSDL2Window()
     {
         char errtmp[256];
         snprintf(errtmp, 256, "!! Failed to initialize SDL OpenGL context !!\n%s", SDL_GetError());
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", errtmp, NULL);
+        if (Window_bHeadlessStartup) {
+            fprintf(stderr, "%s\n", errtmp);
+        }
+        else {
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", errtmp, NULL);
+        }
         exit(-1);
     }
 
     SDL_GL_MakeCurrent(displayWindow, glWindowContext);
     SDL_GL_SetSwapInterval(jkPlayer_enableVsync); // Disable vsync
 #ifndef TARGET_ANDROID
-    SDL_StartTextInput(displayWindow);
+    if (!Window_bHeadlessStartup) {
+        SDL_StartTextInput(displayWindow);
+    }
 #endif
 
     SDL_GetWindowSizeInPixels(displayWindow, &Window_xSize, &Window_ySize);
@@ -1438,6 +1443,14 @@ int Window_Main_Linux(int argc, char** argv)
 {
     char cmdLine[1024];
     int result;
+
+    Window_bHeadlessStartup = 0;
+    for (int i = 1; i < argc; i++) {
+        if (!__strcmpi(argv[i], "-headless") || !__strcmpi(argv[i], "/headless")) {
+            Window_bHeadlessStartup = 1;
+            break;
+        }
+    }
 
     // Init SDL
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
@@ -1553,6 +1566,8 @@ int Window_Main_Linux(int argc, char** argv)
             std3D_FreeResources();
             SDL_GL_DestroyContext(glWindowContext);
             SDL_DestroyWindow(displayWindow);
+            glWindowContext = NULL;
+            displayWindow = NULL;
         }
     }
 

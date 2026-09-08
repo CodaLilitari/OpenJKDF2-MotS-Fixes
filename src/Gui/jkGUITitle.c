@@ -11,6 +11,7 @@
 #include "Gui/jkGUIRend.h"
 #include "Gui/jkGUI.h"
 #include "Cog/jkCog.h"
+#include "Main/Main.h"
 #include "Main/jkStrings.h"
 #include "Win95/stdDisplay.h"
 #include "World/sithWorld.h"
@@ -361,7 +362,8 @@ int jkGuiTitle_bSkipLoadingWait = 0; // Added: autoboot skips the mission-text w
 void jkGuiTitle_LoadingFinalize()
 {
 #ifdef QOL_IMPROVEMENTS
-    int shouldSkip = jkPlayer_bFastMissionText || sithNet_isMulti || !sithWorld_g_pCurrentWorld
+    // Headless clients cannot acknowledge the mission briefing dialog.
+    int shouldSkip = Main_bHeadless || jkPlayer_bFastMissionText || sithNet_isMulti || !sithWorld_g_pCurrentWorld
                   || jkGuiTitle_bSkipLoadingWait; // Added
     if ( jkGuiTitle_whichLoading != 1)
     {

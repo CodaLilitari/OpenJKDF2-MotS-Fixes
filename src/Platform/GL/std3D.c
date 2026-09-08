@@ -2994,6 +2994,9 @@ void std3D_AddRenderListUITris(rdUITri *tris, unsigned int num_tris)
 
 int std3D_ClearZBuffer()
 {
+    // Headless startup does not initialize a framebuffer or retain a GL context.
+    if (Main_bHeadless) return 1;
+
 #ifdef RDRASTER_SW_ZBUFFER
     // Added: the software rasterizer keeps its own depth buffer; clear it on the same hook JK uses
     // (scene start + the POV weapon's clear) so the software path stays in lockstep with the HW one.

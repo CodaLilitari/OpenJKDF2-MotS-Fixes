@@ -6,6 +6,24 @@ the fork-specific delta and the evidence used to justify it.
 
 ## 2026-09-08
 
+### Mod startup and headless validation
+
+- Load the static inventory before autostart creates/reads/writes its profile.
+  Saved mod activation bindings were otherwise rejected as unregistered and
+  discarded on writeback. Preserve explicit profile names and use ServerDed
+  when GUI initialization has persisted an empty name.
+- Skip the mission-briefing acknowledgment in headless sessions, retaining
+  the normal loading-finalization cleanup.
+- Keep the initial SDL/GL bootstrap window hidden for headless launches;
+  preserve inherited Windows log streams and safely reject invalid/non-console
+  input handles. Interactive startup behavior is preserved.
+- Make GL depth-buffer clearing a no-op in headless mode. An exception report
+  confirmed a null framebuffer read through POV rendering before this guard.
+- Built a full MinGW 13 Windows x64 evaluation executable. Separate SBX-MotS 3.0
+  and Manowar 3 v1.0 hosts each survived 60 seconds on the stock MotS Freezer
+  multiplayer map with advancing simulation. Full mod compatibility remains
+  unproven; see MOD_COMPATIBILITY.md for evidence and remaining acceptance gates.
+
 ### Fork identity and attribution
 
 - Renamed the fork to OpenJKDF2-MotS-Fixes after checking prior community use
