@@ -1,6 +1,6 @@
-# OpenMotS retail-fidelity Windows x64 fork and evaluation build
+# OpenJKDF2-MotS-Fixes retail-fidelity Windows x64 fork and evaluation build
 
-OpenMotS is the bugfix fork at `andreipemberton/OpenMotS`. It tracks
+OpenJKDF2-MotS-Fixes is the bugfix fork at `andreipemberton/OpenJKDF2-MotS-Fixes`. It tracks
 `shinyquagsire23/OpenJKDF2` without granting its `upstream`
 remote a push URL. Changes are validated on `retail-fidelity-x64` before the
 fork's default branch is fast-forwarded. No upstream pull request is created

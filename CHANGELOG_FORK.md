@@ -1,4 +1,4 @@
-# OpenMotS fork changelog
+# OpenJKDF2-MotS-Fixes fork changelog
 
 This file records behavior, compatibility, build, and validation changes made
 for this fork.  Upstream history remains available in Git; this log describes
@@ -7,6 +7,10 @@ the fork-specific delta and the evidence used to justify it.
 ## 2026-09-08
 
 ### Fork identity and attribution
+
+- Renamed the fork to OpenJKDF2-MotS-Fixes after checking prior community use
+  of OpenMOTS for upstream's MotS support. The name identifies the upstream
+  engine and the scope of these fixes without claiming a new engine.
 
 - Named the bugfix fork OpenMotS, with a Windows x64 and MotS retail-fidelity
   focus while retaining JK support.

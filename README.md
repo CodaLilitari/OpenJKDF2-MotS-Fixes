@@ -1,6 +1,6 @@
-# OpenMotS
+# OpenJKDF2-MotS-Fixes
 
-OpenMotS is a bugfix fork of [OpenJKDF2](https://github.com/shinyquagsire23/OpenJKDF2),
+OpenJKDF2-MotS-Fixes is a bugfix fork of [OpenJKDF2](https://github.com/shinyquagsire23/OpenJKDF2),
 focused on Windows x64 compatibility and retail fidelity, especially for
 **Star Wars Jedi Knight: Mysteries of the Sith**. It also retains Jedi Knight:
 Dark Forces II support.
@@ -32,9 +32,9 @@ See the [fork changelog](CHANGELOG_FORK.md) for changes and the
 [retail-fidelity record](RETAIL_FIDELITY.md) for evidence, validation limits,
 and the evaluation-package distribution boundary. Full retail parity remains
 an open testing goal. The existing executable and build target are named
-`openjkdf2-64`; OpenMotS is the fork's repository name.
+`openjkdf2-64`; OpenJKDF2-MotS-Fixes is the fork's repository name.
 
-OpenMotS includes no original game assets. Use a licensed copy of the game you
+OpenJKDF2-MotS-Fixes includes no original game assets. Use a licensed copy of the game you
 want to play; MotS requires its own data and uses OpenJKDF2's `-motsCompat` mode.
 
 ## Upstream OpenJKDF2
