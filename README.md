@@ -26,6 +26,11 @@ The fork currently includes:
   save/network serialization preserved.
 - JkGfxMod signature-first texture matching, first-claim duplicate handling, and
   cache lookups that do not insert entries on a miss.
+- Correct tightly packed JKGM PNG uploads at arbitrary widths, with caller
+  pixel-store state restored after albedo, emissive and displacement uploads.
+- Consolidated custom-model authoring tools for animation-slot reservation and
+  an opaque-RGBA texture fallback for older affected renderer builds, plus an
+  exact-path MPC model-selection helper with verified backups.
 - MinGW-w64 13 runtime archive linking fixes and Windows x64 verification.
 - Autostart profile loading after mod hotkey registration, and repairs to
   headless startup and depth-buffer handling for multiplayer validation.
@@ -34,6 +39,10 @@ The fork currently includes:
 
 See [MotS mod compatibility](MOD_COMPATIBILITY.md) for one-mod-at-a-time loading,
 the SBX/Manowar test cases, and the remaining gameplay acceptance checks.
+
+See [custom-model workarounds](docs/MODEL_WORKAROUNDS.md) for all three source-only
+tools, the renderer correction, executable tests and the distinction between
+retail asset constraints and the OpenJKDF2-specific PNG upload path.
 
 See the [fork changelog](CHANGELOG_FORK.md) for changes and the
 [retail-fidelity record](RETAIL_FIDELITY.md) for evidence, validation limits,
