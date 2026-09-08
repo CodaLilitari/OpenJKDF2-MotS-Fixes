@@ -37,6 +37,33 @@ the fork-specific delta and the evidence used to justify it.
   The structure layout, item ordering and valid wire field order are preserved.
   Capacity limits can still exclude later items from an already-full backpack.
 
+### Custom-model workarounds and JKGM texture upload alignment
+
+- Consolidated the animation-domain guard, PNG alignment helper and historical
+  MPC selection helper into
+  `scripts/model-workarounds`, preserving their MIT licenses, synthetic fixtures
+  and provenance. `docs/MODEL_WORKAROUNDS.md` distinguishes general retail
+  KEY/3DO authoring constraints from the enhanced OpenJKDF2 PNG path.
+- Normalize unpack alignment, row length and pixel/row skips around all three
+  JKGM replacement-texture upload paths, restoring caller state on normal and
+  early returns. This fixes tight RGB rows such as 1254 pixels / 3762 bytes
+  without requiring an RGBA conversion, resizing or an asset change.
+- Added a real surfaceless OpenGL regression with an unprotected negative
+  control, 128 exact channel-byte readback cases, and state-restoration checks.
+  Local Mesa testing passed; all three Python suites passed their executable checks
+  (23 guard passes, 14 PNG passes and 9 MPC passes, plus one Windows symlink-privilege skip).
+  The existing full Windows x64 workflow now runs these checks before building.
+- The isolated local Windows x64 Release build passed using copied dependency
+  caches. The new engine displayed the original problematic RGB image correctly
+  in actual JK and MotS diagnostics under Wine/Xvfb/Mesa, without an asset conversion.
+  GitHub Actions dispatch was unavailable because Actions was disabled for the
+  account; local results are not presented as a CI run.
+- Normalize malformed or over-limit PNG metadata rejected by Pillow into the
+  helper's documented clean error response. Two added synthetic CLI tests check
+  both report and conversion modes, unchanged source bytes, and no output files.
+  The combined model-tool suite passed 48 cases with one Windows symlink-privilege
+  skip; the original 47 cases remain included.
+
 ### Repeatable routing tests and multiplayer input evidence
 
 - Added a portable native COG-locality regression runner and included it in the

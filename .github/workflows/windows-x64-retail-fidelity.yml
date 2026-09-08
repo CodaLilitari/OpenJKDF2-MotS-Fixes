@@ -35,6 +35,9 @@ jobs:
             file \
             make \
             mingw-w64 \
+            libegl-dev \
+            libgl-dev \
+            libgl1-mesa-dri \
             python3 \
             python3-pip \
             python3-venv \
@@ -51,7 +54,7 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/openjkdf2-cog"
           "$RUNNER_TEMP/openjkdf2-cog/bin/python" \
-            -m pip install --disable-pip-version-check cogapp==3.6.0
+            -m pip install --disable-pip-version-check cogapp==3.6.0 Pillow==12.3.0
           echo "$RUNNER_TEMP/openjkdf2-cog/bin" >> "$GITHUB_PATH"
 
       - name: Record pristine source provenance
@@ -83,6 +86,11 @@ jobs:
           python3 src/Tests/run_backpack_test.py --cc gcc --ubsan
           python3 src/Tests/run_bitmap_test.py --cc gcc
           python3 src/Tests/test_version_override.py
+          python3 -B scripts/model-workarounds/run_tests.py
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic -Isrc \
+            src/Tests/jkgm_pixel_unpack_gl_test.cpp -lEGL -lGL \
+            -o "$RUNNER_TEMP/jkgm_pixel_unpack_gl_test"
+          LIBGL_ALWAYS_SOFTWARE=1 "$RUNNER_TEMP/jkgm_pixel_unpack_gl_test"
 
       - name: Configure the full Windows x64 build
         run: |

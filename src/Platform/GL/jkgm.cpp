@@ -60,6 +60,8 @@ void jkgm_aligned_free(void* p)
 #ifdef SDL2_RENDER
 #if defined(TARGET_CAN_JKGM)
 
+#include "Platform/GL/jkgm_pixel_unpack.hpp"
+
 extern "C" {
 
 #include <png.h>
@@ -706,6 +708,10 @@ int jkgm_std3D_AddToTextureCache(tVBuffer *vbuf, rdDDrawSurface *texture, int is
 
     if (found_replace) // saberpurple0.mat
     {
+        // PNG rows are tight even when width * channels is not divisible by 4.
+        // This scope covers albedo, emissive and displacement uploads, and
+        // restores the caller's unpack state on every exit path.
+        const JkgmScopedPixelUnpack pixel_unpack;
         GLuint image_texture;
         glGenTextures(1, &image_texture);
         glActiveTexture(GL_TEXTURE0);
@@ -713,9 +719,6 @@ int jkgm_std3D_AddToTextureCache(tVBuffer *vbuf, rdDDrawSurface *texture, int is
         glBindTexture(GL_TEXTURE_2D, image_texture);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-        //glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        //glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
         if (jkPlayer_enableTextureFilter)
         {
@@ -789,9 +792,6 @@ int jkgm_std3D_AddToTextureCache(tVBuffer *vbuf, rdDDrawSurface *texture, int is
             glBindTexture(GL_TEXTURE_2D, emiss_texture);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-            //glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-            //glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
             if (jkPlayer_enableTextureFilter)
             {
@@ -845,9 +845,6 @@ int jkgm_std3D_AddToTextureCache(tVBuffer *vbuf, rdDDrawSurface *texture, int is
             glBindTexture(GL_TEXTURE_2D, displace_texture);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-            //glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-            //glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
             if (jkPlayer_enableTextureFilter)
             {
