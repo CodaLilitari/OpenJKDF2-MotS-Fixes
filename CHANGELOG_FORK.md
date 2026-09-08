@@ -13,6 +13,9 @@ the fork-specific delta and the evidence used to justify it.
 - Added credit to Andrei Kiralv/Darkahn and Lilitari (OpenAI Codex Interlocutor)
   for the original fork fixes, and invited upstream merging or cherry-picking
   with attribution. Existing upstream credits and license terms are preserved.
+- Expanded the human-facing collaborator credit to Coda Lilitari (OpenAI Codex
+  Interlocutor) and clarified that it does not identify a separate GitHub
+  account. Git author and committer metadata continue to use Andrei's identity.
 - Updated both the README and its generation template so regeneration retains
   the fork introduction. Labeled upstream release and issue links explicitly.
 - This update changes documentation and repository identity only; the engine

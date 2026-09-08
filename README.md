@@ -8,11 +8,14 @@ Dark Forces II support.
 ## Original fork fixes and credit
 
 The original fixes developed for this fork are credited to **Andrei Kiralv/Darkahn**
-and **Lilitari (OpenAI Codex Interlocutor)**. OpenJKDF2 and its contributors retain
+and **Coda Lilitari (OpenAI Codex Interlocutor)**. OpenJKDF2 and its contributors retain
 credit for the underlying engine and upstream work.
 
+Coda Lilitari is the human-facing name of the OpenAI Codex AI collaborator in
+this work. It does not identify a separate GitHub account.
+
 We welcome upstream merging or cherry-picking of our original fixes, with credit
-to **Andrei Kiralv/Darkahn** and **Lilitari (OpenAI Codex Interlocutor)** in the
+to **Andrei Kiralv/Darkahn** and **Coda Lilitari (OpenAI Codex Interlocutor)** in the
 corresponding commit or release notes. This attribution request does not change
 the existing project or third-party licenses.
 
