@@ -6,6 +6,18 @@ the fork-specific delta and the evidence used to justify it.
 
 ## 2026-09-08
 
+### Repeatable routing tests and multiplayer input evidence
+
+- Added a portable native COG-locality regression runner and included it in the
+  existing Windows x64 workflow's host test step. It extracts current source and
+  generates temporary test artifacts; no game assets are required.
+- Separate 75-second two-peer action runs verified saved SBX hotkeys through the
+  normal control/COG path, including positive color cycling and the highest SBX
+  activation function. Manowar's jetpack lifted, consumed fuel, cut off while
+  airborne, lifted again and descended, with movement observed by the other peer.
+  These bounded script/input/physics checks do not establish full mod or visual
+  compatibility; remaining gates are recorded in MOD_COMPATIBILITY.md.
+
 ### Multiplayer player-script initialization
 
 - Correct the MotS class-COG condition that adds local execution. Unflagged class

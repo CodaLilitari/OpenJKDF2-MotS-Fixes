@@ -152,15 +152,60 @@ TIMER/PULSE, STARTUP/SHUTDOWN, damage, disabled/paused COGs and missing handlers
 Restoring only the old condition made this harness fail. This checks routing
 semantics; actual server-only barrel gameplay remains a separate runtime gate.
 
+Reproduce the native routing test without game assets or a full engine build:
+
+```text
+python3 src/Tests/run_cog_locality_test.py --cc gcc --ubsan
+```
+
+The runner requires Python's standard library and a native GCC or Clang compiler.
+It generates the production fragments and executables in a temporary directory.
+The existing Windows x64 verification workflow runs this check in its host test
+step; adding that step does not imply a new remote CI run has completed.
+
+### Saved hotkeys and original mod effects
+
+Separate 75-second two-peer action runs use an explicit private input provider
+that produces press/hold/release states through `stdControl_UpdateKeyState`.
+The saved PLR mapping, normal control handler and original mod COGs process the
+input. The provider does not grant equipment or invoke gameplay COG messages
+directly. It remains absent from the production executable, and the host's
+provider stays off. Successful input capture and successful mod effects are
+assessed separately.
+
+SBX's Jedi client completed five custom hotkey press/release pairs while both
+peers stayed synchronized. An independent comparison with the original COG
+declarations and parser symbol ordering confirmed saber activation, positive
+color cycling, the trails flag, the stance counter, and training/damage-mode
+flag changes, including activation function 67. An earlier run also confirmed
+the authored no-op when color is pressed while the saber is off. Each custom
+control's native latch returned to zero after release. The standard saber was
+already selected, so that fixture did not test weapon selection. These are
+script-state checks, not proof of rendered effects, remote stance/PUP changes,
+or actual hit damage.
+
+Manowar's Mandalorian client completed a separate up/cutoff/up/down sequence.
+Original COG state and player physics showed fuel consumption, lift with gravity
+disabled, cutoff while still airborne, restored gravity and landing, a second
+lift, and descent/landing through the down control. The host's remote-player
+samples independently showed both lifts and the fall after cutoff before the
+second lift. The original script can consume and clear the cutoff bin between
+snapshots; the native control latch and flight-state transition establish its
+effect. Both peers remained synchronized throughout the 75-second run with no
+crash. An earlier sequence also checked cutoff after landing. Rendered smoke,
+audio, all collision situations, water/death interactions and prolonged use
+remain unverified.
+
 Required follow-up gates include:
 
 - Disconnect/rejoin, respawn and map transitions; client respawn must not reset
   the host's inventory.
-- Saved custom controls binding, reloading, and activating the intended action.
+- Remaining custom actions, interactive rebinding/control-set loading, and
+  retail-created profile compatibility.
 - SBX's three sabers, stance/evasion/throw/switch/color/trails/damage options,
   combat and input timing, and visual effects.
-- Manowar's Jedi, Mandalorian, Alliance, and Vanguard personalities; jetpack,
-  grapple, spy camera, teleporter, weapons, inventory and respawn behavior.
+- Full gameplay and respawn for Manowar's four personalities; grapple, spy
+  camera, teleporter, weapons, inventory and additional jetpack conditions.
 - Gameplay under load, object cleanup, longer sessions and teardown.
 - Two-peer destruction of explicitly server-only explosive-barrel COGs in stock
   MotS `k3.jkl`, including client-caused damage and single authoritative effects.
