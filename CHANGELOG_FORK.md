@@ -8,7 +8,8 @@ the fork-specific delta and the evidence used to justify it.
 
 ### Custom-model workarounds and JKGM texture upload alignment
 
-- Consolidated the animation-domain guard and PNG alignment helper into
+- Consolidated the animation-domain guard, PNG alignment helper and historical
+  MPC selection helper into
   `scripts/model-workarounds`, preserving their MIT licenses, synthetic fixtures
   and provenance. `docs/MODEL_WORKAROUNDS.md` distinguishes general retail
   KEY/3DO authoring constraints from the enhanced OpenJKDF2 PNG path.
@@ -18,9 +19,14 @@ the fork-specific delta and the evidence used to justify it.
   without requiring an RGBA conversion, resizing or an asset change.
 - Added a real surfaceless OpenGL regression with an unprotected negative
   control, 128 exact channel-byte readback cases, and state-restoration checks.
-  Local Mesa testing passed; both Python suites passed their executable checks
-  (23 guard passes; 14 PNG passes plus one Windows symlink-privilege skip).
+  Local Mesa testing passed; all three Python suites passed their executable checks
+  (23 guard passes, 14 PNG passes and 9 MPC passes, plus one Windows symlink-privilege skip).
   The existing full Windows x64 workflow now runs these checks before building.
+- The isolated local Windows x64 Release build passed using copied dependency
+  caches. The new engine displayed the original problematic RGB image correctly
+  in actual JK and MotS diagnostics under Wine/Xvfb/Mesa, without an asset conversion.
+  GitHub Actions dispatch was unavailable because Actions was disabled for the
+  account; local results are not presented as a CI run.
 
 ### Repeatable routing tests and multiplayer input evidence
 
