@@ -6,6 +6,20 @@ the fork-specific delta and the evidence used to justify it.
 
 ## 2026-09-08
 
+### Backpack item lookup and bounds
+
+- Backpack pickup now checks the descriptor for each stored inventory bin,
+  rather than the backpack slot number. The old lookup could reject valid MotS
+  items and converted-map treasure items, or admit items using unrelated flags.
+- Creation, item access and packet serialization use the actual contents-array
+  capacity (12). The old creation guard allowed 16 writes into a 12-entry array.
+  Invalid received counts are rejected before changing backpack item state;
+  invalid stored inventory bin IDs are skipped before descriptor lookup.
+- Added extracted-production-function regression coverage, including the DSS
+  item packet cases, physical bounds and the original slot-lookup mutant.
+  The structure layout, item ordering and valid wire field order are preserved.
+  Capacity limits can still exclude later items from an already-full backpack.
+
 ### Repeatable routing tests and multiplayer input evidence
 
 - Added a portable native COG-locality regression runner and included it in the

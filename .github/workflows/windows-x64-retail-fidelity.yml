@@ -80,6 +80,7 @@ jobs:
             -o "$RUNNER_TEMP/fork_regression_test"
           "$RUNNER_TEMP/fork_regression_test"
           python3 src/Tests/run_cog_locality_test.py --cc gcc --ubsan
+          python3 src/Tests/run_backpack_test.py --cc gcc --ubsan
 
       - name: Configure the full Windows x64 build
         run: |
