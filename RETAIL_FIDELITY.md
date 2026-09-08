@@ -1,6 +1,7 @@
-# Retail-fidelity Windows x64 fork and evaluation build
+# OpenMotS retail-fidelity Windows x64 fork and evaluation build
 
-This fork tracks `shinyquagsire23/OpenJKDF2` without granting its `upstream`
+OpenMotS is the bugfix fork at `andreipemberton/OpenMotS`. It tracks
+`shinyquagsire23/OpenJKDF2` without granting its `upstream`
 remote a push URL. Changes are validated on `retail-fidelity-x64` before the
 fork's default branch is fast-forwarded. No upstream pull request is created
 by this workflow. Fork-specific history is summarized in `CHANGELOG_FORK.md`.

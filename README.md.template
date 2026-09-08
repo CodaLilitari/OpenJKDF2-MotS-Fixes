@@ -1,8 +1,44 @@
-# OpenJKDF2
+# OpenMotS
+
+OpenMotS is a bugfix fork of [OpenJKDF2](https://github.com/shinyquagsire23/OpenJKDF2),
+focused on Windows x64 compatibility and retail fidelity, especially for
+**Star Wars Jedi Knight: Mysteries of the Sith**. It also retains Jedi Knight:
+Dark Forces II support.
+
+## Original fork fixes and credit
+
+The original fixes developed for this fork are credited to **Andrei Kiralv/Darkahn**
+and **Lilitari (OpenAI Codex Interlocutor)**. OpenJKDF2 and its contributors retain
+credit for the underlying engine and upstream work.
+
+We welcome upstream merging or cherry-picking of our original fixes, with credit
+to **Andrei Kiralv/Darkahn** and **Lilitari (OpenAI Codex Interlocutor)** in the
+corresponding commit or release notes. This attribution request does not change
+the existing project or third-party licenses.
+
+The fork currently includes:
+
+- Correct MotS F2/F3/F4 default inventory bindings, while preserving JK defaults.
+- MotS's 32 inventory activation slots, with JK's 20-slot limit and version-aware
+  save/network serialization preserved.
+- JkGfxMod signature-first texture matching, first-claim duplicate handling, and
+  cache lookups that do not insert entries on a miss.
+- MinGW-w64 13 runtime archive linking fixes and Windows x64 verification.
+
+See the [fork changelog](CHANGELOG_FORK.md) for changes and the
+[retail-fidelity record](RETAIL_FIDELITY.md) for evidence, validation limits,
+and the evaluation-package distribution boundary. Full retail parity remains
+an open testing goal. The existing executable and build target are named
+`openjkdf2-64`; OpenMotS is the fork's repository name.
+
+OpenMotS includes no original game assets. Use a licensed copy of the game you
+want to play; MotS requires its own data and uses OpenJKDF2's `-motsCompat` mode.
+
+## Upstream OpenJKDF2
 
 ![MacOS Screenshot](docs/images/screenshot.png)
 
-## [Latest Releases](https://github.com/shinyquagsire23/OpenJKDF2/releases) | [Report a crash or bug](https://github.com/shinyquagsire23/OpenJKDF2/issues)
+## [Upstream releases](https://github.com/shinyquagsire23/OpenJKDF2/releases) | [Upstream issue tracker](https://github.com/shinyquagsire23/OpenJKDF2/issues)
 
 OpenJKDF2 is a function-by-function reimplementation of DF2 in C, with 64-bit ports to Windows 7+, macOS 10.15+, and Linux. Files are organized as closely to the original game as possible, based on symbols from the Grim Fandango Remaster Android/Linux/macOS port, as well as scattered assertions from various other games. It also contains the original versions of `byacc` and `flex` used for COG script parsing.
 

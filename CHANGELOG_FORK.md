@@ -1,8 +1,22 @@
-# OpenJKDF2 Windows x64 / MotS fork changelog
+# OpenMotS fork changelog
 
 This file records behavior, compatibility, build, and validation changes made
 for this fork.  Upstream history remains available in Git; this log describes
 the fork-specific delta and the evidence used to justify it.
+
+## 2026-09-08
+
+### Fork identity and attribution
+
+- Named the bugfix fork OpenMotS, with a Windows x64 and MotS retail-fidelity
+  focus while retaining JK support.
+- Added credit to Andrei Kiralv/Darkahn and Lilitari (OpenAI Codex Interlocutor)
+  for the original fork fixes, and invited upstream merging or cherry-picking
+  with attribution. Existing upstream credits and license terms are preserved.
+- Updated both the README and its generation template so regeneration retains
+  the fork introduction. Labeled upstream release and issue links explicitly.
+- This update changes documentation and repository identity only; the engine
+  behavior and `openjkdf2-64` executable/build target are unchanged.
 
 ## 2026-08-18
 
