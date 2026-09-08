@@ -64,5 +64,3 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--candidate',type=Path,default=CANDIDATE)
     options,remaining=parser.parse_known_args();CANDIDATE=options.candidate.resolve()
     unittest.main(argv=[sys.argv[0],*remaining],verbosity=2)
-
-
