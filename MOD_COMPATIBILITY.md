@@ -93,15 +93,77 @@ their activation functions were registered, and multiplayer simulation advanced
 through the 35-second test window. Own-process window checks found no visible
 game windows. These tests establish profile persistence, not activation effects.
 
+### Two-peer player initialization
+
+The first real SBX two-process test exposed a behavior failure that an idle host
+could not reveal: the joining client synchronized, but received no starting
+weapons or shields. MotS class-script loading added LOCAL only when SERVER was
+set. This reversed the intended default and server-only behavior. The correction
+adds LOCAL when SERVER is absent and preserves any existing explicit flags.
+[The community COG specification](https://www.massassi.net/jkspecs/cog.htm)
+documents LOCAL as client-and-server execution and SERVER as server execution
+with client messages forwarded.
+
+Separate 60-second before/after SBX tests used the same original mod, stock Freezer
+map, and explicit Jedi character fixtures. Both variants established real peer
+IDs 1/2 and completed normal world synchronization. Before the correction, the
+client's `kyle_m.cog` had flags `0x20` (CLASS only), stayed at STARTUP, and lacked
+its starting equipment. After the correction, both peers had flags `0x60`
+(CLASS|LOCAL), advanced beyond STARTUP, selected the expected weapon bin 131,
+and matched the starting inventory defined by the loaded personality resources.
+The corrected pair remained synchronized through the final sample and final ten
+seconds, advanced both simulation clocks, and produced no crash reports.
+
+The same corrected evaluation build passed two separate 60-second Manowar-only
+pairs, covering all four personalities. Each peer matched its complete loaded
+personality resource, expected starting weapon and persistent inventory, and
+remained synchronized through the final ten seconds without a crash:
+
+| Host | Joining client | Expected weapon bins |
+| --- | --- | --- |
+| Mandalorian (class 2) | Vanguard (class 4) | 122 / 132 |
+| Jedi (class 1) | Alliance (class 3) | 131 / 123 |
+
+Manowar's Jedi personality parameter 0 is intentionally zero; it is not the
+character's class index. Its Mandalorian initialization also intentionally clears
+jetpack control bins 116/117/144 while retaining jetpack availability. The checks
+use these authored post-initialization states. A raw PER grant is not always the
+final idle inventory value.
+
+These tests used a separately compiled private adapter for normal MPC parsing,
+host/join entry points, and read-only observations. Normal gameplay loading and
+network synchronization remained in the engine. No direct inventory grant or
+fabricated network packet was used. The adapter is not included in this fork's
+production build. This establishes a specific player-initialization repair;
+it does not establish complete mod behavior.
+
+The corresponding production Windows x64 build, containing no private startup
+or input adapter, has executable SHA-256
+`46082078c608a956e1012af3803fd89777e231fa6754efb078dacd0eb0c23165`.
+It compiled and linked successfully and hosted a locally converted Battleground
+Jedi episode for 60 seconds with advancing MotS multiplayer simulation and no
+crash. That separate map smoke test does not replace the mod-specific pair tests.
+
+A separate native regression harness compiled the actual class-binding case and
+both full message-dispatch functions. With script execution and network transport
+stubbed for observation, 30,766 assertions passed under UBSan. Coverage includes
+JK/MotS, authored LOCAL/SERVER combinations, SP/host/client roles, NEWPLAYER,
+TIMER/PULSE, STARTUP/SHUTDOWN, damage, disabled/paused COGs and missing handlers.
+Restoring only the old condition made this harness fail. This checks routing
+semantics; actual server-only barrel gameplay remains a separate runtime gate.
+
 Required follow-up gates include:
 
-- Two clients joining/synchronizing; disconnect/rejoin and map transitions.
+- Disconnect/rejoin, respawn and map transitions; client respawn must not reset
+  the host's inventory.
 - Saved custom controls binding, reloading, and activating the intended action.
 - SBX's three sabers, stance/evasion/throw/switch/color/trails/damage options,
   combat and input timing, and visual effects.
 - Manowar's Jedi, Mandalorian, Alliance, and Vanguard personalities; jetpack,
   grapple, spy camera, teleporter, weapons, inventory and respawn behavior.
 - Gameplay under load, object cleanup, longer sessions and teardown.
+- Two-peer destruction of explicitly server-only explosive-barrel COGs in stock
+  MotS `k3.jkl`, including client-caused damage and single authoritative effects.
 - Interactive UI/rendering/audio checks and comparison with the author's
   documented behavior. The initial autostart host fabricates player information
   and does not select all four Manowar personalities.

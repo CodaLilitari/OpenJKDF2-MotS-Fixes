@@ -29,6 +29,8 @@ The fork currently includes:
 - MinGW-w64 13 runtime archive linking fixes and Windows x64 verification.
 - Autostart profile loading after mod hotkey registration, and repairs to
   headless startup and depth-buffer handling for multiplayer validation.
+- Correct MotS class-script locality so joining players receive their scripted
+  starting equipment; explicitly server-only class scripts retain that routing.
 
 See [MotS mod compatibility](MOD_COMPATIBILITY.md) for one-mod-at-a-time loading,
 the SBX/Manowar test cases, and the remaining gameplay acceptance checks.

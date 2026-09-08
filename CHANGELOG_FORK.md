@@ -6,6 +6,29 @@ the fork-specific delta and the evidence used to justify it.
 
 ## 2026-09-08
 
+### Multiplayer player-script initialization
+
+- Correct the MotS class-COG condition that adds local execution. Unflagged class
+  scripts now execute on both peers; an explicit SERVER flag prevents the loader
+  from adding LOCAL. Existing explicit LOCAL flags are preserved. JK is unchanged.
+- A real two-process SBX comparison on stock MotS Freezer isolated the defect:
+  both peers synchronized, but the old client player script had CLASS-only flags
+  and received no starting weapons or shields. With the condition corrected,
+  both player scripts had CLASS|LOCAL flags and both players received the expected
+  source-defined inventory. Separate 60-second control and corrected runs retained
+  logs, script flags, loaded personality parameters, inventory, and network state.
+- Two further corrected 60-second Manowar-only pairs covered all four classes,
+  matching their authored initialization, starting weapons and persistent
+  inventory with stable peer synchronization. Input effects and full gameplay
+  remain separate acceptance gates.
+- The native startup/join adapter and read-only observations used for that test
+  remain private evaluation tooling. They are not part of the shipped engine.
+- A native harness compiled the actual class-binding case and both complete COG
+  message-dispatch functions. It passed 30,766 assertions with UBSan across JK/MotS,
+  authored flags, SP/host/client roles and message states; restoring the old
+  condition made the harness fail. Script execution and transport are stubbed in
+  this logic test, separately from the real two-peer runs.
+
 ### Mod startup and headless validation
 
 - Load the static inventory before autostart creates/reads/writes its profile.

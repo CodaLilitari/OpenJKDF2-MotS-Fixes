@@ -1861,7 +1861,9 @@ int sithThing_ParseThingArg(StdConffileArg *arg, SithThing* pThing, int param)
             // MOTS added
             if (Main_bMotsCompat) {
                 pCog->flags |= SITH_COG_CLASS;
-                if (pCog->flags & SITH_COG_SERVER) {
+                // Class scripts run on each peer unless explicitly server-only.
+                // In particular, a joining player's NEWPLAYER must run locally.
+                if (!(pCog->flags & SITH_COG_SERVER)) {
                     pCog->flags |= SITH_COG_CLASS | SITH_COG_LOCAL;
                 }
             }
