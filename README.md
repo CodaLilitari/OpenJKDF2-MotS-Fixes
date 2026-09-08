@@ -27,6 +27,8 @@ The fork currently includes:
 - JkGfxMod signature-first texture matching, first-claim duplicate handling, and
   cache lookups that do not insert entries on a miss.
 - MinGW-w64 13 runtime archive linking fixes and Windows x64 verification.
+- Null-bitmap handling at the color-conversion boundary.
+- Validated release-commit overrides with portable regression coverage.
 - Autostart profile loading after mod hotkey registration, and repairs to
   headless startup and depth-buffer handling for multiplayer validation.
 - Correct MotS class-script locality so joining players receive their scripted

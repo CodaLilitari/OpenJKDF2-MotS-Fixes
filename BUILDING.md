@@ -2,6 +2,40 @@
 
 Building is currently tested primarily on Arch Linux, Ubuntu 20.04, and MacOS Monterey. Windows releases are cross-compiled using MinGW, however MSVC/Visual Studio is supported.
 
+### Fork source identity and native regression checks
+
+For an exact checkout of this fork, use the renamed repository explicitly:
+
+```sh
+git clone --recurse-submodules https://github.com/andreipemberton/OpenJKDF2-MotS-Fixes.git OpenJKDF2-MotS-Fixes
+cd OpenJKDF2-MotS-Fixes
+# If reproducing a recorded build, check out its full source commit here.
+git submodule update --init --recursive
+```
+
+The portable source regressions require a host C/C++ compiler, Python, CMake
+and Git, without game data or a complete engine build:
+
+```sh
+g++ -std=c++17 -Wall -Wextra -Werror -pedantic -DQOL_IMPROVEMENTS -Isrc src/Tests/fork_regression_test.cpp -o /tmp/openjkdf2-fork-regression
+/tmp/openjkdf2-fork-regression
+python3 src/Tests/run_cog_locality_test.py --cc gcc --ubsan
+python3 src/Tests/run_backpack_test.py --cc gcc --ubsan
+python3 src/Tests/run_bitmap_test.py --cc gcc
+python3 src/Tests/test_version_override.py
+```
+
+The bitmap runner requires UndefinedBehaviorSanitizer and checks that removing
+its null guard fails. The version test uses temporary Git repositories and the
+actual `cmake_modules/version.cmake` file.
+
+For an exported release source tree, the Windows build workflow may supply both
+`OPENJKDF2_RELEASE_COMMIT` (40 hexadecimal characters) and
+`OPENJKDF2_RELEASE_COMMIT_SHORT` (an 8-to-40-character matching prefix) through
+the environment when configuring CMake. Set them only to the identity of the
+source being built. Invalid or incomplete pairs stop configuration. With
+neither variable set, the normal Git lookup is retained.
+
 ### 1) Install dependencies
 
 <details>

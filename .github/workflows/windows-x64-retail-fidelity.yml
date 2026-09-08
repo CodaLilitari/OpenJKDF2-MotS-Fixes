@@ -81,6 +81,8 @@ jobs:
           "$RUNNER_TEMP/fork_regression_test"
           python3 src/Tests/run_cog_locality_test.py --cc gcc --ubsan
           python3 src/Tests/run_backpack_test.py --cc gcc --ubsan
+          python3 src/Tests/run_bitmap_test.py --cc gcc
+          python3 src/Tests/test_version_override.py
 
       - name: Configure the full Windows x64 build
         run: |
@@ -323,10 +325,10 @@ jobs:
               "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA"
             printf 'Upstream project: https://github.com/shinyquagsire23/OpenJKDF2\n'
             printf '\nExact engine, vendored, and submodule source checkout:\n'
-            printf '  git clone --recurse-submodules %s/%s.git\n' \
+            printf '  git clone --recurse-submodules %s/%s.git OpenJKDF2-MotS-Fixes\n' \
               "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY"
-            printf '  git -C OpenJKDF2 checkout %s\n' "$GITHUB_SHA"
-            printf '  git -C OpenJKDF2 submodule update --init --recursive\n'
+            printf '  git -C OpenJKDF2-MotS-Fixes checkout %s\n' "$GITHUB_SHA"
+            printf '  git -C OpenJKDF2-MotS-Fixes submodule update --init --recursive\n'
             printf 'Compiler runtime package/version records are in licenses/MinGW-static-runtime-PACKAGES.txt.\n'
             printf 'Game data is not included; a licensed JK or MotS installation is required.\n'
           } > "$PACKAGE_DIR/SOURCE_URL.txt"

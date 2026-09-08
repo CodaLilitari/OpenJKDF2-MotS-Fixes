@@ -6,6 +6,23 @@ the fork-specific delta and the evidence used to justify it.
 
 ## 2026-09-08
 
+### Bitmap conversion and release source identity
+
+- Return immediately when `stdBitmap_ConvertColorFormat` receives a null bitmap,
+  matching the existing null-input behavior of bitmap cleanup. Non-null bitmap
+  conversion, frame ordering, metadata and color-key behavior are preserved.
+- Add a portable native test that extracts the current production function and
+  source types. It checks null input, unchanged formats, 8-bit no-op behavior,
+  16-bit conversion orchestration and color-key metadata using explicit stubs.
+  Removing the guard must produce an UndefinedBehaviorSanitizer failure.
+- Honor the release workflow's paired `OPENJKDF2_RELEASE_COMMIT` and
+  `OPENJKDF2_RELEASE_COMMIT_SHORT` environment values. Reject an incomplete pair,
+  malformed full hash, or a short value that is not an 8-to-40-character prefix.
+  Without either override, retain the existing Git lookup behavior.
+- Add actual CMake-P tests for valid, invalid, mismatched and absent overrides.
+  The Windows x64 workflow runs both new tests and gives source-checkout commands
+  using the fork's current repository name.
+
 ### Backpack item lookup and bounds
 
 - Backpack pickup now checks the descriptor for each stored inventory bin,

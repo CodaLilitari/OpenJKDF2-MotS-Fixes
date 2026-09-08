@@ -305,6 +305,8 @@ void stdBitmap_ConvertColorFormat(rdTexFormat *formatTo, stdBitmap *bitmap)
     tVBuffer *v5; // eax
     rdTexFormat *formatFrom; // [esp+18h] [ebp+8h]
 
+    if (!bitmap) return;
+
     formatFrom_ = &bitmap->format;
     formatFrom = &bitmap->format;
     if ( _memcmp(formatTo, formatFrom, sizeof(rdTexFormat)) && (formatFrom_->is16bit || formatTo->is16bit) )

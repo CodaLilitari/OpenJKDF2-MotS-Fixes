@@ -116,6 +116,30 @@ audit trail, but the build is not claimed to be bit-for-bit reproducible: the
 Ubuntu package repository, archive metadata, and compiler environment are not
 fully hermetic.
 
+## Bitmap conversion and release source checks (2026-09-08)
+
+`stdBitmap_ConvertColorFormat` now returns before dereferencing a missing bitmap.
+This keeps a failed or absent bitmap from crashing that conversion boundary;
+normal conversion remains unchanged. It does not supply a replacement asset.
+
+The portable native runner extracts the actual function and source types. Its
+renderer and pixel-conversion dependencies are explicit in-memory stubs. The
+checks cover null input, unchanged formats, the 8-bit no-op path, mip ordering,
+16-bit conversion calls, final format metadata and color keys. A version with
+the guard removed must fail under UndefinedBehaviorSanitizer. These are source
+regressions, not an end-to-end rendering or gameplay result.
+
+The release-commit environment variables used by the Windows workflow are now
+validated and honored. The full value must contain exactly 40 hexadecimal
+characters, and the paired short value must be an 8-to-40-character matching
+prefix. Accepted values are normalized to lowercase. If neither is supplied,
+the previous Git lookup is preserved. Portable tests execute the actual CMake
+file against temporary Git fixtures and explicit environment inputs.
+
+Run the checks with `python3 src/Tests/run_bitmap_test.py --cc gcc` and
+`python3 src/Tests/test_version_override.py`. A final Windows build and its
+runtime acceptance checks remain separate from these source regressions.
+
 ## Current validation boundary
 
 A pristine Steam Jedi Knight installation and a verified US 1.0 MotS disc data
