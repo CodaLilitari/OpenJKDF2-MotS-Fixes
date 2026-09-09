@@ -80,6 +80,20 @@ UBSan detected the Soldier index-24 overread through each MotS handler. The
 existing input/cache, COG-locality, backpack, bitmap and version checks also
 passed locally. The renderer and game loop are not part of this native harness.
 
+The full Windows x64 Release target was then rebuilt with MinGW-w64 GCC 13
+using the local dependency caches. That exact executable completed separate
+35-second SBX-MotS 3.0 and Manowar 3 v1.0 headless multiplayer hosts on stock
+MotS Freezer. Each run loaded only its selected mod, created a local player,
+advanced all seven sampled simulation clocks and survived until the harness
+stopped it. The owned baseline files remained unchanged. Existing string-table
+warnings matched the previous corresponding mod-host logs exactly.
+
+The [machine-readable validation record](validation/team-model-20260909.json)
+pins the implementation commit and executable hash. These idle-host checks do
+not exercise every class/team combination in a rendered or two-peer game; the
+class/color expectations are covered by the native function tests and original
+data inspection described above. The evaluation executable remains local.
+
 The Windows x64 retail-fidelity workflow runs this test alongside the existing
 fork regressions. A local result must not be described as a GitHub Actions run.
 Full gameplay, rendered appearance and mod-wide compatibility remain separate

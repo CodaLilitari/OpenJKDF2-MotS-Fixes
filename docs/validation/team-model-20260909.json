@@ -1,0 +1,102 @@
+{
+  "date": "2026-09-09",
+  "engine_commit": "1bfba38600e2ccee7bbd7fbe5f6b5d947b7cc78a",
+  "native_regression": {
+    "compiler": "GCC 15.2.0, WSL Ubuntu",
+    "ubsan": true,
+    "cases": 102,
+    "assertions": 2037,
+    "old_lookup_mapping_control_rejected": true,
+    "soldier_overread_controls_detected": [
+      "saber",
+      "team"
+    ],
+    "scope": "Extracted production functions and wire readers with explicit dependency stubs; no rendered skins or real transport."
+  },
+  "other_checks": {
+    "input_cache_cpp": "pass",
+    "cog_locality_assertions": 30766,
+    "backpack_assertions": 19960,
+    "bitmap_assertions": 393,
+    "version_tests": 5,
+    "model_tool_tests_windows_passed": 54,
+    "model_tool_tests_windows_skipped": 1,
+    "model_tool_skip_reason": "Synthetic symlink creation requires unavailable Windows privilege.",
+    "model_tool_wsl_attempt": "Pillow absent in system Python; completed suite in existing Windows Python instead.",
+    "gl_exact_byte_cases": 128,
+    "gl_renderer": "Mesa llvmpipe"
+  },
+  "build": {
+    "target": "openjkdf2-64",
+    "configuration": "Release, MinGW-w64 GCC 13-posix",
+    "kind": "Full Windows x64 target rebuilt using existing local dependency caches",
+    "production_input_manifest_count": 1265,
+    "production_inputs_still_match": true,
+    "exe_sha256": "600e0d65a1ea72a5748e58fddb12777482d69cd1e0f1ff539724d376a44bd213",
+    "exe_bytes": 15994169,
+    "machine": "0x8664",
+    "optional_header": "0x020b",
+    "binary_published": false,
+    "github_actions_run_claimed": false
+  },
+  "separate_one_mod_host_checks": [
+    {
+      "mod": "SBX-MotS 3.0",
+      "episode": "JKM_MP",
+      "map": "mdm02_freezer.jkl",
+      "duration_seconds": 35.08,
+      "snapshot_count": 7,
+      "mots_mp_headless_confirmed": true,
+      "simulation_clock_ms": [
+        657,
+        5665,
+        10673,
+        15681,
+        20694,
+        25700,
+        30707
+      ],
+      "loaded_mod_archives": [
+        "mods/sbx3\\SBX-MotS v3.goo"
+      ],
+      "survived_until_harness_termination": true,
+      "crash_reports": [],
+      "owned_baseline_unchanged": true,
+      "string_table_warning_count": 6,
+      "warnings_identical_to_previous_mod_host": true,
+      "private_result_sha256": "a0435d628a737467bc3f670bd19d41d450ddb2c7a11e4e1633aeef6ad2b6e537"
+    },
+    {
+      "mod": "Manowar 3 v1.0",
+      "episode": "JKM_MP",
+      "map": "mdm02_freezer.jkl",
+      "duration_seconds": 35.07,
+      "snapshot_count": 7,
+      "mots_mp_headless_confirmed": true,
+      "simulation_clock_ms": [
+        1796,
+        6799,
+        11811,
+        16814,
+        21825,
+        26830,
+        31843
+      ],
+      "loaded_mod_archives": [
+        "mods/manowars3\\Mano3sd.goo",
+        "mods/manowars3\\Mano3sk.goo"
+      ],
+      "survived_until_harness_termination": true,
+      "crash_reports": [],
+      "owned_baseline_unchanged": true,
+      "string_table_warning_count": 5,
+      "warnings_identical_to_previous_mod_host": true,
+      "private_result_sha256": "2894b70f7cb4fae57cfc0dd728bf26fb42b75f0f74e78f642b9f147dddf307ce"
+    }
+  ],
+  "limits": [
+    "No new rendered class/color comparison or two-peer class/team test.",
+    "Idle hosts do not establish full SBX/Manowar gameplay compatibility.",
+    "models.dat personality filtering remains a separate open issue."
+  ]
+}
