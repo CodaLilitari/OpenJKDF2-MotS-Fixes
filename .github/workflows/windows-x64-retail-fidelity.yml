@@ -87,6 +87,8 @@ jobs:
           python3 src/Tests/run_team_model_test.py --cc gcc --ubsan
           python3 src/Tests/run_bitmap_test.py --cc gcc
           python3 src/Tests/run_mots_lighting_test.py --cc gcc --sanitize
+          python3 src/Tests/run_pov_lighting_test.py --cc gcc --sanitize
+          python3 src/Tests/run_takeitem_test.py --cc gcc --sanitize
           python3 src/Tests/test_version_override.py
           python3 -B scripts/model-workarounds/run_tests.py
           g++ -std=c++17 -Wall -Wextra -Werror -pedantic -Isrc \

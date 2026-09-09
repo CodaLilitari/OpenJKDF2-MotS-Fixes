@@ -23,6 +23,8 @@ do not change the existing project or third-party licenses.
 
 The fork currently includes:
 
+- [Native MotS host pickup acknowledgment and respawn](docs/MOTS_ITEM_RESPAWN.md),
+  plus explicit first-person weapon/saber lighting mode to prevent an RGB-path crash.
 - Correct MotS F2/F3/F4 default inventory bindings, while preserving JK defaults.
 - MotS's 32 inventory activation slots, with JK's 20-slot limit and version-aware
   save/network serialization preserved.
