@@ -6,6 +6,10 @@ drivers, or require a DirectDraw wrapper. Probe launch, input and output behavio
 is opt-in. Use a disposable, locally owned game-data/profile copy as the working
 directory: ordinary startup still reads and may create game/profile settings.
 
+For material-only comparisons, see [MAT authoring and fallback controls](mat-authoring.md).
+It separates palette/RGB565/PNG behavior, the large-MAT UV convention, and the
+limits of the probe's PNG-specific upload records.
+
 ```text
 openjkdf2-64.exe -renderprobe -autostart -sp -episode swprobe -map probe.jkl
   -renderout C:/private-probe/captures -renderwidth 1920 -renderheight 1080
