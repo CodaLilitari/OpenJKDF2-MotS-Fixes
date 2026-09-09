@@ -20,6 +20,9 @@
 
 extern int Window_xSize;
 extern int Window_ySize;
+extern int Window_bRenderProbe;
+void Window_RenderProbeApplySettings(void);
+void Window_RenderProbeGameplayFrame(void);
 
 int Window_AddMsgHandler(WindowHandler_t a1);
 int Window_RemoveMsgHandler(WindowHandler_t a1);

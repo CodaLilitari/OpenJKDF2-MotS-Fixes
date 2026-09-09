@@ -7,6 +7,7 @@
 #include "Win95/Video.h"
 #include "World/sithWorld.h"
 #include "Engine/rdColormap.h"
+#include "Engine/rdroid.h"
 #include "Main/jkGame.h"
 #include "World/jkPlayer.h"
 #include "General/stdBitmap.h"
@@ -99,6 +100,7 @@ std3DFramebuffer std3D_framebuffers[2];
 std3DFramebuffer *std3D_pFb = NULL;
 
 static bool has_initted = false;
+static int std3D_probeDrawBloom = 0, std3D_probeDrawSSAO = 0;
 
 static void* last_overlay = NULL;
 
@@ -743,7 +745,8 @@ int std3D_StartScene()
     {
         if (!init_resources()) {
             stdPlatform_Printf("std3D: Failed to init resources, exiting...");
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", "Failed to init resources, exiting...", NULL);
+            if (Window_bRenderProbe) fprintf(stderr,"RENDERPROBE_FAILED OpenGL resource initialization\n");
+            else SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", "Failed to init resources, exiting...", NULL);
             exit(-1);
         }
     }
@@ -2298,42 +2301,25 @@ void std3D_DrawSimpleTex(std3DSimpleTexStage* pStage, std3DIntermediateFbo* pFbo
     }
     
     rdTri* tris = GL_tmpTris;
-    glEnableVertexAttribArray(pStage->attribute_coord3d);
-    glEnableVertexAttribArray(pStage->attribute_v_color);
-    glEnableVertexAttribArray(pStage->attribute_v_uv);
-
     glBindBuffer(GL_ARRAY_BUFFER, menu_vbo_all);
     glBufferData(GL_ARRAY_BUFFER, GL_tmpVerticesAmt * sizeof(D3DVERTEX), GL_tmpVertices, GL_STREAM_DRAW);
-    glVertexAttribPointer(
-        programMenu_attribute_coord3d, // attribute
-        3,                 // number of elements per vertex, here (x,y,z)
-        GL_FLOAT,          // the type of each element
-        GL_FALSE,          // normalize fixed-point data?
-        sizeof(D3DVERTEX),                 // data stride
-        (GLvoid*)offsetof(D3DVERTEX, x)                  // offset of first element
-    );
-    
-    glVertexAttribPointer(
-        programMenu_attribute_v_color, // attribute
-        4,                 // number of elements per vertex, here (R,G,B,A)
-        GL_UNSIGNED_BYTE,  // the type of each element
-        GL_TRUE,          // normalize fixed-point data?
-        sizeof(D3DVERTEX),                 // no extra data between each position
-        (GLvoid*)offsetof(D3DVERTEX, color) // offset of first element
-    );
-
-    glVertexAttribPointer(
-        programMenu_attribute_v_uv,    // attribute
-        2,                 // number of elements per vertex, here (U,V)
-        GL_FLOAT,          // the type of each element
-        GL_FALSE,          // take our values as-is
-        sizeof(D3DVERTEX),                 // no extra data between each position
-        (GLvoid*)offsetof(D3DVERTEX, tu)                  // offset of first element
-    );
-
-    glEnableVertexAttribArray(pStage->attribute_coord3d);
-    glEnableVertexAttribArray(pStage->attribute_v_color);
-    glEnableVertexAttribArray(pStage->attribute_v_uv);
+    // Each linked postprocess program owns its locations. Blur and SSAO may
+    // optimize out vertex color, so -1 must never reach an attribute-array call.
+    if (pStage->attribute_coord3d >= 0) {
+        glVertexAttribPointer(pStage->attribute_coord3d, 3, GL_FLOAT, GL_FALSE,
+            sizeof(D3DVERTEX), (GLvoid*)offsetof(D3DVERTEX, x));
+        glEnableVertexAttribArray(pStage->attribute_coord3d);
+    }
+    if (pStage->attribute_v_color >= 0) {
+        glVertexAttribPointer(pStage->attribute_v_color, 4, GL_UNSIGNED_BYTE, GL_TRUE,
+            sizeof(D3DVERTEX), (GLvoid*)offsetof(D3DVERTEX, color));
+        glEnableVertexAttribArray(pStage->attribute_v_color);
+    }
+    if (pStage->attribute_v_uv >= 0) {
+        glVertexAttribPointer(pStage->attribute_v_uv, 2, GL_FLOAT, GL_FALSE,
+            sizeof(D3DVERTEX), (GLvoid*)offsetof(D3DVERTEX, tu));
+        glEnableVertexAttribArray(pStage->attribute_v_uv);
+    }
     
     rdDDrawSurface* last_tex = (rdDDrawSurface*)(intptr_t)-1;
     int last_tex_idx = 0;
@@ -2352,9 +2338,9 @@ void std3D_DrawSimpleTex(std3DSimpleTexStage* pStage, std3DIntermediateFbo* pFbo
     glGetBufferParameteriv(GL_ELEMENT_ARRAY_BUFFER, GL_BUFFER_SIZE, &tris_size);
     glDrawElements(GL_TRIANGLES, tris_size / sizeof(GLushort), GL_UNSIGNED_SHORT, 0);
 
-    glDisableVertexAttribArray(pStage->attribute_v_uv);
-    glDisableVertexAttribArray(pStage->attribute_v_color);
-    glDisableVertexAttribArray(pStage->attribute_coord3d);
+    if (pStage->attribute_v_uv >= 0) glDisableVertexAttribArray(pStage->attribute_v_uv);
+    if (pStage->attribute_v_color >= 0) glDisableVertexAttribArray(pStage->attribute_v_color);
+    if (pStage->attribute_coord3d >= 0) glDisableVertexAttribArray(pStage->attribute_coord3d);
     
     //free(data_elements);
         
@@ -2394,6 +2380,10 @@ void std3D_DrawSceneFbo()
     if (jkGuiBuildMulti_bRendering) {
         draw_ssao = 0;
         //draw_bloom = 0;
+    }
+    if (Window_bRenderProbe) {
+        std3D_probeDrawBloom = draw_bloom;
+        std3D_probeDrawSSAO = draw_ssao;
     }
 
     if (draw_bloom)
@@ -3585,6 +3575,88 @@ void std3D_UpdateSettings()
 }
 
 // Added
+// Probe capture occurs after the final composite/HUD draw and before swap. The
+// scene FBO screenshot above/below cannot establish bloom or SSAO output.
+int std3D_RenderProbeCapture(const char* path, int requestedW, int requestedH, int frame)
+{
+#ifdef TARGET_CAN_JKGM
+    SDL_Window* probeWindow = SDL_GL_GetCurrentWindow();
+    if (!Window_bRenderProbe || !probeWindow) return 0;
+    int w = 0, h = 0, windowW = 0, windowH = 0;
+    SDL_GetWindowSizeInPixels(probeWindow, &w, &h);
+    SDL_GetWindowSize(probeWindow, &windowW, &windowH);
+    if (!Window_bRenderProbe || w < 1 || h < 1 || w > 4096 || h > 2160) return 0;
+    char infoPath[800];
+    if (snprintf(infoPath, sizeof(infoPath), "%s.txt", path) >= sizeof(infoPath)) return 0;
+    FILE* existing = fopen(path, "rb");
+    if (existing) { fclose(existing); return 0; }
+    existing = fopen(infoPath, "rb");
+    if (existing) { fclose(existing); return 0; }
+    FILE* info = fopen(infoPath, "w");
+    if (!info) return 0;
+    uint8_t* pixels = malloc((size_t)w * (size_t)h * 3);
+    if (!pixels) { fclose(info); return 0; }
+
+    GLint oldReadFbo, oldReadBuffer, oldPack, oldRow, oldSkipRows, oldSkipPixels, oldPbo;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &oldReadFbo);
+    glGetIntegerv(GL_READ_BUFFER, &oldReadBuffer);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &oldPack);
+    glGetIntegerv(GL_PACK_ROW_LENGTH, &oldRow);
+    glGetIntegerv(GL_PACK_SKIP_ROWS, &oldSkipRows);
+    glGetIntegerv(GL_PACK_SKIP_PIXELS, &oldSkipPixels);
+    glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &oldPbo);
+    GLenum priorError = glGetError();
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, std3D_windowFbo);
+    glReadBuffer(GL_BACK);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+    glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+    glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+    GLenum captureError = glGetError();
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, oldReadFbo);
+    glReadBuffer(oldReadBuffer);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, oldPbo);
+    glPixelStorei(GL_PACK_ALIGNMENT, oldPack);
+    glPixelStorei(GL_PACK_ROW_LENGTH, oldRow);
+    glPixelStorei(GL_PACK_SKIP_ROWS, oldSkipRows);
+    glPixelStorei(GL_PACK_SKIP_PIXELS, oldSkipPixels);
+
+    fprintf(info, "capture=post-composite-back-buffer-before-swap\nframe=%d\nrequested_width=%d\nrequested_height=%d\ndrawable_width=%d\ndrawable_height=%d\nwindow_width=%d\nwindow_height=%d\nscene_fbo_width=%d\nscene_fbo_height=%d\nscene_fbo_extra=%d\nbloom=%d\nssao=%d\nssaa=%.9g\ntexture_filter=%d\ngamma=%.9g\nwindow_flags=%llu\ngl_vendor=%s\ngl_renderer=%s\ngl_version=%s\nprior_gl_error=%u\ncapture_gl_error=%u\n",
+        frame, requestedW, requestedH, w, h, windowW, windowH,
+        std3D_pFb ? std3D_pFb->w : 0, std3D_pFb ? std3D_pFb->h : 0,
+        std3D_pFb ? std3D_pFb->enable_extra : 0, jkPlayer_enableBloom, jkPlayer_enableSSAO,
+        (double)jkPlayer_ssaaMultiple, jkPlayer_enableTextureFilter, (double)jkPlayer_gamma,
+        (unsigned long long)SDL_GetWindowFlags(probeWindow),
+        (const char*)glGetString(GL_VENDOR), (const char*)glGetString(GL_RENDERER),
+        (const char*)glGetString(GL_VERSION), (unsigned)priorError, (unsigned)captureError);
+    fprintf(info, "draw_bloom=%d\ndraw_ssao=%d\nsoftware_renderer=%d\n", std3D_probeDrawBloom, std3D_probeDrawSSAO,
+#ifdef RDRASTER_SOFTWARE_RENDERER
+        rdroid_bSoftwareRenderer
+#else
+        0
+#endif
+    );
+    fclose(info);
+    if (captureError != GL_NO_ERROR) { free(pixels); return 0; }
+    jkgm_write_png(path, w, h, pixels);
+    free(pixels);
+    unsigned char signature[8];
+    FILE* check = fopen(path, "rb");
+    int ok = check && fread(signature, 1, sizeof(signature), check) == sizeof(signature)
+        && !memcmp(signature, "\x89PNG\r\n\x1a\n", 8);
+    if (check) fclose(check);
+    printf("RENDERPROBE_CAPTURE frame=%d drawable=%dx%d scene_fbo=%dx%d bloom=%d ssao=%d ssaa=%.9g file=%s\n", frame, w, h,
+        std3D_pFb ? std3D_pFb->w : 0, std3D_pFb ? std3D_pFb->h : 0,
+        jkPlayer_enableBloom, jkPlayer_enableSSAO, (double)jkPlayer_ssaaMultiple, path);
+    fflush(stdout);
+    return ok;
+#else
+    return 0;
+#endif
+}
+
 void std3D_Screenshot(const char* pFpath)
 {
 #ifdef TARGET_CAN_JKGM

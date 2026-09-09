@@ -5,6 +5,7 @@
 #include "Main/Main.h"
 #include "Main/jkMain.h"
 #include "Main/jkGame.h"
+#include "Engine/rdroid.h"
 #include "Gui/jkGUI.h"
 #include "Gui/jkGUIRend.h"
 #include "Win95/stdDisplay.h"
@@ -64,9 +65,11 @@ int Window_isHiDpi = 0;
 int Window_isFullscreen = 0;
 int Window_needsRecreate = 0;
 int Window_bShouldPopSteamKeyboard = 0;
+int Window_bRenderProbe = 0;
 
 void Window_SetHiDpi(int val)
 {
+    if (Window_bRenderProbe) return;
     if (Window_isHiDpi != val)
     {
         Window_isHiDpi = val;
@@ -79,6 +82,7 @@ void Window_SetHiDpi(int val)
 
 void Window_SetFullscreen(int val)
 {
+    if (Window_bRenderProbe) return;
     if (Window_isFullscreen != val)
     {
         // Reset window when exiting fullscreen
@@ -370,6 +374,50 @@ SDL_Window* displayWindow = NULL;
 SDL_Event event;
 SDL_GLContext glWindowContext;
 static int Window_bHeadlessStartup = 0;
+#include "Win95/RenderProbe.h"
+#include <sys/stat.h>
+static RenderProbeOptions Window_probe;
+static uint64_t Window_probeStarted, Window_probeGameplayStarted;
+static int Window_probeFrames, Window_probeCapture;
+
+void Window_RenderProbeApplySettings(void)
+{
+    if (!Window_bRenderProbe) return;
+    jkPlayer_enableBloom = Window_probe.bloom;
+    jkPlayer_enableSSAO = Window_probe.ssao;
+    jkPlayer_enableVsync = 0;
+#ifdef RDRASTER_SOFTWARE_RENDERER
+    rdroid_bSoftwareRenderer = 0;
+#endif
+    Window_isFullscreen = Window_isHiDpi = 0;
+    Window_bShouldPopSteamKeyboard = Window_bNeedsKeyboardFixed = 0;
+}
+
+void Window_RenderProbeGameplayFrame(void)
+{
+#if defined(TARGET_CAN_JKGM) && !defined(RENDER_GL11)
+    if (!Window_bRenderProbe || g_should_exit) return;
+    uint64_t now = SDL_GetTicks();
+    if (!Window_probeGameplayStarted) Window_probeGameplayStarted = now;
+    if (now - Window_probeGameplayStarted < (uint64_t)Window_probe.delayMs) return;
+    ++Window_probeFrames;
+    int target = ((Window_probeCapture + 1) * Window_probe.frames + 2) / 3;
+    if (Window_probeFrames < target) return;
+    char filename[768];
+    snprintf(filename, sizeof(filename), "%s/frame-%06d.png", Window_probe.output, Window_probeFrames);
+    extern int std3D_RenderProbeCapture(const char*, int, int, int);
+    if (!std3D_RenderProbeCapture(filename, Window_probe.width, Window_probe.height, Window_probeFrames)) {
+        fprintf(stderr, "RENDERPROBE_FAILED capture frame=%d\n", Window_probeFrames);
+        exit(3);
+    }
+    ++Window_probeCapture;
+    if (Window_probeCapture == 3) {
+        printf("RENDERPROBE_COMPLETE frames=%d captures=3 elapsed_ms=%llu\n", Window_probeFrames, (unsigned long long)(now-Window_probeGameplayStarted));
+        fflush(stdout);
+        g_should_exit = 1;
+    }
+#endif
+}
 
 int Window_lastXRel = 0;
 int Window_lastYRel = 0;
@@ -746,6 +794,29 @@ void Window_UpdateHeadless()
 
 void Window_SdlUpdate()
 {
+    if (Window_bRenderProbe) {
+        SDL_Event probeEvent;
+        while (SDL_PollEvent(&probeEvent)) {
+            if (probeEvent.type == SDL_EVENT_QUIT) g_should_exit = 1;
+        }
+        Window_RenderProbeApplySettings();
+        g_app_active = g_window_active = g_app_suspended = 1;
+        if (Window_resized) {
+            jkMain_FixRes();
+            if (!jkGui_SetModeMenu(0)) stdDisplay_SetMode(0,0,0);
+            Window_resized = 0;
+        }
+        if (!jkGame_isDDraw) {
+            std3D_StartScene(); std3D_DrawMenu(); std3D_EndScene();
+            SDL_GL_SwapWindow(displayWindow);
+        }
+        if (SDL_GetTicks() - Window_probeStarted > 120000) {
+            fprintf(stderr,"RENDERPROBE_FAILED timeout before three captures\n");
+            exit(4);
+        }
+        SDL_Delay(1);
+        return;
+    }
     if (Main_bHeadless)
     {
         Window_UpdateHeadless();
@@ -1296,7 +1367,7 @@ void Window_RecreateSDL2Window()
 
     SDL_WindowFlags flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
 
-    if (displayWindow) {
+    if (displayWindow && !Window_bRenderProbe) {
         flags = SDL_GetWindowFlags(displayWindow);
         //std3D_FreeResources();
         //SDL_GL_DestroyContext(glWindowContext);
@@ -1337,8 +1408,13 @@ void Window_RecreateSDL2Window()
 
     // SDL/GL initialization precedes Main_Startup's command-line parsing.
     // Keep that bootstrap context, but never show or focus its headless window.
-    if (Window_bHeadlessStartup) {
+    if (Window_bHeadlessStartup || Window_bRenderProbe) {
         flags |= SDL_WINDOW_HIDDEN;
+    }
+    if (Window_bRenderProbe) {
+        flags = SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN | SDL_WINDOW_NOT_FOCUSABLE;
+        Window_screenXSize = Window_probe.width;
+        Window_screenYSize = Window_probe.height;
     }
 
     // SDL3 SDL_CreateWindow() dropped the x/y position params; position is set
@@ -1353,7 +1429,7 @@ void Window_RecreateSDL2Window()
     if (!displayWindow) {
         char errtmp[256];
         snprintf(errtmp, 256, "!! Failed to create SDL2 window !!\n%s", SDL_GetError());
-        if (Window_bHeadlessStartup) {
+        if (Window_bHeadlessStartup || Window_bRenderProbe) {
             fprintf(stderr, "%s\n", errtmp);
         }
         else {
@@ -1364,10 +1440,10 @@ void Window_RecreateSDL2Window()
     //SDL_SetRenderDrawBlendMode(displayRenderer, SDL_BLENDMODE_BLEND);
 
 #if !defined(ARCH_WASM) && !defined(TARGET_ANDROID)
-    SDL_SetWindowPosition(displayWindow, Window_xPos, Window_yPos);
+    if (!Window_bRenderProbe) SDL_SetWindowPosition(displayWindow, Window_xPos, Window_yPos);
 #endif
 
-    if (!Window_bHeadlessStartup) {
+    if (!Window_bHeadlessStartup && !Window_bRenderProbe) {
         SDL_SetWindowFullscreen(displayWindow, Window_isFullscreen ? true : false);
         SDL_RaiseWindow(displayWindow);
     }
@@ -1399,7 +1475,7 @@ void Window_RecreateSDL2Window()
     {
         char errtmp[256];
         snprintf(errtmp, 256, "!! Failed to initialize SDL OpenGL context !!\n%s", SDL_GetError());
-        if (Window_bHeadlessStartup) {
+        if (Window_bHeadlessStartup || Window_bRenderProbe) {
             fprintf(stderr, "%s\n", errtmp);
         }
         else {
@@ -1411,7 +1487,7 @@ void Window_RecreateSDL2Window()
     SDL_GL_MakeCurrent(displayWindow, glWindowContext);
     SDL_GL_SetSwapInterval(jkPlayer_enableVsync); // Disable vsync
 #ifndef TARGET_ANDROID
-    if (!Window_bHeadlessStartup) {
+    if (!Window_bHeadlessStartup && !Window_bRenderProbe) {
         SDL_StartTextInput(displayWindow);
     }
 #endif
@@ -1443,6 +1519,29 @@ int Window_Main_Linux(int argc, char** argv)
 {
     char cmdLine[1024];
     int result;
+
+    if (!RenderProbe_Parse(argc, argv, &Window_probe)) {
+        fprintf(stderr,"Invalid render probe options: requires -renderprobe -autostart -renderout ABSOLUTE_LOCAL_DIRECTORY; width640..4096 height480..2160 frames3..18000 delayms0..60000 bloom/ssao0|1; incompatible with -headless.\n");
+        exit(2);
+    }
+    Window_bRenderProbe = Window_probe.enabled;
+    if (Window_bRenderProbe) {
+#if !defined(TARGET_CAN_JKGM) || defined(RENDER_GL11)
+        fprintf(stderr,"Render probe requires the desktop OpenGL3 renderer with PNG support.\n"); exit(2);
+#else
+        struct stat outputStat;
+        if (stat(Window_probe.output,&outputStat) || !(outputStat.st_mode & S_IFDIR)) {
+            fprintf(stderr,"Render probe output directory must already exist.\n"); exit(2);
+        }
+        if (stat("resource/jk_.cd", &outputStat) || outputStat.st_size != 4) {
+            fprintf(stderr,"Render probe requires an existing local game-data working directory (resource/jk_.cd); no installer or picker will be opened.\n"); exit(2);
+        }
+        Window_probeFrames = Window_probeCapture = 0;
+        Window_probeGameplayStarted = 0;
+        Window_probeStarted = SDL_GetTicks();
+        Window_RenderProbeApplySettings();
+#endif
+    }
 
     Window_bHeadlessStartup = 0;
     for (int i = 1; i < argc; i++) {
@@ -1546,11 +1645,17 @@ int Window_Main_Linux(int argc, char** argv)
     
     for (int i = 1; i < argc; i++)
     {
+        int probeArgSize = RenderProbe_OptionSize(argv[i]);
+        if (probeArgSize) { i += probeArgSize-1; continue; }
+        if (Window_bRenderProbe && strlen(cmdLine)+strlen(argv[i])+2 >= sizeof(cmdLine)) {
+            fprintf(stderr,"Render probe engine command line is too long.\n"); exit(2);
+        }
         strcat(cmdLine, argv[i]);
         strcat(cmdLine, " ");
     }
     
     result = Main_Startup(cmdLine);
+    Window_RenderProbeApplySettings();
 
     int fullscreen = wuRegistry_GetBool("Window_isFullscreen", 0);
     int hidpi = wuRegistry_GetBool("Window_isHiDpi", 0);
@@ -1558,7 +1663,13 @@ int Window_Main_Linux(int argc, char** argv)
     Window_SetHiDpi(hidpi);
     Window_RecreateSDL2Window();
 
-    if (!result) return result;
+    if (!result) {
+        if (Window_bRenderProbe) {
+            fprintf(stderr, "RENDERPROBE_FAILED engine startup\n");
+            return 7;
+        }
+        return result;
+    }
 
     if (Main_bHeadless)
     {
@@ -1597,11 +1708,16 @@ int Window_Main_Linux(int argc, char** argv)
 #endif
 
     // Added
-    if (jkPlayer_bHasLoadedSettingsOnce) {
+    if (jkPlayer_bHasLoadedSettingsOnce && !Window_bRenderProbe) {
         jkPlayer_WriteConf(jkPlayer_playerShortName);
     }
 
     Main_Shutdown();
+    if (Window_bRenderProbe) {
+        if (Window_probeCapture == 3) return 0;
+        fprintf(stderr, "RENDERPROBE_FAILED stopped before three captures\n");
+        return 6;
+    }
     return 1;
 }
 
