@@ -14,10 +14,12 @@ credit for the underlying engine and upstream work.
 Coda Lilitari is the human-facing name of the OpenAI Codex AI collaborator in
 this work. It does not identify a separate GitHub account.
 
-We welcome upstream merging or cherry-picking of our original fixes, with credit
-to **Andrei Kiralv/Darkahn** and **Coda Lilitari (OpenAI Codex Interlocutor)** in the
-corresponding commit or release notes. This attribution request does not change
-the existing project or third-party licenses.
+We explicitly invite OpenJKDF2's original authors, upstream maintainers and
+contributors to reuse, merge or cherry-pick our original fixes into OpenJKDF2,
+so these improvements can benefit the wider community. Please credit
+**Andrei Kiralv/Darkahn** and **Coda Lilitari (OpenAI Codex Interlocutor)** in the
+corresponding commit or release notes. This invitation and attribution request
+do not change the existing project or third-party licenses.
 
 The fork currently includes:
 
@@ -38,6 +40,11 @@ The fork currently includes:
   headless startup and depth-buffer handling for multiplayer validation.
 - Correct MotS class-script locality so joining players receive their scripted
   starting equipment; explicitly server-only class scripts retain that routing.
+- Correct MotS multiplayer class/team model selection, including the Soldier
+  array overrun and blue/green team colors; reject unsafe team-model indices.
+
+See [class/team model fixes](docs/TEAM_MODEL_FIXES.md) for the source evidence,
+regression coverage and remaining skin-parser investigation.
 
 See [MotS mod compatibility](MOD_COMPATIBILITY.md) for one-mod-at-a-time loading,
 the SBX/Manowar test cases, and the remaining gameplay acceptance checks.

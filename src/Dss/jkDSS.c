@@ -54,9 +54,23 @@ const char* jkDSS_aMotsKyTeamModels[5*4] = {
     "kym13.3do",
     "kym13r.3do",
     "kym13y.3do",
-    "kym13g.3do",
     "kym13b.3do",
+    "kym13g.3do",
 };
+
+static const char* jkDSS_GetMotsTeamModel(int personality, int teamNum)
+{
+    // Native MotS characters use personalities 1..4, but the table is zero-based.
+    // Preserve personality 0 (the unset/legacy default) as the Jedi model row.
+    // Validate before indexing: these values can arrive in multiplayer packets.
+    const int teamCount = 5;
+    const int classCount = sizeof(jkDSS_aMotsKyTeamModels) / sizeof(jkDSS_aMotsKyTeamModels[0]) / teamCount;
+    if (personality < 0 || personality > classCount || teamNum < 0 || teamNum >= teamCount) {
+        return NULL;
+    }
+    const int classIdx = personality > 0 ? personality - 1 : 0;
+    return jkDSS_aMotsKyTeamModels[classIdx * teamCount + teamNum];
+}
 
 
 // MOTS added
@@ -353,12 +367,8 @@ int jkDSS_ProcessSetSaberInfoMots(SithMessage *msg)
         }
         if ( (sithNet_MultiModeFlags & MULTIMODEFLAG_100) != 0 )
         {
-            if (personality < 0 || personality > 7) {
-                stdString_SafeStrCopy(model_3do_fname, "kk.3do", 0x20);
-            }
-            else {
-                stdString_SafeStrCopy(model_3do_fname, jkDSS_aMotsKyTeamModels[(personality * 5) + v11->teamNum], 0x20);
-            }
+            const char* teamModel = jkDSS_GetMotsTeamModel(personality, v11->teamNum);
+            stdString_SafeStrCopy(model_3do_fname, teamModel ? teamModel : "kk.3do", 0x20);
             stdString_SafeStrCopy(v14, "ky.snd", 0x20);
         }
     }
@@ -455,6 +465,9 @@ int jkDSS_ProcessSetSaberInfo(SithMessage *msg)
             return 1;
         if ( (sithNet_MultiModeFlags & MULTIMODEFLAG_100) != 0 )
         {
+            if ((uint32_t)v11->teamNum >= sizeof(jkDSS_aKyTeamModels) / sizeof(jkDSS_aKyTeamModels[0])) {
+                return 0;
+            }
             stdString_SafeStrCopy(model_3do_fname, jkDSS_aKyTeamModels[v11->teamNum], 32);
             stdString_SafeStrCopy(v14, "ky.snd", 32);
         }
@@ -1155,17 +1168,20 @@ int jkDSS_ProcessSetTeam(SithMessage *pMsg)
     if ( (sithNet_MultiModeFlags & MULTIMODEFLAG_TEAMS) == 0 || (sithNet_MultiModeFlags & MULTIMODEFLAG_100) == 0 )
         return 1;
 
+    const char* teamModel = NULL;
+    if (Main_bMotsCompat) {
+        teamModel = jkDSS_GetMotsTeamModel(personality, teamNum);
+        if (!teamModel) {
+            return 0;
+        }
+    }
+
     jkPlayer_playerInfos[playerIdx].teamNum = teamNum;
     if ( jkPlayer_playerInfos[playerIdx].pLocalPlayer )
     {
         // MOTS added: personality
         if (Main_bMotsCompat) {
-            if (personality < 8) {
-                v5 = sithModel_Load(jkDSS_aMotsKyTeamModels[teamNum + (personality * 5)], 1);
-            }
-            else {
-                v5 = NULL;
-            }
+            v5 = sithModel_Load(teamModel, 1);
             
             if ( v5 )
             {

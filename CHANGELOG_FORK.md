@@ -4,6 +4,27 @@ This file records behavior, compatibility, build, and validation changes made
 for this fork.  Upstream history remains available in Git; this log describes
 the fork-specific delta and the evidence used to justify it.
 
+## 2026-09-09
+
+### Multiplayer class/team models and author invitation
+
+- Map native MotS personalities 1..4 to the four zero-based team-model rows.
+  The old lookup shifted the first three classes and read past the 20-entry
+  table for Soldier (4). Preserve personality 0's existing default-row behavior.
+- Validate personality and team indices in both affected MotS packet handlers.
+  Unsupported forced-team character updates use the existing fallback model;
+  invalid team-change requests are rejected before changing player/team state.
+  The adjacent JK model lookup now also rejects out-of-range team values.
+- Correct the Soldier blue/green team-model order using the original MotS team
+  documentation and model labels. Normal custom-skin selection is preserved.
+- Add asset-free tests of the extracted production handlers and wire readers,
+  including an old-index negative control under UndefinedBehaviorSanitizer.
+  [The detailed record](docs/TEAM_MODEL_FIXES.md) separates these function tests
+  from full gameplay and the still-open skin-list personality filtering issue.
+- Explicitly invite OpenJKDF2's original authors, maintainers and contributors
+  to reuse our original fixes with credit to Andrei Kiralv/Darkahn and
+  Coda Lilitari (OpenAI Codex Interlocutor). Preserve existing licenses.
+
 ## 2026-09-08
 
 ### Bitmap conversion and release source identity
