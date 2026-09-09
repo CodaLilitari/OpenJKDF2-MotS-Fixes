@@ -5,6 +5,11 @@ PNG row-alignment helper, the historical MPC selection helper, and the renderer 
 nonstandard player models. The tools are source-only examples with synthetic
 tests; they contain no retail models, animations, textures or generated art.
 
+The [fan-skin authoring audit and three-tier plan](FAN_SKIN_AUTHORING.md) adds
+measured TDIR, JKE, modern Shred and original-engine fan precedents, plus the
+explicit texture-mode helper. It distinguishes per-mesh, animation and material
+requirements and does not claim that higher-detail tier packages are complete.
+
 ## Which findings also concern retail JK and MotS?
 
 | Finding | OpenJKDF2 | Original retail engine |
@@ -123,7 +128,7 @@ LIBGL_ALWAYS_SOFTWARE=1 /tmp/jkgm-unpack-test
 
 This requires desktop OpenGL and EGL development packages plus an EGL
 surfaceless driver, such as Mesa. It does not open a game or desktop window.
-The workflow is configured to run this test in addition to all three Python suites. Runtime/graphics outcomes
+The workflow is configured to run this test in addition to the Python tool suites. Runtime/graphics outcomes
 must retain their actual environment and scope; this document does not claim
 native GPU performance, arbitrary-mod compatibility or complete retail parity.
 

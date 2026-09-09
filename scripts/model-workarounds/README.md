@@ -12,6 +12,9 @@ Start with [the findings and retail/OpenJKDF2 applicability table](../../docs/MO
   model field in one exact multiplayer profile, with a verified backup before
   writing. This implements historical direct-selection practice. Close the game
   first. Python standard library only.
+- [Texture-mode candidate helper](texture-mode/README.md): reports affine versus
+  perspective mode and can create a separate 3DO changing only those mesh/face
+  fields. Preserves every other byte. Python standard library only.
 
 Run `python -B scripts/model-workarounds/run_tests.py` from the repository root.
 The tests use synthetic fixtures and temporary files, never game assets.
