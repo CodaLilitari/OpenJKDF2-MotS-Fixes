@@ -12,7 +12,8 @@ tests; they contain no retail models, animations, textures or generated art.
 | Added geometry must avoid animation-addressed node indices | Verified with stock JK/MotS animation data and actual OpenJKDF2 hierarchy observations. The guard reserves the complete declared KEY domain. | The numbered KEY/3DO contract and inspected stock animation files originate in retail JK/MotS. This is a general asset-authoring constraint, not a new OpenJKDF2-only feature. The guard's configured limits and modern runtime results do not certify an arbitrary model on a retail executable. |
 | RGB replacement PNG rows can shear at widths such as 1254 | Reproduced in the inspected JKGM upload path; fixed here by setting tight unpack state around uploads and restoring it afterward. | This specific OpenGL JKGM PNG-upload path is an enhancement, not the original retail MAT renderer. No equivalent retail PNG defect is claimed. |
 | Opaque RGBA can avoid that PNG row-layout problem without resizing | Asset-only fallback for older affected builds. It preserves every decoded RGB byte and both dimensions. | Not a retail MAT workaround; the original engine does not consume this JKGM PNG pack. |
-| Direct multiplayer MPC model selection | Organic Hybrid passed the actual Load Character screen, animated Edit Character preview and ordinary MPC-to-MP selection in both JK and MotS. These were Windows-engine runs under Wine64/Xvfb/Mesa llvmpipe. | Historical TDIR launcher/data evidence uses direct MPC model selection. The new original-JK test failed before startup even in a stock no-mod control; retail compatibility remains unresolved. Selection cannot make a mismatched rig animate correctly. |
+| Direct multiplayer MPC model selection | Organic Hybrid passed the actual Load Character screen, animated Edit Character preview and ordinary MPC-to-MP selection in both JK and MotS. These were Windows-engine runs under Wine64/Xvfb/Mesa llvmpipe. | Historical TDIR launcher/data evidence uses direct MPC model selection. Later original-engine probes rendered the new models through a diagnostic COG, which is separate from ordinary MPC selection. Selection cannot make a mismatched rig animate correctly. See the bounded retail results below. |
+| Partitioned geometry on the stock numbered rig | The six preserved designs loaded and animated in the tested source-port builds. | Original JK 1.00 indexed, official JK 1.01 indexed/RGB565 and unchanged MotS indexed/RGB565 lanes each completed the six-model, eight-stock-KEY probe without an unofficial engine patch or custom KEY/PUP. This establishes sampled original-engine behavior, not all animations, memory safety or a remote multiplayer session. |
 
 The original TDIR readme states that executable files are not modified. Its
 Broly models use a 52-node size rig with visible geometry on the large-character
@@ -28,9 +29,17 @@ Under the available Wine 10 experimental WOW64 runtime, both staged mod runs and
 the stock control without a mod path exited with a startup stack-overflow error
 before a game window or model load was observed. The underlying cause is
 unresolved. This is neither a retail compatibility pass nor evidence that the
-models caused a failure. Original MotS and native Windows retail startup were
-not tested, and exact equivalence to an unmodified original CD release was not
-established.
+models caused a failure. That initial environment failure remains part of the
+record; it is not the final original-engine result.
+
+A later isolated Debian 12 i386/Wine 8/Xvfb environment ran independently
+hash-matched original JK 1.00, publisher JK 1.01 and the unchanged owned MotS
+executable. Original MotS accepted the required JK disc 2 followed by a separate
+CD-ROM container holding its unchanged owned media marker. Its first stock level
+rendered successfully. The detailed model probes and a separate historical no-CD
+stock control are recorded in [the retail validation addendum](MODEL_WORKAROUNDS_VALIDATION.md#original-retail-follow-up).
+No native Windows GPU result is claimed. None of these MAT-renderer results
+changes the enhancement-specific scope of the JKGM PNG correction.
 
 ## Animation-domain guard
 
