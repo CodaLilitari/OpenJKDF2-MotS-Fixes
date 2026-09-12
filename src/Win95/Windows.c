@@ -20,6 +20,7 @@
 
 #ifdef SDL2_RENDER
 #include <SDL3/SDL.h>
+#include "Platform/SDL2/stdCaptureUi.h"
 #endif
 
 #ifdef TARGET_TWL

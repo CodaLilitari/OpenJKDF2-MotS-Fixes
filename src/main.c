@@ -638,11 +638,11 @@ int main(int argc, char** argv)
     openjkdf2_bIsExtraLowMemoryPlatform = 0;
 #endif // TARGET_DREAMCAST
 #ifdef WIN64_STANDALONE
-    int skipConsoleWindow = 0;
+    int skipConsoleWindow = stdCapture_IsRequested();
     // Main_Startup parses this later. Preserve inherited streams for headless
     // launches instead of allocating a console and replacing redirected output.
     for (int i = 1; i < argc; i++) {
-        if (!__strcmpi(argv[i], "-headless") || !__strcmpi(argv[i], "/headless")) {
+        if (!__strcmpi(argv[i], "-headless") || !__strcmpi(argv[i], "/headless") || !__strcmpi(argv[i], "-capture")) {
             skipConsoleWindow = 1;
             break;
         }
@@ -659,7 +659,8 @@ int main(int argc, char** argv)
         freopen_s(&fp, "CONOUT$", "w", stdout);
     }
 
-    int can_has_crashdumps = 1;
+    int can_has_crashdumps = !stdCapture_IsRequested();
+    if (stdCapture_IsRequested()) SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
 
     OSVERSIONINFOEX info;
     ZeroMemory(&info, sizeof(OSVERSIONINFOEX));
@@ -767,7 +768,8 @@ int main(int argc, char** argv)
 
         openjkdf2_restartMode = OPENJKDF2_RESTART_NONE;
         memset(openjkdf2_aRestartPath, 0, sizeof(openjkdf2_aRestartPath));
-        Window_Main_Linux(argc, argv);
+        int windowResult = Window_Main_Linux(argc, argv);
+        if (stdCapture_IsRequested() || windowResult == 6) return 6;
 
         printf("openjkdf2_bOrigWasRunningFromExistingInstall %x\n", openjkdf2_bOrigWasRunningFromExistingInstall);
         printf("openjkdf2_bIsRunningFromExistingInstall %x\n", openjkdf2_bIsRunningFromExistingInstall);

@@ -1,4 +1,5 @@
 #include "jkGUIDialog.h"
+#include "Main/stdCapture.h"
 
 #include "General/Darray.h"
 #include "General/stdBitmap.h"
@@ -72,6 +73,10 @@ tVBuffer *jkGuiDialog_sub_416900()
 
 int jkGuiDialog_OkCancelDialog(char16_t *stringA, char16_t *stringB)
 {
+    if (stdCapture_IsActive()) {
+        char detail[1024]; stdString_WcharToChar(detail, stringB, sizeof(detail)-1); detail[sizeof(detail)-1] = 0;
+        fprintf(stderr, "capture: unexpected game confirmation: %s\n", detail); stdCapture_Complete(0);
+    }
     int v2; // edi
     int v5; // esi
 
@@ -117,6 +122,10 @@ int jkGuiDialog_OkCancelDialog(char16_t *stringA, char16_t *stringB)
 
 void jkGuiDialog_ErrorDialog(char16_t *stringA, char16_t *stringB)
 {
+    if (stdCapture_IsActive()) {
+        char detail[1024]; stdString_WcharToChar(detail, stringB, sizeof(detail)-1); detail[sizeof(detail)-1] = 0;
+        fprintf(stderr, "capture: game error: %s\n", detail); stdCapture_Complete(0);
+    }
     int v2; // edi
 
     // Added

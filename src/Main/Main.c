@@ -67,6 +67,7 @@
 #include "General/stdJSON.h"
 #include "Dss/jkDSS.h"
 #include "Main/InstallHelper.h"
+#include "Main/stdCapture.h"
 #include "sithCvar.h"
 
 #include "Platform/Common/stdHttp.h"
@@ -144,8 +145,11 @@ int Main_StartupDedicated(int bFullyDedicated)
     // back, so loading it earlier would discard unregistered mod hotkeys.
     std3D_StartScene();
     std3D_EndScene();
+    stdCapture_Trace("loading static world");
     sithOpenStatic("static.jkl");
+    stdCapture_Trace("registering inventory");
     jkHudInv_InitItems();
+    stdCapture_Trace("creating isolated profile");
 
     if (bFullyDedicated) {
         strcpy(aTmpPlayerShortName, "ServerDed");
@@ -172,8 +176,10 @@ int Main_StartupDedicated(int bFullyDedicated)
     }
 
 //#if !defined(TARGET_NO_MULTIPLAYER_MENUS)
+    stdCapture_Trace("profile ready");
     jkGuiNetHost_SaveSettings();
     jkGuiNetHost_LoadSettings();
+    stdCapture_Trace("settings ready");
 //#endif // !defined(TARGET_NO_MULTIPLAYER_MENUS)
 
     // Fake player
@@ -374,7 +380,7 @@ int Main_Startup(const char *cmdline)
         }
     }
     stdStartup(&hs); // Added
-    InstallHelper_SetCwd(); // Added
+    if (!stdCapture_IsActive()) InstallHelper_SetCwd(); // Capture uses only its explicit staged CWD.
 
     wuRegistry_Startup(HKEY_LOCAL_MACHINE, "Software\\LucasArts Entertainment Company\\JediKnight\\v1.0", (BYTE*)"0.1");
     //stdStartup(&hs); // Moved
@@ -712,6 +718,11 @@ void Main_ParseCmdLine(char *cmdline)
         else if (!__strcmpi(pArgTok, "-headless") || !__strcmpi(pArgTok, "/headless") )
         {
             Main_bHeadless = 1;
+        }
+        else if (!__strcmpi(pArgTok, "-capture"))
+        {
+            if (!stdCapture_IsActive()) { fprintf(stderr, "capture: missing or invalid request\n"); exit(6); }
+            Main_bNoHUD = 1;
         }
         else if (!__strcmpi(pArgTok, "-verboseNetworking") || !__strcmpi(pArgTok, "/verboseNetworking") )
         {

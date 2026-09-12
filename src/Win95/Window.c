@@ -746,6 +746,7 @@ void Window_UpdateHeadless()
 
 void Window_SdlUpdate()
 {
+    stdCapture_CheckDeadline(SDL_GetTicks());
     if (Main_bHeadless)
     {
         Window_UpdateHeadless();
@@ -764,6 +765,7 @@ void Window_SdlUpdate()
 
     while (SDL_PollEvent(&event))
     {
+        if (stdCapture_IsActive()) continue; // The user's keyboard, mouse and controller never drive capture.
         int bIsOdin = 0;
         int bIsGamepad = 0;
 
@@ -1231,6 +1233,9 @@ void Window_SdlUpdate()
 void Window_SdlVblank()
 {
     if (Main_bHeadless) return;
+#if !defined(RENDER_GL11)
+    if (stdCapture_FrameReady()) stdCapture_Complete(std3D_CaptureInspectionFrame());
+#endif
 
     //static uint32_t roundtrip = 0;
     //uint32_t before = stdPlatform_GetTimeMsec();
@@ -1340,6 +1345,12 @@ void Window_RecreateSDL2Window()
     if (Window_bHeadlessStartup) {
         flags |= SDL_WINDOW_HIDDEN;
     }
+    if (stdCapture_IsActive()) {
+        flags |= SDL_WINDOW_HIDDEN | SDL_WINDOW_NOT_FOCUSABLE;
+        flags &= ~(SDL_WINDOW_FULLSCREEN | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+        Window_screenXSize = stdCapture_request.width;
+        Window_screenYSize = stdCapture_request.height;
+    }
 
     // SDL3 SDL_CreateWindow() dropped the x/y position params; position is set
     // separately below via SDL_SetWindowPosition() on desktop.
@@ -1444,6 +1455,15 @@ int Window_Main_Linux(int argc, char** argv)
     char cmdLine[1024];
     int result;
 
+    if (!stdCapture_Init(argc, argv)) { fprintf(stderr, "capture: invalid request or isolated session\n"); return 6; }
+    if (stdCapture_IsActive()) {
+#if defined(RENDER_GL11) || defined(ARCH_WASM) || defined(TARGET_ANDROID)
+        fprintf(stderr, "capture: this backend is unsupported\n"); return 6;
+#endif
+        Window_isFullscreen = 0;
+        Window_isHiDpi = 0;
+    }
+
     Window_bHeadlessStartup = 0;
     for (int i = 1; i < argc; i++) {
         if (!__strcmpi(argv[i], "-headless") || !__strcmpi(argv[i], "/headless")) {
@@ -1451,6 +1471,8 @@ int Window_Main_Linux(int argc, char** argv)
             break;
         }
     }
+
+    if (stdCapture_IsActive()) Window_bHeadlessStartup = 1;
 
     // Init SDL
     SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
@@ -1470,10 +1492,11 @@ int Window_Main_Linux(int argc, char** argv)
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
 #endif
 
-    SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD);
+    SDL_Init(stdCapture_IsActive() ? SDL_INIT_VIDEO : SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD);
+    stdCapture_CheckDeadline(SDL_GetTicks());
 
     
-    if ((SDL_GetHintBoolean("SteamClientLaunch", 0) || SDL_GetHintBoolean("SteamOS", 0) || SDL_GetHintBoolean("SteamDeck", 0)) && SDL_GetHintBoolean("SteamGamepadUI", 0)) {
+    if (!stdCapture_IsActive() && (SDL_GetHintBoolean("SteamClientLaunch", 0) || SDL_GetHintBoolean("SteamOS", 0) || SDL_GetHintBoolean("SteamDeck", 0)) && SDL_GetHintBoolean("SteamGamepadUI", 0)) {
         Window_bShouldPopSteamKeyboard = 1;
         Window_isFullscreen = 1;
         Window_isHiDpi = 1;
@@ -1560,7 +1583,7 @@ int Window_Main_Linux(int argc, char** argv)
 
     if (!result) return result;
 
-    if (Main_bHeadless)
+    if (Main_bHeadless && !stdCapture_IsActive())
     {
         if (displayWindow) {
             std3D_FreeResources();

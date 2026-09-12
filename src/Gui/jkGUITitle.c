@@ -1,4 +1,5 @@
 #include "jkGUITitle.h"
+#include "Main/stdCapture.h"
 
 #include "General/Darray.h"
 #include "General/stdBitmap.h"
@@ -363,7 +364,7 @@ void jkGuiTitle_LoadingFinalize()
 {
 #ifdef QOL_IMPROVEMENTS
     // Headless clients cannot acknowledge the mission briefing dialog.
-    int shouldSkip = Main_bHeadless || jkPlayer_bFastMissionText || sithNet_isMulti || !sithWorld_g_pCurrentWorld
+    int shouldSkip = Main_bHeadless || stdCapture_IsActive() || jkPlayer_bFastMissionText || sithNet_isMulti || !sithWorld_g_pCurrentWorld
                   || jkGuiTitle_bSkipLoadingWait; // Added
     if ( jkGuiTitle_whichLoading != 1)
     {

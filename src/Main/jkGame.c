@@ -1,4 +1,5 @@
 #include "jkGame.h"
+#include "Main/stdCapture.h"
 
 #include "General/stdPalEffects.h"
 #include "Main/sithMain.h"
@@ -272,7 +273,7 @@ int jkGame_Update()
     // renders through the software path into the menu buffer, exactly as the original did (JK ran
     // the whole frame in software). DrawPov itself calls std3D_ClearZBuffer + RD_ZBUFFER_READ_WRITE
     // (which now also clears the software depth buffer), so the weapon draws in front of the world.
-    jkPlayer_DrawPov();
+    if (!stdCapture_IsActive()) jkPlayer_DrawPov();
     if (rdsw_bActive)
     {
         if (rdsw_pWorldBuf && Video_pCanvas)
@@ -288,7 +289,7 @@ int jkGame_Update()
         rdroid_curAcceleration = rdsw_savedAccel;
     }
 #else
-    jkPlayer_DrawPov();
+    if (!stdCapture_IsActive()) jkPlayer_DrawPov();
 #endif
     jkGame_Update_DrawPov = stdPlatform_GetTimeMsec();
 

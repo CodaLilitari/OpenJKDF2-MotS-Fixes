@@ -6,6 +6,7 @@
 #include "Main/jkQuakeConsole.h"
 
 #include <SDL3/SDL.h>
+#include "Platform/SDL2/stdCaptureUi.h"
 
 #include "jk.h"
 
@@ -807,6 +808,7 @@ void stdControl_ReadGamepad(int idx) {
 
 void stdControl_ReadControls()
 {
+    if (stdCapture_IsActive()) return;
     flex_d_t khz;
 
     if (!stdControl_bControlsActive)

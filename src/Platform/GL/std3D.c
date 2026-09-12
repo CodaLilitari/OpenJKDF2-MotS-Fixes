@@ -3598,6 +3598,46 @@ void std3D_Screenshot(const char* pFpath)
 #endif
 }
 
+// Render-thread capture of the composed back buffer before presentation. PPM
+// writing has a checked, exclusive-file contract unlike the legacy PNG helper.
+int std3D_CaptureInspectionFrame(void)
+{
+    extern SDL_Window* displayWindow;
+    if (!stdCapture_IsActive() || !displayWindow || !std3D_pFb) return 0;
+    int w = Window_xSize, h = Window_ySize;
+    if (w != stdCapture_request.width || h != stdCapture_request.height) return 0;
+    size_t bytes = (size_t)w*h*3;
+    uint8_t* data = (uint8_t*)malloc(bytes);
+    if (!data) return 0;
+    GLint oldFbo, oldPack, oldRow, oldSkipRows, oldSkipPixels, oldBuffer;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &oldFbo);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &oldPack);
+    glGetIntegerv(GL_PACK_ROW_LENGTH, &oldRow);
+    glGetIntegerv(GL_PACK_SKIP_ROWS, &oldSkipRows);
+    glGetIntegerv(GL_PACK_SKIP_PIXELS, &oldSkipPixels);
+    glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &oldBuffer);
+    if (glGetError() != GL_NO_ERROR) { free(data); return 0; }
+    glBindFramebuffer(GL_FRAMEBUFFER, std3D_windowFbo);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    glReadBuffer(GL_BACK);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+    glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+    glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, data);
+    int ok = glGetError() == GL_NO_ERROR;
+    glPixelStorei(GL_PACK_ALIGNMENT, oldPack);
+    glPixelStorei(GL_PACK_ROW_LENGTH, oldRow);
+    glPixelStorei(GL_PACK_SKIP_ROWS, oldSkipRows);
+    glPixelStorei(GL_PACK_SKIP_PIXELS, oldSkipPixels);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, oldBuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, oldFbo);
+    if (glGetError() != GL_NO_ERROR) ok = 0;
+    if (ok) ok = stdCapture_WriteRgb(data, w, h);
+    free(data);
+    return ok;
+}
+
 #ifdef RDRASTER_SOFTWARE_RENDERER
 // Capture the presented WINDOW framebuffer (what the user actually sees, including the software
 // world present + HUD overlay), unlike std3D_Screenshot which reads the pre-composite scene FBO.
