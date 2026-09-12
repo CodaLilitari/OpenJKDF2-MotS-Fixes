@@ -68,6 +68,7 @@
 #include "Dss/jkDSS.h"
 #include "Main/InstallHelper.h"
 #include "Main/stdCapture.h"
+#include "Main/stdAutostartCharacter.h"
 #include "sithCvar.h"
 
 #include "Platform/Common/stdHttp.h"
@@ -107,6 +108,7 @@ int32_t Main_bDwCompat = 0;
 int32_t Main_bEnhancedCogVerbs = 0;
 char Main_strEpisode[129];
 char Main_strMap[128+4];
+static char Main_strAutostartCharacter[32];
 #endif
 
 #if defined(QOL_IMPROVEMENTS)
@@ -192,6 +194,28 @@ int Main_StartupDedicated(int bFullyDedicated)
     stdString_SafeStrCopy(jkGuiMultiplayer_mpcInfo.sideMat, "sabergreen1.mat", 32);
     stdString_SafeStrCopy(jkGuiMultiplayer_mpcInfo.tipMat, "sabergreen0.mat", 32);
     jkGuiMultiplayer_mpcInfo.jediRank = 0;
+
+    if (Main_strAutostartCharacter[0]) {
+        char16_t characterName[32];
+        stdString_CharToWchar(characterName, Main_strAutostartCharacter, 31);
+        characterName[31] = 0;
+        // Match the character menu: load bins before checking the selected
+        // character's eligibility for the host rank, then let ordinary player
+        // startup reload those bins after the world inventory is initialized.
+        // Passing the actual host descriptor avoids the old temporary-info path
+        // that loaded bins but left the host appearance hardcoded to Kyle.
+        if (!jkPlayer_MPCParse(&jkGuiMultiplayer_mpcInfo, NULL,
+                              jkPlayer_playerShortName, characterName, 1)) {
+            fprintf(stderr, "autostart: selected multiplayer character could not be read\n");
+            exit(6);
+        }
+        if (jkGuiMultiplayer_mpcInfo.jediRank < 0
+            || jkGuiMultiplayer_mpcInfo.jediRank > jkGuiNetHost_maxRank) {
+            fprintf(stderr, "autostart: selected character rank %d is outside host range 0..%d\n",
+                    jkGuiMultiplayer_mpcInfo.jediRank, jkGuiNetHost_maxRank);
+            exit(6);
+        }
+    }
 
     // Set up minimal render settings
     //jkPlayer_fov = 90;
@@ -572,6 +596,7 @@ void Main_Shutdown()
     Main_bEnhancedCogVerbs = 0;
     memset(Main_strEpisode, 0, sizeof(Main_strEpisode));
     memset(Main_strMap, 0, sizeof(Main_strMap));
+    memset(Main_strAutostartCharacter, 0, sizeof(Main_strAutostartCharacter));
 
     stdPlatform_Printf("OpenJKDF2: %s done\n", __func__);
 
@@ -715,6 +740,15 @@ void Main_ParseCmdLine(char *cmdline)
             char* pArgNext = _strtok(0, " \t");
             stdString_SafeStrCopy(Main_strMap, pArgNext, 0x80);
         }
+        else if (!__strcmpi(pArgTok, "-character"))
+        {
+            char* name = _strtok(0, " \t");
+            if (Main_strAutostartCharacter[0] || !stdAutostart_CharacterNameValid(name)) {
+                fprintf(stderr, "autostart: invalid or repeated multiplayer character name\n");
+                exit(6);
+            }
+            stdString_SafeStrCopy(Main_strAutostartCharacter, name, sizeof(Main_strAutostartCharacter));
+        }
         else if (!__strcmpi(pArgTok, "-headless") || !__strcmpi(pArgTok, "/headless") )
         {
             Main_bHeadless = 1;
@@ -750,6 +784,12 @@ void Main_ParseCmdLine(char *cmdline)
             Main_ShowHelp();
         }
     }
+#ifdef QOL_IMPROVEMENTS
+    if (Main_strAutostartCharacter[0] && (!Main_bAutostart || Main_bAutostartSp)) {
+        fprintf(stderr, "autostart: -character requires -autostart multiplayer mode\n");
+        exit(6);
+    }
+#endif
 }
 
 int Main_FPrintf(const char* fmt, ...) {

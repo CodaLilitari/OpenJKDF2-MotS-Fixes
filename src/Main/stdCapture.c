@@ -1,5 +1,6 @@
 // An opt-in inspection capture. This does not implement deterministic simulation.
 #include "Main/stdCapture.h"
+#include "Main/stdAutostartCharacter.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +25,7 @@
 stdCaptureRequest stdCapture_request;
 static int active, renderedFrames, cameraApplied;
 static uint64_t firstMs;
+static int write_world_state(FILE* file);
 int stdCapture_IsRequested(void) { const char* p = getenv("OPENJKDF2_CAPTURE_REQUEST"); return p && *p; }
 int stdCapture_IsActive(void) { return active; }
 void stdCapture_Trace(const char* message) { if (active) { fprintf(stderr, "capture startup: %s\n", message); fflush(stderr); } }
@@ -63,12 +65,23 @@ int stdCapture_Init(int argc, char** argv)
         for (int i = 1; i < argc; ++i) if (!strcmp(argv[i], "-capture")) return 0;
         return 1;
     }
-    int autostart = 0, singleplayer = 0, episode = 0, map = 0, capture = 0;
+    int autostart = 0, singleplayer = 0, multiplayer = 0, episode = 0, map = 0, capture = 0, startupPath = 0, character = 0;
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "-capture")) capture++;
         else if (!strcmp(argv[i], "-autostart")) autostart++;
         else if (!strcmp(argv[i], "-sp")) singleplayer++;
+        else if (!strcmp(argv[i], "-mp")) multiplayer++;
         else if (!strcmp(argv[i], "-motsCompat") || !strcmp(argv[i], "-noHUD")) { }
+        else if (!strcmp(argv[i], "-character")) {
+            if (++character != 1 || ++i >= argc || !stdAutostart_CharacterNameValid(argv[i])) return 0;
+        }
+        else if (!strcmp(argv[i], "-path")) {
+            // One explicitly staged startup directory, not arbitrary paths or
+            // another installation. Main uses this same argument normally.
+            if (++startupPath != 1 || ++i >= argc || !argv[i][0] || strlen(argv[i]) > 31) return 0;
+            for (const char* p = argv[i]; *p; ++p)
+                if (!( (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_' || *p == '-')) return 0;
+        }
         else if (!strcmp(argv[i], "-episode") || !strcmp(argv[i], "-map")) {
             int isMap = !strcmp(argv[i], "-map");
             if (++i >= argc || !argv[i][0] || strlen(argv[i]) > 100) return 0;
@@ -77,7 +90,8 @@ int stdCapture_Init(int argc, char** argv)
             if (isMap) map++; else episode++;
         } else return 0;
     }
-    if (capture != 1 || autostart != 1 || singleplayer != 1 || episode != 1 || map != 1) return 0;
+    if (capture != 1 || autostart != 1 || singleplayer + multiplayer != 1 || episode != 1 || map != 1) return 0;
+    if (character && multiplayer != 1) return 0;
     const char* path = getenv("OPENJKDF2_CAPTURE_REQUEST");
     if (!absolute_path(path)) return 0;
     FILE* input = fopen(path, "rb"); if (!input) return 0;
@@ -120,8 +134,9 @@ int stdCapture_WriteRgb(const unsigned char* pixels, int width, int height)
         ok = fwrite(pixels + (size_t)y*width*3, 3, width, image) == (size_t)width;
     if (fclose(image)) ok = 0;
     const stdCaptureRequest* r = &stdCapture_request;
-    if (fprintf(record, "{\n  \"schemaVersion\": 1,\n  \"mode\": \"hidden-rendered-inspection\",\n  \"format\": \"ppm-rgb8\",\n  \"width\": %d,\n  \"height\": %d,\n  \"renderedFrame\": %d,\n  \"sector\": %d,\n  \"position\": [%.17g, %.17g, %.17g],\n  \"pitchYawRoll\": [%.17g, %.17g, %.17g],\n  \"horizontalFov\": %.17g,\n  \"deterministicSimulation\": false,\n  \"resourceHashesVerifiedByEngine\": false\n}\n",
+    if (fprintf(record, "{\n  \"schemaVersion\": 1,\n  \"mode\": \"hidden-rendered-inspection\",\n  \"format\": \"ppm-rgb8\",\n  \"width\": %d,\n  \"height\": %d,\n  \"renderedFrame\": %d,\n  \"sector\": %d,\n  \"position\": [%.17g, %.17g, %.17g],\n  \"pitchYawRoll\": [%.17g, %.17g, %.17g],\n  \"horizontalFov\": %.17g,\n  \"deterministicSimulation\": false,\n  \"resourceHashesVerifiedByEngine\": false",
         width, height, renderedFrames, r->sector, r->x, r->y, r->z, r->pitch, r->yaw, r->roll, r->fov) < 0) ok = 0;
+    if (!write_world_state(record) || fprintf(record, "\n}\n") < 0) ok = 0;
     if (fclose(record)) ok = 0;
     if (!ok) { remove(stdCapture_request.output); remove(receipt); }
     return ok;
@@ -135,6 +150,43 @@ void stdCapture_Complete(int success) { fprintf(stderr, "capture: %s\n", success
 #include "World/jkPlayer.h"
 #include "Engine/sithCamera.h"
 #include "Primitives/rdMatrix.h"
+#include "Primitives/rdModel3.h"
+#include "Main/Main.h"
+#include "Gui/jkGUIMultiplayer.h"
+#include "World/sithSoundClass.h"
+
+static int write_name(FILE* file, const char* name)
+{
+    if (!name) return fputs("null", file) >= 0;
+    if (fputc('"', file) == EOF) return 0;
+    for (int i = 0; i < 32 && name[i]; ++i) {
+        unsigned char c = (unsigned char)name[i];
+        if (c < 32 || c >= 127 || c == '"' || c == '\\') {
+            if (fprintf(file, "\\u%04x", c) < 0) return 0;
+        } else if (fputc(c, file) == EOF) return 0;
+    }
+    return fputc('"', file) != EOF;
+}
+
+static int write_world_state(FILE* file)
+{
+    SithThing* player = sithPlayer_g_pLocalPlayerThing;
+    const char* model = player && player->renderData.type == RD_THING_MODEL3 && player->renderData.model3
+        ? player->renderData.model3->filename : NULL;
+    const char* sound = NULL;
+#ifdef SITH_DEBUG_STRUCT_NAMES
+    if (player && player->pSoundClass) sound = player->pSoundClass->aName;
+#endif
+    if (fprintf(file, ",\n  \"engineWorldStateAvailable\": true,\n  \"isMultiplayer\": %s,\n  \"motsCompat\": %s,\n  \"world\": ",
+                sithNet_isMulti ? "true" : "false", Main_bMotsCompat ? "true" : "false") < 0) return 0;
+    if (!write_name(file, sithWorld_g_pCurrentWorld ? sithWorld_g_pCurrentWorld->map_jkl_fname : NULL)) return 0;
+    if (fputs(",\n  \"localPlayerModel\": ", file) < 0 || !write_name(file, model)) return 0;
+    if (fputs(",\n  \"localPlayerSoundClass\": ", file) < 0 || !write_name(file, sound)) return 0;
+    if (fputs(",\n  \"hostRequestedModel\": ", file) < 0 || !write_name(file, sithNet_isMulti ? jkGuiMultiplayer_mpcInfo.model : NULL)) return 0;
+    if (fprintf(file, ",\n  \"localPlayerHierarchyNodes\": %u", model ? player->renderData.model3->numHNodes : 0) < 0) return 0;
+    return 1;
+}
+
 void stdCapture_ApplyCamera(void)
 {
     if (!active) return;
@@ -151,4 +203,7 @@ void stdCapture_ApplyCamera(void)
 }
 #elif !defined(STDCAPTURE_UNIT_TEST)
 void stdCapture_ApplyCamera(void) { }
+static int write_world_state(FILE* file) { return fputs(",\n  \"engineWorldStateAvailable\": false", file) >= 0; }
+#else
+static int write_world_state(FILE* file) { return fputs(",\n  \"engineWorldStateAvailable\": false", file) >= 0; }
 #endif

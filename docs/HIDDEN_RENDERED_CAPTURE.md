@@ -27,8 +27,9 @@ Line three supplies position XYZ, pitch/yaw/roll in degrees, and **horizontal**
 FOV. The last line is an absolute new `.ppm` output path. Limits are 64–2048 per
 dimension, at most 2,097,152 pixels, frame 1–120, timeout 1–60 seconds, and FOV
 20–140 degrees. Numbers must be finite and bounded. Episode/map arguments accept
-only bounded ASCII names, with no directory traversal or additional startup
-switches. The `-capture` flag without its request is rejected before SDL startup.
+only bounded ASCII names, with no directory traversal. Capture permits only its
+explicitly reviewed switches. The `-capture` flag without its request is rejected
+before SDL startup.
 
 Use an explicitly staged, writable working directory containing
 `.openjkdf2-capture-session` and `resource/jk_.cd`. Capture bypasses installation
@@ -115,3 +116,49 @@ Ignored evidence lives under `build_win64/capture-audit/`, including the success
 `retail-05/launcher-receipt.json`, PPM and byte-faithful PNG conversion. Source,
 test and build hashes are recorded separately so a later build is not confused
 with this validated executable.
+
+## Multiplayer and actual character selection
+
+The capture parser also accepts exactly one explicit `-mp` mode instead of
+`-sp`, plus an optional staged `-path startup` directory and `-character Reviewed`.
+The path is a single ASCII directory name with no separators or dots. The
+character is an existing MPC basename: ASCII letters, digits, `_` or `-`, at
+most 31 characters. It is resolved inside the selected profile's ordinary
+`player/<profile>/<character>.mpc` directory. Capture still requires the explicit
+session marker and uses no installation discovery.
+
+```text
+openjkdf2-64.exe -capture -autostart -mp -motsCompat -noHUD -episode JKM_MP -map k1.jkl -path startup -character Reviewed
+```
+
+The `-character` option is also available to ordinary multiplayer autostart.
+Without it, the existing Kyle default remains. SP, non-autostart, repeated and
+invalid character arguments fail with exit code 6. Selection loads the native
+MPC descriptor and bins, checks rank against the host's allowed range, and passes
+that descriptor through normal multiplayer creation. A failed read exits rather
+than falling back to the menu. This does not implement a replacement inventory
+system or bypass character eligibility.
+
+The image sidecar now records the actual game mode, world, local player's loaded
+model/soundclass, model hierarchy-node count and requested host model. Soundclass
+names are nullable in builds without debug struct names. The actual model may
+differ from the request if ordinary game rules intentionally select a uniform;
+consumers must check both fields. Paths and names in the JSON are escaped.
+
+The September 12 MP candidate rebuilt all current engine translation units
+against a copied private dependency cache. Its executable SHA-256 is
+`0247daaac30347f7b85552de615d9db499faa0fb5ea2a9fd9b92157f557e5e60`.
+All 15 exact converted Anime Characters MPC selections loaded their requested
+model and soundclass on native MotS `k1.jkl`, each with 18 hierarchy nodes and
+no resource diagnostics. A default-character control retained Kyle. Rank -1
+and rank 9 controls exited 6 before hosting with the staged maximum of 8.
+Three parser/writer/UI test groups pass ASan/UBSan, including a failing unsafe
+RaiseWindow control. These tests used newly staged private sessions and sampled
+only their own child windows; no desktop input or capture was used.
+
+This fixed inspection camera retains ordinary first-person body visibility
+rules. Those initial frames establish rendering and actual resource selection,
+not a visible full-body comparison, animation, audible sound or peer agreement.
+The inherited MPC reader still has incomplete malformed-bin failure handling
+and unbounded header token scans. These tests used complete, exact, pinned MPC
+fixtures; arbitrary downloaded character-file validation is not certified.

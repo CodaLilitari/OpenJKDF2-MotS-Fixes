@@ -25,13 +25,20 @@ def main():
     logs = []
     with tempfile.TemporaryDirectory(prefix="openjk-capture-test-") as tmp:
         stage = Path(tmp)
-        for name in ("capture_request_test", "capture_ui_test"):
+        (stage / "resource").mkdir()
+        (stage / "resource/jk_.cd").write_bytes(b"test")
+        (stage / ".openjkdf2-capture-session").write_text("synthetic\n")
+        request = stage / "request.txt"
+        request.write_text("sed-engine-capture-v1\n64 64 0 3 1000\n0 0 0 0 0 0 75\n" + str(stage / "unused.ppm") + "\n")
+        for name in ("capture_request_test", "capture_ui_test", "capture_launch_test"):
             exe = stage / name
             run([compiler, *flags, "-I", str(ROOT), str(ROOT / "Tests" / (name + ".c")), "-lm", "-o", str(exe)])
             command = [str(exe)]
             if name == "capture_request_test":
                 command.append(str(stage / "pixels.ppm"))
-            result = run(command)
+            if name == "capture_launch_test":
+                command.append(str(request))
+            result = run(command, cwd=stage)
             logs.append({"test": name, "stdout": result.stdout, "stderr": result.stderr})
         # Restore an unsafe RaiseWindow path: the same wrapper test must fail.
         header = ROOT / "Platform/SDL2/stdCaptureUi.h"
@@ -51,10 +58,10 @@ def main():
         pixels = stage / "pixels.ppm"
         (args.output / "pixels.ppm").write_bytes(pixels.read_bytes())
         (args.output / "pixels.ppm.json").write_bytes((stage / "pixels.ppm.json").read_bytes())
-    sources = ["Main/stdCapture.c", "Main/stdCapture.h", "Platform/SDL2/stdCaptureUi.h", "Tests/capture_request_test.c", "Tests/capture_ui_test.c", "Tests/run_capture_test.py"]
+    sources = ["Main/stdCapture.c", "Main/stdCapture.h", "Main/stdAutostartCharacter.h", "Platform/SDL2/stdCaptureUi.h", "Tests/capture_request_test.c", "Tests/capture_ui_test.c", "Tests/capture_launch_test.c", "Tests/run_capture_test.py"]
     receipt = {
         "schemaVersion": 1, "gameLaunched": False, "windowSystemLinked": False,
-        "sanitizers": ["address", "undefined"], "testGroupsPassed": 2,
+        "sanitizers": ["address", "undefined"], "testGroupsPassed": 3,
         "negativeControlsRejected": 1, "compiler": run([compiler, "--version"]).stdout.splitlines()[0],
         "sources": {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in sources},
         "logs": logs,
