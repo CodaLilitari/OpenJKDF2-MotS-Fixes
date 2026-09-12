@@ -1,4 +1,5 @@
 #include "rdMaterial.h"
+#include "rdMaterialIO.h"
 
 #include "General/stdString.h"
 #include "Engine/rdroid.h"
@@ -263,7 +264,14 @@ int rdMaterial_LoadEntry_Common(char *mat_fpath, rdMaterial *material, int creat
       while ( 1 )
       {
         //printf("asdf %x %x\n", tex_numa, material->num_textures);
-        rdroid_g_pHS->fileRead(mat_file_, &tex_header_1, sizeof(rdTextureHeader));
+        // Reject bad/short headers before their mip count indexes fixed arrays.
+        if (!rdMaterial_ReadExact(rdroid_g_pHS->fileRead, mat_file_, &tex_header_1, sizeof(tex_header_1)) ||
+            !rdMaterial_ValidTextureLayout(tex_header_1.width, tex_header_1.height,
+                tex_header_1.num_mipmaps, sizeof(material->textures[0].texture_struct) / sizeof(material->textures[0].texture_struct[0]))) {
+            stdPlatform_Printf("OpenJKDF2: Material `%s` texture %d has a short or invalid header!\n", mat_fpath, tex_numa);
+            rdroid_g_pHS->fileClose(mat_file_);
+            return 0;
+        }
         texture = &material->textures[tex_numa];
         texture->alpha_en = tex_header_1.alpha_en;
         texture->unk_0c = tex_header_1.unk_0c;
@@ -323,11 +331,17 @@ LABEL_21:
         if ( texture->alpha_en & 1 )
           stdDisplay_VBufferSetColorKey(created_tex, texture->color_transparent);
         stdDisplay_VBufferLock(*texture_struct);
-        rdroid_g_pHS->fileRead(
-          mat_file__,
-          (void *)(*texture_struct)->surface_lock_alloc,
-          (*texture_struct)->format.size);
+        // On-disk MAT rows are tightly packed. Reading surface->pitch bytes
+        // per row consumes the next cel/header for narrow SDL surfaces.
+        int pixelsRead = rdMaterial_ReadPackedRows(rdroid_g_pHS->fileRead, mat_file__,
+            (void*)(*texture_struct)->surface_lock_alloc, (*texture_struct)->format.size,
+            (size_t)format.width * (format.format.bpp / 8), format.height, (*texture_struct)->format.rowSize);
         stdDisplay_VBufferUnlock(*texture_struct);
+        if (!pixelsRead) {
+            stdPlatform_Printf("OpenJKDF2: Material `%s` texture %d mip %u has a short or invalid pixel payload!\n", mat_fpath, tex_numa, mipmap_num);
+            rdroid_g_pHS->fileClose(mat_file__);
+            return 0;
+        }
 
 #if defined(RDMATERIAL_LRU_LOAD_UNLOAD)
         material->bDataLoaded = bDoLoad;
