@@ -1,10 +1,15 @@
 # OpenJKDF2-MotS-Fixes retail-fidelity Windows x64 fork and evaluation build
 
-OpenJKDF2-MotS-Fixes is the bugfix fork at `andreipemberton/OpenJKDF2-MotS-Fixes`. It tracks
-`shinyquagsire23/OpenJKDF2` without granting its `upstream`
-remote a push URL. Changes are validated on `retail-fidelity-x64` before the
-fork's default branch is fast-forwarded. No upstream pull request is created
-by this workflow. Fork-specific history is summarized in `CHANGELOG_FORK.md`.
+The current public bugfix fork is
+[CodaLilitari/OpenJKDF2-MotS-Fixes](https://github.com/CodaLilitari/OpenJKDF2-MotS-Fixes),
+with `main` as its publishing branch. It preserves the upstream history of
+`shinyquagsire23/OpenJKDF2` and the original Andrei-hosted fork.
+
+The evaluation recorded below used `retail-fidelity-x64` before the former
+fork's default branch was fast-forwarded. Its `upstream` remote had no push
+URL, and that workflow created no upstream pull request. These branch names
+and validation SHAs describe the historical evaluation. Fork-specific history
+is summarized in `CHANGELOG_FORK.md`.
 
 ## Baseline
 

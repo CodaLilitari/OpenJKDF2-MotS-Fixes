@@ -1,13 +1,14 @@
 # Render and capture integration into main
 
-PR [#4](https://github.com/andreipemberton/OpenJKDF2-MotS-Fixes/pull/4)
-corrects postprocessing attribute locations and adds the background OpenGL
+Original Andrei repository PR [#4](https://github.com/andreipemberton/OpenJKDF2-MotS-Fixes/pull/4)
+(historical link; that repository is now private) corrects postprocessing attribute locations and adds the background OpenGL
 `-renderprobe` mode. The integration also retains the newer posed `-capture`
 path, explicit multiplayer character selection, and packed-MAT row handling.
 These changes were combined before native validation; the two capture modes
 remain mutually exclusive.
 
-The merge is `f696084bc94f9d969184ed4e282ce3dbf0915f0e`, with parents
+The same merge is publicly preserved at
+[`f696084bc94f9d969184ed4e282ce3dbf0915f0e`](https://github.com/CodaLilitari/OpenJKDF2-MotS-Fixes/commit/f696084bc94f9d969184ed4e282ce3dbf0915f0e), with parents
 `28ec799f1dab3f3954b4d395d19711c2204c43b1` (latest capture/MAT work) and
 `b2a31c7ee5cf9b9e12a32ee402af0c5ae7484c1a` (PR #4). Startup declarations and
 CI branch targets were corrected in

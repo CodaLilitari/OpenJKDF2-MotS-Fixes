@@ -4,10 +4,10 @@ Building is currently tested primarily on Arch Linux, Ubuntu 20.04, and MacOS Mo
 
 ### Fork source identity and native regression checks
 
-For an exact checkout of this fork, use the renamed repository explicitly:
+For an exact checkout of this fork, use the public fork explicitly:
 
 ```sh
-git clone --recurse-submodules https://github.com/andreipemberton/OpenJKDF2-MotS-Fixes.git OpenJKDF2-MotS-Fixes
+git clone --recurse-submodules https://github.com/CodaLilitari/OpenJKDF2-MotS-Fixes.git OpenJKDF2-MotS-Fixes
 cd OpenJKDF2-MotS-Fixes
 # If reproducing a recorded build, check out its full source commit here.
 git submodule update --init --recursive
