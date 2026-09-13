@@ -11,6 +11,7 @@
 #include "World/jkPlayer.h"
 #include "World/sithSector.h"
 #include "Win95/Video.h"
+#include "Win95/Window.h"
 #include "Win95/stdComm.h"
 #include "Platform/std3D.h"
 #include "Win95/stdDisplay.h"
@@ -403,6 +404,9 @@ int jkGame_Update()
 #endif
 #if defined(SDL2_RENDER) || defined(TARGET_RETRO_HOMEBREW)
     std3D_DrawMenu();
+#if defined(SDL2_RENDER) && defined(TARGET_CAN_JKGM) && !defined(RENDER_GL11)
+    Window_RenderProbeGameplayFrame();
+#endif
     rdFinishFrame();
 #endif
 

@@ -29,6 +29,8 @@ int main(int argc, char** argv)
     char* both[] = {"game", "-capture", "-autostart", "-sp", "-episode", "ep", "-map", "map.jkl", "-mp"};
     check(0, 9, both);
     both[8] = "-sp"; check(0, 9, both);
+    both[8] = "-renderprobe"; check(0, 9, both);
+    both[8] = "/renderprobe"; check(0, 9, both);
     sp[3] = "-headless"; check(0, 8, sp);
     assert(stdAutostart_CharacterNameValid("1234567890123456789012345678901"));
     assert(!stdAutostart_CharacterNameValid(NULL));
@@ -38,6 +40,9 @@ int main(int argc, char** argv)
     assert(!stdCapture_Init(8, sp));
     char* normal[] = {"game"};
     assert(stdCapture_Init(1, normal));
+    char* probe[] = {"game", "-renderprobe", "-autostart", "-renderout", "/tmp/probe"};
+    assert(stdCapture_Init(5, probe));
+    assert(!stdCapture_IsActive());
     puts("capture launch tests passed (explicit SP/MP, profile character, staged overlay, invalid combinations)");
     return 0;
 }

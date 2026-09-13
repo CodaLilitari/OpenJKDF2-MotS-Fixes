@@ -642,7 +642,9 @@ int main(int argc, char** argv)
     // Main_Startup parses this later. Preserve inherited streams for headless
     // launches instead of allocating a console and replacing redirected output.
     for (int i = 1; i < argc; i++) {
-        if (!__strcmpi(argv[i], "-headless") || !__strcmpi(argv[i], "/headless") || !__strcmpi(argv[i], "-capture")) {
+        if (!__strcmpi(argv[i], "-headless") || !__strcmpi(argv[i], "/headless")
+            || !__strcmpi(argv[i], "-capture")
+            || !__strcmpi(argv[i], "-renderprobe") || !__strcmpi(argv[i], "/renderprobe")) {
             skipConsoleWindow = 1;
             break;
         }
@@ -757,6 +759,7 @@ int main(int argc, char** argv)
         }
     }
 
+    int windowResult = 1;
     while (1)
     {
         OpenJKDF2_Globals_Reset();
@@ -768,7 +771,7 @@ int main(int argc, char** argv)
 
         openjkdf2_restartMode = OPENJKDF2_RESTART_NONE;
         memset(openjkdf2_aRestartPath, 0, sizeof(openjkdf2_aRestartPath));
-        int windowResult = Window_Main_Linux(argc, argv);
+        windowResult = Window_Main_Linux(argc, argv);
         if (stdCapture_IsRequested() || windowResult == 6) return 6;
 
         printf("openjkdf2_bOrigWasRunningFromExistingInstall %x\n", openjkdf2_bOrigWasRunningFromExistingInstall);
@@ -832,7 +835,7 @@ int main(int argc, char** argv)
     }
 #endif
 
-    return 1;
+    return Window_bRenderProbe ? windowResult : 1;
 }
 
 #ifdef LINUX

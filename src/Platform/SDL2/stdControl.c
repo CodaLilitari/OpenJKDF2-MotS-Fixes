@@ -666,6 +666,7 @@ LABEL_19:
 
 void stdControl_SetActivation(int a)
 {
+    if (Window_bRenderProbe) { stdControl_bControlsActive = 0; return; }
     extern SDL_Window* displayWindow;
 
     if ( stdControl_bOpen )
@@ -808,7 +809,7 @@ void stdControl_ReadGamepad(int idx) {
 
 void stdControl_ReadControls()
 {
-    if (stdCapture_IsActive()) return;
+    if (stdCapture_IsActive() || Window_bRenderProbe) return;
     flex_d_t khz;
 
     if (!stdControl_bControlsActive)
@@ -1059,6 +1060,7 @@ void stdControl_ReadMouse()
 }
 
 void stdControl_ShowSystemKeyboard() {
+    if (Window_bRenderProbe) return;
     extern SDL_Window* displayWindow;
     if (stdControl_bKeyboardBeingShown) {
         return;
@@ -1073,6 +1075,7 @@ void stdControl_ShowSystemKeyboard() {
 }
 
 void stdControl_HideSystemKeyboard() {
+    if (Window_bRenderProbe) return;
     extern SDL_Window* displayWindow;
     if (!stdControl_bKeyboardBeingShown) {
         return;

@@ -43,7 +43,7 @@ def main():
         # Restore an unsafe RaiseWindow path: the same wrapper test must fail.
         header = ROOT / "Platform/SDL2/stdCaptureUi.h"
         altered = header.read_text().replace(
-            '#define SDL_RaiseWindow(w) (stdCapture_IsRequested() ? false : SDL_RaiseWindow(w))',
+            '#define SDL_RaiseWindow(w) (stdCapture_UiSuppressed() ? false : SDL_RaiseWindow(w))',
             '#define SDL_RaiseWindow(w) SDL_RaiseWindow(w)')
         if altered == header.read_text():
             raise RuntimeError("Negative control no longer matches production source")

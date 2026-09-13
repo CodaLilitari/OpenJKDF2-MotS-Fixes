@@ -1,5 +1,6 @@
 #include "jkGUITitle.h"
 #include "Main/stdCapture.h"
+#include "Win95/Window.h"
 
 #include "General/Darray.h"
 #include "General/stdBitmap.h"
@@ -363,8 +364,8 @@ int jkGuiTitle_bSkipLoadingWait = 0; // Added: autoboot skips the mission-text w
 void jkGuiTitle_LoadingFinalize()
 {
 #ifdef QOL_IMPROVEMENTS
-    // Headless clients cannot acknowledge the mission briefing dialog.
-    int shouldSkip = Main_bHeadless || stdCapture_IsActive() || jkPlayer_bFastMissionText || sithNet_isMulti || !sithWorld_g_pCurrentWorld
+    // Background captures cannot acknowledge the mission briefing dialog.
+    int shouldSkip = Main_bHeadless || stdCapture_IsActive() || Window_bRenderProbe || jkPlayer_bFastMissionText || sithNet_isMulti || !sithWorld_g_pCurrentWorld
                   || jkGuiTitle_bSkipLoadingWait; // Added
     if ( jkGuiTitle_whichLoading != 1)
     {

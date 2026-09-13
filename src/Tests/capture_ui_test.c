@@ -7,6 +7,7 @@ typedef struct SDL_Window { int flags; } SDL_Window;
 enum { SDL_WINDOW_HIDDEN=1, SDL_WINDOW_NOT_FOCUSABLE=2, SDL_WINDOW_FULLSCREEN=4,
     SDL_WINDOW_KEYBOARD_GRABBED=8, SDL_WINDOW_MOUSE_GRABBED=16 };
 static int requested, calls;
+int Window_bRenderProbe;
 static SDL_Window window;
 int stdCapture_IsRequested(void) { return requested; }
 static bool SDL_ShowSimpleMessageBox(int f,const char* t,const char* x,SDL_Window* w) { (void)f;(void)t;(void)x;(void)w;calls++;return true; }
@@ -29,9 +30,13 @@ static void actions(void) {
 int main(void) {
     actions(); assert(calls == 9);
     requested = 1; actions(); assert(calls == 9);
-    SDL_CreateWindow("capture",64,64,SDL_WINDOW_FULLSCREEN|SDL_WINDOW_KEYBOARD_GRABBED|SDL_WINDOW_MOUSE_GRABBED);
+    requested = 0; Window_bRenderProbe = 1; actions(); assert(calls == 9);
+    SDL_CreateWindow("probe",64,64,SDL_WINDOW_FULLSCREEN|SDL_WINDOW_KEYBOARD_GRABBED|SDL_WINDOW_MOUSE_GRABBED);
     assert(calls == 10); assert(window.flags == (SDL_WINDOW_HIDDEN|SDL_WINDOW_NOT_FOCUSABLE));
+    requested = 1; Window_bRenderProbe = 0;
+    SDL_CreateWindow("capture",64,64,SDL_WINDOW_FULLSCREEN|SDL_WINDOW_KEYBOARD_GRABBED|SDL_WINDOW_MOUSE_GRABBED);
+    assert(calls == 11); assert(window.flags == (SDL_WINDOW_HIDDEN|SDL_WINDOW_NOT_FOCUSABLE));
     requested = 0; SDL_CreateWindow("regular",64,64,SDL_WINDOW_FULLSCREEN);
-    assert(calls == 11 && window.flags == SDL_WINDOW_FULLSCREEN);
-    puts("capture UI wrapper tests passed; no window system linked");
+    assert(calls == 12 && window.flags == SDL_WINDOW_FULLSCREEN);
+    puts("capture and render-probe UI wrapper tests passed; no window system linked");
 }
