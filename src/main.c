@@ -17,6 +17,7 @@
 #include "types.h"
 
 #include "General/stdMath.h"
+#include "Main/stdCapture.h"
 
 #ifndef NO_JK_MMAP
 #include "Cog/sithCog.h"
@@ -192,6 +193,7 @@ void do_hooks();
 
 #ifdef WIN64_STANDALONE
 #include "exchndl.h"
+#include <SDL_hints.h>
 
 #include <windows.h>
 #endif
