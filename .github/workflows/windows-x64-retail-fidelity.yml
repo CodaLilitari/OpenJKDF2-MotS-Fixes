@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - retail-fidelity-x64
+      - main
 
 permissions:
   contents: read
@@ -89,6 +89,13 @@ jobs:
           python3 src/Tests/run_mots_lighting_test.py --cc gcc --sanitize
           python3 src/Tests/run_pov_lighting_test.py --cc gcc --sanitize
           python3 src/Tests/run_takeitem_test.py --cc gcc --sanitize
+          python3 src/Tests/run_capture_test.py --output "$RUNNER_TEMP/capture-contract"
+          gcc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -Isrc \
+            tests/render_probe_options.c -o "$RUNNER_TEMP/render_probe_options"
+          "$RUNNER_TEMP/render_probe_options"
+          gcc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Isrc \
+            tests/test_rdMaterialIO.c -o "$RUNNER_TEMP/packed_material_rows"
+          "$RUNNER_TEMP/packed_material_rows"
           python3 src/Tests/test_version_override.py
           python3 -B scripts/model-workarounds/run_tests.py
           g++ -std=c++17 -Wall -Wextra -Werror -pedantic -Isrc \

@@ -11,8 +11,8 @@ The original fixes developed for this fork are credited to **Andrei Kiralv/Darka
 and **Coda Lilitari (OpenAI Codex Interlocutor)**. OpenJKDF2 and its contributors retain
 credit for the underlying engine and upstream work.
 
-Coda Lilitari is the human-facing name of the OpenAI Codex AI collaborator in
-this work. It does not identify a separate GitHub account.
+Coda Lilitari is the human-facing name used for the OpenAI Codex AI collaborator
+in this work.
 
 We explicitly invite OpenJKDF2's original authors, upstream maintainers and
 contributors to reuse, merge or cherry-pick our original fixes into OpenJKDF2,
@@ -23,6 +23,12 @@ do not change the existing project or third-party licenses.
 
 The fork currently includes:
 
+- [Background OpenGL render probes](docs/render-probe.md) for final-frame
+  comparisons with bloom/SSAO, and corrected postprocessing shader attributes.
+- [Posed hidden-rendered captures](docs/HIDDEN_RENDERED_CAPTURE.md) with
+  world-state receipts and explicit multiplayer character selection.
+- [Safe packed-MAT loading](docs/PACKED_MATERIAL_ROWS.md) when display buffers
+  have padded rows.
 - [Native MotS host pickup acknowledgment and respawn](docs/MOTS_ITEM_RESPAWN.md),
   plus explicit first-person weapon/saber lighting mode to prevent an RGB-path crash.
 - Correct MotS F2/F3/F4 default inventory bindings, while preserving JK defaults.
