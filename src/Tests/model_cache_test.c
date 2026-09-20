@@ -11,6 +11,7 @@ typedef struct rdModel3 { char filename[32]; int id; void *geometry; } rdModel3;
 typedef struct SithWorld {
     uint32_t numModels, sizeModels;
     rdModel3 *aModels;
+    void *sounds; // Unrelated store remains empty in this isolated fixture.
     int level_type_maybe;
 } SithWorld;
 typedef struct Entry { const char *key; void *value; struct Entry *next; } Entry;
@@ -92,6 +93,9 @@ static void stdPrintf(void *target, const char *file, int line, const char *form
 #include "model_api.inc"
 #include "model_production.inc"
 static int sithWorld_bInitted;
+#ifdef NO_JK_MMAP
+static void sithSound_FreeWorldSounds(SithWorld *world) { assert(!world->sounds); }
+#endif
 static void sithWorld_FreeEntry(SithWorld *world) {
     sithModel_FreeWorldModels(world);
     release(world);

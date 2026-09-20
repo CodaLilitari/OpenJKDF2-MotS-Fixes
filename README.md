@@ -50,6 +50,10 @@ The fork currently includes:
   starting equipment; explicitly server-only class scripts retain that routing.
 - Correct MotS multiplayer class/team model selection, including the Soldier
   array overrun and blue/green team colors; reject unsafe team-model indices.
+- [Stable world model-cache growth](docs/MODEL_CACHE_GROWTH.md) for repeated
+  appearance changes, preserving loaded model addresses and original hook layouts.
+- [Stable world sound-cache growth](docs/SOUND_CACHE_GROWTH.md), with bounded IDs,
+  preserved sound pointers, and exact event/header checks for the tested appearances.
 
 See [class/team model fixes](docs/TEAM_MODEL_FIXES.md) for the source evidence,
 regression coverage and remaining skin-parser investigation.
