@@ -111,6 +111,8 @@ void sithWorld_Shutdown()
          * also detach its model pages before the world address can be reused. */
         if (sithWorld_g_pCurrentWorld->aModels)
             sithModel_FreeWorldModels(sithWorld_g_pCurrentWorld);
+        if (sithWorld_g_pCurrentWorld->sounds)
+            sithSound_FreeWorldSounds(sithWorld_g_pCurrentWorld);
 #endif
         SITH_FREE(sithWorld_g_pCurrentWorld);
     }
@@ -906,7 +908,9 @@ void sithWorld_GetMemoryUsage(SithWorld *pWorld, int *aMemUsed, int *aCount)
     aCount[6] = pWorld->numSoundsLoaded;
     for (int i = 0; i < pWorld->numSoundsLoaded; i++)
     {
-        aMemUsed[6] += pWorld->sounds[i].bufferBytes + sizeof(sithSound);
+        sithSound *sound = sithSound_GetWorldSoundByIndex(pWorld, i);
+        if (sound)
+            aMemUsed[6] += sound->bufferBytes + sizeof(sithSound);
     }
     aCount[8] = pWorld->numCogScripts;
     for (int i = 0; i < pWorld->numCogScripts; i++)
