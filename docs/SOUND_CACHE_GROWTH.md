@@ -86,6 +86,29 @@ fixture stubs the other store as empty while testing actual shared shutdown;
 it does not claim synthetic joint model-and-sound backend teardown coverage.
 Both stores coexist in the separate full-engine runtime below.
 
+## Qualification on the synchronized base, 2026-10-28
+
+The sound commit `69028bf3088c9e3e3a83bc0cbb96cfb816c5acd8` was adapted onto
+the model-cache branch based on synchronized fork main
+`6fa54630a123485d8c7b602c47992613a1f397b5`. The adaptation preserves upstream's
+pointer-width `stdFile_t` file handles. The fixture now extracts that production
+typedef and uses a handle above the 32-bit range on 64-bit hosts, so narrowing
+it in lookup, parsing, or close is detected without opening a real file.
+
+The sound production and legacy-layout runs pass with ASan, UBSan, and leak
+detection. All five negative controls fail their designated assertions. The
+model suite also passes on the combined source, including its legacy-layout
+and old-capacity controls. The changed sound, world, and COG production units
+compile successfully with the current Linux build's CMake-derived flags and
+dependency headers. A focused CI job runs both caches and the existing
+team/model checks for relevant pull requests, including the stacked branch.
+
+These are current-base source tests and focused compilations. No new full
+engine link, current MotS appearance run, audible-playback test, connected
+multiplayer session, or save/load acceptance was performed for this adaptation.
+The Windows/MotS runtime results below remain historical evidence at their
+explicitly named base. The draft remains dependent on model-cache growth.
+
 ## Bounded runtime evidence, 2026-09-20
 
 The private Windows Release build combines model commit
