@@ -10,9 +10,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <stdarg.h>
 
 #include "actual_constants.inc"
 #include "actual_thing_types.inc"
+
+/* The minimal fixture represents a free thing by the production enum's zero. */
+enum { SITH_THING_FREE = 0 };
 
 #define _atoi atoi
 #define _atof atof
@@ -76,10 +80,23 @@ static void check(int ok, const char* expr, int line) {
 static SithWorld world;
 static SithWorld* sithWorld_g_pCurrentWorld = &world;
 static rdMatrix34 rdroid_identMatrix34 = {{1,0,0}, {0,1,0}, {0,0,1}, {0,0,0}};
-static SithThing baseTemplate, childTemplate;
+static SithThing baseTemplate, childTemplate, freeTemplate;
 static int sithThing_bInitted2, sithNet_isMulti, sithNet_isServer;
 static int sithNet_things[32], sithNet_thingsIdx, jkPlayer_setDiff, g_submodeFlags;
 static int initializations, frees, overrides, parameters, postprocesses;
+static int sector_entries, diagnostic_count;
+static char diagnostics[2][160];
+
+static int jk_printf(const char* format, ...) {
+    CHECK(diagnostic_count < (int)(sizeof(diagnostics) / sizeof(diagnostics[0])));
+    va_list args;
+    va_start(args, format);
+    int length = vsnprintf(diagnostics[diagnostic_count], sizeof(diagnostics[0]), format, args);
+    va_end(args);
+    CHECK(length >= 0 && (size_t)length < sizeof(diagnostics[0]));
+    ++diagnostic_count;
+    return length;
+}
 
 static int rdThing_NewEntry(rdThing* data, SithThing* thing) {
     data->pThing = thing;
@@ -94,7 +111,7 @@ static void sithThing_FreeThing(SithThing* thing) { ++frees; thing->type = 0; }
 static void sithThing_Initialize(SithThing* thing) { ++initializations; (void)thing; }
 static void sithThing_LoadPostProcess(void) { ++postprocesses; }
 static void sithThing_EnterSector(SithThing* thing, SithSector* sector, int a, int b) {
-    (void)a; (void)b; thing->sector = sector;
+    (void)a; (void)b; thing->sector = sector; ++sector_entries;
 }
 static void rdMatrix_BuildRotate34(rdMatrix34* out, const rdVector3* angles) {
     *out = rdroid_identMatrix34;
@@ -103,6 +120,7 @@ static void rdMatrix_BuildRotate34(rdMatrix34* out, const rdVector3* angles) {
 static SithThing* sithTemplate_GetTemplate(const char* name) {
     if (!strcmp(name, "base")) return &baseTemplate;
     if (!strcmp(name, "child")) return &childTemplate;
+    if (!strcmp(name, "free")) return &freeTemplate;
     return NULL;
 }
 
@@ -162,9 +180,12 @@ static void run_placement(int skip) {
     inputLines = placedThings;
     inputPosition = 0;
     initializations = parameters = overrides = frees = 0;
+    sector_entries = diagnostic_count = 0;
     CHECK(sithThing_ReadStaticThingsListText(&world, skip) == 1);
     CHECK(world.numThingsLoaded == 10);
     CHECK(initializations == 9);
+    CHECK(sector_entries == 9);
+    CHECK(diagnostic_count == 0);
     CHECK(parameters == 10);
     CHECK(overrides == 4);
     CHECK(frees == (skip ? 9 : 0));
@@ -210,6 +231,65 @@ static void run_placement(int skip) {
     CHECK(childTemplate.flags == 0x48);
 }
 
+static const char* const invalidTemplateThings[] = {
+    "world things 3",
+    "0: missing absenttemplate 1 2 3 0 0 0 0 7 thingflags=48",
+    "1: free invalidtemplate 4 5 6 0 0 0 0 9 thingflags=48",
+    "2: base validafterinvalid 9 8 7 0 0 0 0 3 thingflags=48",
+    "end",
+    NULL
+};
+
+static void run_invalid_templates(int skip) {
+    inputLines = invalidTemplateThings;
+    inputPosition = 0;
+    initializations = parameters = overrides = frees = 0;
+    sector_entries = diagnostic_count = 0;
+    CHECK(sithThing_ReadStaticThingsListText(&world, skip) == 1);
+    CHECK(world.numThingsLoaded == 3);
+    CHECK(initializations == 1);
+    CHECK(sector_entries == 1);
+    CHECK(parameters == 2);
+    CHECK(overrides == 1);
+    CHECK(frees == (skip ? 1 : 0));
+    CHECK(sithThing_bInitted2 == 2);
+    CHECK(diagnostic_count == 2);
+    CHECK(strstr(diagnostics[0], "static thing 0:") != NULL);
+    CHECK(strstr(diagnostics[0], "'missing'") != NULL);
+    CHECK(strstr(diagnostics[1], "static thing 1:") != NULL);
+    CHECK(strstr(diagnostics[1], "'free'") != NULL);
+    for (int i = 0; i < 2; ++i) {
+        SithThing* thing = &world.aThings[i];
+        CHECK(thing->idx == i);
+        CHECK(thing->type == SITH_THING_FREE);
+        CHECK(thing->guid == -1);
+        CHECK(thing->signature == 0);
+        CHECK(thing->flags == 0);
+        CHECK(thing->sector == NULL);
+        CHECK(thing->pTemplate == NULL);
+        CHECK(thing->renderData.pThing == thing);
+        CHECK(thing->position.x == 0 && thing->position.y == 0 && thing->position.z == 0);
+#ifdef JKM_LIGHTING
+        CHECK(thing->archlightIdx == -1);
+#endif
+    }
+    SithThing* valid = &world.aThings[2];
+    CHECK(valid->idx == 2 && valid->guid == 2);
+    CHECK(valid->type == baseTemplate.type);
+    CHECK(valid->sector == world.aSectors);
+    CHECK(valid->pTemplate == &baseTemplate);
+    CHECK(valid->flags == 0x48);
+    CHECK(valid->position.x == 9 && valid->position.y == 8 && valid->position.z == 7);
+#ifdef JKM_LIGHTING
+    CHECK(valid->archlightIdx == 3);
+    CHECK(baseTemplate.archlightIdx == -1);
+    CHECK(freeTemplate.archlightIdx == -1);
+#endif
+    CHECK(baseTemplate.flags == 0x8);
+    CHECK(freeTemplate.type == SITH_THING_FREE);
+    CHECK(freeTemplate.flags == 0x8);
+}
+
 int main(void) {
     SithSector sector = {0};
     world.aSectors = &sector;
@@ -227,6 +307,14 @@ int main(void) {
     run_placement(0);
     run_placement(1);
     CHECK(postprocesses == 2);
+    SITH_FREE(world.aThings);
+    world.aThings = NULL;
+    CHECK(sithThing_Reset(&freeTemplate) == 1);
+    freeTemplate.type = SITH_THING_FREE;
+    freeTemplate.flags = 0x8;
+    run_invalid_templates(0);
+    run_invalid_templates(1);
+    CHECK(postprocesses == 4);
     SITH_FREE(world.aThings);
     world.aThings = NULL;
 #ifdef JKM_LIGHTING

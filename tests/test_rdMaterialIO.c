@@ -64,6 +64,7 @@ int main(void)
     assert(!rdMaterial_ValidTextureLayout(2, 2, 3, 4));
     assert(!rdMaterial_ValidTextureLayout(64, 64, 5, 4));
     assert(!rdMaterial_ValidTextureLayout(2, 1, 2172748239u, 4));
+    assert(!rdMaterial_ValidTextureLayout(8, 8, 33, 64)); /* Reject shifts wider than uint32_t. */
     assert(!rdMaterial_ValidTextureLayout(0, 2, 1, 4));
     puts("MAT packed-row regression controls passed.");
     return 0;

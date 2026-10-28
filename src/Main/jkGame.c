@@ -20,7 +20,9 @@
 #include "Main/jkHudScope.h"
 #include "Main/jkHudCameraView.h"
 #include "Main/jkDev.h"
+#include "Main/jkStrings.h"
 #include "Main/jkQuakeConsole.h"
+#include "Main/jkTouchControls.h"
 #include "Engine/rdColormap.h"
 #include "Engine/sithCamera.h"
 #include "General/stdString.h"
@@ -397,6 +399,11 @@ int jkGame_Update()
     jkQuakeConsole_Render();
 #endif
 
+    // Added: on-screen gamepad for touch-only devices. This call site is what
+    // scopes the overlay to gameplay -- jkGame_Update only runs while the world
+    // is being drawn, so the menus never see it.
+    jkTouchControls_Render();
+
 #ifdef RDRASTER_SOFTWARE_RENDERER
     // Software renderer: fold the 2D overlays (HUD + map) into the world buffer so the whole frame is
     // one software image; std3D_DrawMenu then presents just that buffer and skips its menu-overlay quad.
@@ -527,6 +534,20 @@ int jkGame_Update()
 }
 
 #ifdef SDL2_RENDER
+// Added: the shot is taken at the end of the frame, once the HUD and messages are drawn.
+static char jkGame_aScreenshotPending[128];
+int jkGame_bScreenshotMessage = 0;
+
+void jkGame_ScreenshotFlush()
+{
+    if (!jkGame_aScreenshotPending[0]) return;
+    std3D_Screenshot(jkGame_aScreenshotPending);
+    jkGame_aScreenshotPending[0] = 0;
+    if (jkGame_bScreenshotMessage)
+        jkDev_PrintUniString(jkStrings_GetUniStringWithFallback("GAME_SCREENSHOT"));
+    jkGame_bScreenshotMessage = 0;
+}
+
 void jkGame_Screenshot()
 {
     //stdPlatform_Printf("TODO: Implement screenshots\n");
@@ -547,7 +568,8 @@ void jkGame_Screenshot()
         }
     } while (!bVar2);
 
-    std3D_Screenshot(local_80);
+    // Fixed: was std3D_Screenshot here, mid-frame, which only saw the 3D scene
+    stdString_SafeStrCopy(jkGame_aScreenshotPending, local_80, sizeof(jkGame_aScreenshotPending));
 }
 #endif
 

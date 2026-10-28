@@ -32,6 +32,8 @@ const char* jkDSS_aKyTeamModels[5] = {
     "kyT0.3do",
 };
 
+// Native personalities 1..4 map to these four class rows. Personality 0
+// (no class) shares the Jedi row through the checked lookup below.
 const char* jkDSS_aMotsKyTeamModels[5*4] = {
     "ky.3do",
     "kyX0.3do",
@@ -54,7 +56,7 @@ const char* jkDSS_aMotsKyTeamModels[5*4] = {
     "kym13.3do",
     "kym13r.3do",
     "kym13y.3do",
-    "kym13b.3do",
+    "kym13b.3do", // Team 3 is blue and team 4 green, as in JKM.EXE.
     "kym13g.3do",
 };
 
@@ -465,6 +467,7 @@ int jkDSS_ProcessSetSaberInfo(SithMessage *msg)
             return 1;
         if ( (sithNet_MultiModeFlags & MULTIMODEFLAG_100) != 0 )
         {
+            // The team number can come from the network; validate before indexing.
             if ((uint32_t)v11->teamNum >= sizeof(jkDSS_aKyTeamModels) / sizeof(jkDSS_aKyTeamModels[0])) {
                 return 0;
             }

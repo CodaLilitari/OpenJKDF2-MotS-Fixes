@@ -28,7 +28,6 @@ static void rdMaterial_WordSafeStrCopy(char* pDst, const char* pSrc, int len)
     stdPlatform_Memcpy32(pDst, tmp, _strlen(tmp) + 1);
 }
 
-
 #if defined(RDMATERIAL_LRU_LOAD_UNLOAD)
 
 rdMaterial* rdMaterial_pFirstMatCache = NULL;
@@ -86,8 +85,8 @@ rdMaterial* rdMaterial_Load(char *pFilename, int create_ddraw_surface, int gpu_m
 
 int rdMaterial_LoadEntry_Common(char *mat_fpath, rdMaterial *material, int create_ddraw_surface, int gpu_mem, int bDoLoad)
 {
-    int mat_file; // eax
-    int mat_file_; // ebx
+    stdFile_t mat_file; // eax
+    stdFile_t mat_file_; // ebx
     int num_texinfo; // eax
     int tex_type; // edx
     int *texture_idk; // edi
@@ -103,7 +102,7 @@ int rdMaterial_LoadEntry_Common(char *mat_fpath, rdMaterial *material, int creat
     rdTexinfo **v24; // ebx
     rdColor24 *colors; // eax
     char *v26; // eax
-    int mat_file__; // [esp+10h] [ebp-128h]
+    stdFile_t mat_file__; // [esp+10h] [ebp-128h]
     int tex_num; // [esp+14h] [ebp-124h]
     int tex_numa; // [esp+14h] [ebp-124h]
     rdTextureHeader tex_header_1; // [esp+20h] [ebp-118h]
@@ -264,7 +263,7 @@ int rdMaterial_LoadEntry_Common(char *mat_fpath, rdMaterial *material, int creat
       while ( 1 )
       {
         //printf("asdf %x %x\n", tex_numa, material->num_textures);
-        // Reject bad/short headers before their mip count indexes fixed arrays.
+        // Added: reject bad/short headers before their mip count indexes fixed arrays.
         if (!rdMaterial_ReadExact(rdroid_g_pHS->fileRead, mat_file_, &tex_header_1, sizeof(tex_header_1)) ||
             !rdMaterial_ValidTextureLayout(tex_header_1.width, tex_header_1.height,
                 tex_header_1.num_mipmaps, sizeof(material->textures[0].texture_struct) / sizeof(material->textures[0].texture_struct[0]))) {

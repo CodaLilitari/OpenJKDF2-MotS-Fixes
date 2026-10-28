@@ -461,17 +461,15 @@ int sithCommand_DynamicMemory(stdDebugConsoleCmd *pCmd, const char *pArgStr)
 
 int sithCommand_MemoryDump(stdDebugConsoleCmd *pCmd, const char *pArgStr)
 {
-    int result; // eax
-    int v3; // edi
+    stdFile_t v3; // edi
     stdMemoryAlloc *i; // esi
 
     // Added: pSithHS -> pLowLevelHS
-    result = pLowLevelHS->fileOpen("memdump.txt", "w+");
-    v3 = result;
-    if ( result )
+    v3 = pLowLevelHS->fileOpen("memdump.txt", "w+");
+    if ( v3 )
     {
         pSithHS->filePrintf(
-            result,
+            v3,
             "Total Memory allocated: %d bytes   # Allocations: %d  Max Memory used: %d bytes\n\n",
             stdMemory_g_curState.totalBytes,
             stdMemory_g_curState.totalAllocs,
@@ -480,9 +478,9 @@ int sithCommand_MemoryDump(stdDebugConsoleCmd *pCmd, const char *pArgStr)
             pSithHS->filePrintf(v3, "%25s:  line %3d   %8d bytes   #%d\n", i->filePath, i->lineNum, i->size, i->num);
         pSithHS->fileClose(v3);
         sithConsole_PrintString("Memory dump file 'memdump.txt' written.");
-        result = 1;
+        return 1;
     }
-    return result;
+    return 0;
 }
 
 // MatList
@@ -792,6 +790,7 @@ int sithCommand_CmdThingNpc(stdDebugConsoleCmd *pCmd, const char *pArgStr)
 {
     if (sithNet_isMulti) return 1;
 
+    if (!pArgStr) pArgStr = "";
     char* pArgStrMutable = (char*)malloc(strlen(pArgStr)+1);
     strcpy(pArgStrMutable, pArgStr);
 
@@ -834,6 +833,7 @@ int sithCommand_CmdBind(stdDebugConsoleCmd *pCmd, const char *pArgStr)
     char tmp[512];
     memset(tmp, 0, sizeof(tmp));
 
+    if (!pArgStr) pArgStr = "";
     char* pArgStrMutable = (char*)malloc(strlen(pArgStr)+1);
     strcpy(pArgStrMutable, pArgStr);
 
@@ -874,6 +874,7 @@ int sithCommand_CmdUnbind(stdDebugConsoleCmd *pCmd, const char *pArgStr)
     char tmp[512];
     memset(tmp, 0, sizeof(tmp));
 
+    if (!pArgStr) pArgStr = "";
     char* pArgStrMutable = (char*)malloc(strlen(pArgStr)+1);
     strcpy(pArgStrMutable, pArgStr);
 
@@ -958,6 +959,8 @@ void sithCommand_LoadBinds()
 char sithCommand_aTmpCommandExecute[512];
 void sithCommand_HandleBinds(uint16_t key)
 {
+    if (!sithCommand_pBinds) return; // Added: sithCommand isn't started in DroidWorks mode
+
     sithCommandBind* pBindIter = sithCommand_pBinds;
     while (pBindIter = pBindIter->pNext)
     {

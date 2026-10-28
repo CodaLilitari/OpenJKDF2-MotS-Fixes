@@ -541,6 +541,19 @@ int sithAICmd_PrimaryFire(SithAIControlBlock *pLocal, SithAIInstinct *pInstinct,
     v5 = 0;
     v6 = 0;
     v7 = pLocal->thing;
+
+    // Added: Turbo Mode accelerates AI firing intervals.
+    extern int jkDev_bTurbo;
+    flex_t turboFireScale = 1.0f;
+    if (!sithNet_isMulti
+        && jkDev_bTurbo
+        && v7
+        && v7->type == SITH_THING_ACTOR
+        && v7->controlType == SITH_CT_AI)
+    {
+        turboFireScale = 0.5f;
+    }
+
     if ( event )
     {
         if ( event != SITHAI_MODE_UNK100 )
@@ -552,7 +565,8 @@ int sithAICmd_PrimaryFire(SithAIControlBlock *pLocal, SithAIInstinct *pInstinct,
         {
             sithPuppet_SetArmedMode(v7, 1);
             pState->param0 = pInstinct->fltArg[8];
-            pState->nextUpdate = sithTime_g_msecGameTime + pInstinct->intArg[5];
+            pState->nextUpdate = sithTime_g_msecGameTime
+    + (int64_t)(pInstinct->intArg[5] * turboFireScale); // Added: turbo
         }
         else
         {
@@ -580,11 +594,14 @@ int sithAICmd_PrimaryFire(SithAIControlBlock *pLocal, SithAIInstinct *pInstinct,
             if ( pState->param0 == 0.0 )
             {
                 pState->param0 = pInstinct->fltArg[8];
-                pState->nextUpdate = sithTime_g_msecGameTime + (int64_t)((_frand() * 0.4 - 0.2 - -1.0) * pInstinct->fltArg[0]);
+                pState->nextUpdate = sithTime_g_msecGameTime
+                    + (int64_t)((_frand() * 0.4 + 0.8)
+                        * pInstinct->fltArg[0] * turboFireScale); // Added: turbo
             }
             else
             {
-                pState->nextUpdate = sithTime_g_msecGameTime + pInstinct->intArg[9];
+                pState->nextUpdate = sithTime_g_msecGameTime
+                    + (int64_t)(pInstinct->intArg[9] * turboFireScale); // Added: turbo
                 pState->param0 = pState->param0 - 1.0;
             }
             return 0;
@@ -607,7 +624,8 @@ int sithAICmd_PrimaryFire(SithAIControlBlock *pLocal, SithAIInstinct *pInstinct,
         {
             pLocal->flags &= ~SITHAI_MODE_TARGETVISIBLE;
         }
-        pState->nextUpdate = sithTime_g_msecGameTime + 250;
+        pState->nextUpdate = sithTime_g_msecGameTime
+            + (int64_t)(250 * turboFireScale); // Added: turbo
         return 0;
     }
     if ( (pLocal->flags & SITHAI_MODE_TARGETVISIBLE) != 0 )
@@ -1729,7 +1747,12 @@ int sithAICmd_Leap(SithAIControlBlock *actor, SithAIInstinct *aiclass, SithAIIns
             return 0;
         }
         if ((SithThing *)otherFlags == psVar1) {
-            sithAI_FireWeapon(actor, 0.0, 0.0, 0.0, 0.0, 1, 8);
+            // Added: Only apply Leap collision damage during an active, unattached leap.
+            if ((uint32_t)actor->field_28C > sithTime_g_msecGameTime &&
+                actor->thing->attach_flags == 0) {
+                sithAI_FireWeapon(actor, 0.0, 0.0, 0.0, 0.0, 1, 8);
+            }
+            return 0;
         }
     }
 
@@ -1789,10 +1812,14 @@ int sithAICmd_Charge(SithAIControlBlock *pActor, SithAIInstinct *pAiclass, SithA
 
     if (flags != 0) {
         if (flags == 4) {
-            if (pActor->moveSpeed != 1313.0) {
+            if (pActor->moveSpeed != 1313.0)
                 return 0;
-            }
+
             sithAI_FireWeapon(pActor, 0.0, 0.0, 0.0, 0.0, 1, 8);
+
+            // Added: Prevent repeated damage from subsequent collisions during this Charge.
+            pActor->moveSpeed = 0.0;
+
             return 0;
         }
         if (flags != 0x100) {

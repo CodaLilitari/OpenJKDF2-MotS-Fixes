@@ -8,7 +8,7 @@
 #include "Main/jkRes.h"
 #include "stdPlatform.h"
 #ifdef TARGET_DREAMCAST
-#include "Platform/Dreamcast/dcStorage.h" // Added: writable CWD + read-only assets
+#include "Platform/Dreamcast/dcStorage.h"
 #endif
 
 #ifdef TARGET_TWL
@@ -22,10 +22,13 @@
 #if defined(SDL2_RENDER) && !defined(ARCH_WASM)
 #include "SDL2_helper.h"
 
-#ifndef TARGET_ANDROID
-#include "nfd.h"
-#else
+// TODO: TARGET_IOS has no nativefiledialog-extended backend
+#if defined(TARGET_ANDROID)
 #include <jni.h>
+#elif defined(TARGET_IOS)
+// no file chooser
+#else
+#include "nfd.h"
 #endif
 
 const char* aRequiredAssets[] = {
@@ -50,6 +53,16 @@ const char* aRequiredAssetsMots[] = {
 };
 
 const size_t aRequiredAssetsMots_len = sizeof(aRequiredAssetsMots) / sizeof(const char*);
+
+// TODO: Investigate full minimum assets
+const char* aRequiredAssetsDroidworks[] = {
+    "dwCD.GOB",
+    "dwHD.GOB",
+    "dwMin.GOB",
+    "dwStream.GOB",
+};
+
+const size_t aRequiredAssetsDroidworks_len = sizeof(aRequiredAssetsDroidworks) / sizeof(const char*);
 
 // Maps an asset path as it exists in an installed game directory to its
 // location within the GAMEDATA folder of an install disk.
@@ -82,8 +95,8 @@ const char* InstallHelper_DiskAssetPath(const char* pName)
 
 #define BUF_SIZE 65536 //2^16
 
-#define INSTALL_APPDATA_FOLDER_NAME (Main_bMotsCompat ? "openjkmots" : "openjkdf2")
-#define INSTALL_OVERRIDE_ENVVAR_NAME (Main_bMotsCompat ? "OPENJKMOTS_ROOT" : "OPENJKDF2_ROOT")
+#define INSTALL_APPDATA_FOLDER_NAME (Main_bMotsCompat ? "openjkmots" : Main_bDroidWorks ? "opendroidworks" : "openjkdf2")
+#define INSTALL_OVERRIDE_ENVVAR_NAME (Main_bMotsCompat ? "OPENJKMOTS_ROOT" : Main_bDroidWorks ? "OPENDROIDWORKS_ROOT" : "OPENJKDF2_ROOT")
 
 int InstallHelper_copy(const char* in_path, const char* out_path)
 {
@@ -268,7 +281,28 @@ int InstallHelper_GetLocalDataDir(char* pOut, size_t pOut_sz, int bChdir)
         pOut_sz = sizeof(fname);
     }
 
-#if defined(TARGET_ANDROID)
+#if defined(TARGET_IOS)
+    // Added: like the Android branch below, this must come before the
+    // MACOS/LINUX one -- iOS builds define LINUX too. $HOME is the app's sandbox
+    // container, and Documents/ is the one directory inside it that the Files app
+    // and iTunes/Finder file sharing expose (see UIFileSharingEnabled and
+    // LSSupportsOpeningDocumentsInPlace in packaging/ios/Info.plist), so that is
+    // where the user drops episode/ and resource/.
+    const char* home_path = getenv("HOME");
+    if (home_path) {
+        // NB: SetCwd runs before Main_Startup parses the cmdline, so
+        // Main_bMotsCompat isn't set from -motsCompat yet on first launch --
+        // check openjkdf2_bOrigWasDF2 (set from argv in main()) as well.
+        int bMots = Main_bMotsCompat || !openjkdf2_bOrigWasDF2;
+        stdFnames_MakePath(fname_tmp, sizeof(fname_tmp), home_path, "Documents");
+        stdFnames_MakePath(fname, sizeof(fname), fname_tmp, bMots ? "mots" : "jk1");
+        stdFileUtil_MkDir(fname);
+        if (bChdir) {
+            chdir(fname);
+            stdPlatform_Printf("Using iOS data dir: %s\n", fname);
+        }
+    }
+#elif defined(TARGET_ANDROID)
     // NB: this branch must come first -- Android builds also define LINUX,
     // which would otherwise route through the desktop path below and end up
     // in SDL_GetPrefPath (app-private internal storage, invisible to the
@@ -689,12 +723,12 @@ const char* aInstallOptionalAssets[] = {
 
 const size_t aInstallOptionalAssets_len = sizeof(aInstallOptionalAssets) / sizeof(const char*);
 
-#ifndef TARGET_ANDROID
+#if !defined(TARGET_ANDROID) && !defined(TARGET_IOS)
 int InstallHelper_AttemptInstallFromExisting(char* path)
 {
     const char** paOptionalAssets = aInstallOptionalAssets;
-    const char** paRequiredAssets = Main_bMotsCompat ? aRequiredAssetsMots : aRequiredAssets;
-    size_t paRequiredAssets_len = Main_bMotsCompat ? aRequiredAssetsMots_len : aRequiredAssets_len;
+    const char** paRequiredAssets = Main_bMotsCompat ? aRequiredAssetsMots : Main_bDroidWorks ? aRequiredAssetsDroidworks : aRequiredAssets;
+    size_t paRequiredAssets_len = Main_bMotsCompat ? aRequiredAssetsMots_len : Main_bDroidWorks ? aRequiredAssetsDroidworks_len : aRequiredAssets_len;
 
     if (path[strlen(path)-1] == '/' || path[strlen(path)-1] == '\\')
     {
@@ -957,7 +991,7 @@ final_check:
 
     return 1;
 }
-#endif // !TARGET_ANDROID
+#endif // !TARGET_ANDROID && !TARGET_IOS
 
 #ifdef TARGET_ANDROID
 static SDL_AtomicInt androidSafInstallState; // 0 = pending, 1 = ok, -1 = cancel/error
@@ -1120,6 +1154,20 @@ int InstallHelper_AttemptInstall()
         &colorScheme /* .colorScheme */
     };
 
+#ifdef TARGET_IOS
+    // no file picker for iOS yet
+    {
+        char dataDir[256];
+        char msgbuf[512];
+        InstallHelper_GetLocalDataDir(dataDir, sizeof(dataDir), 0);
+        snprintf(msgbuf, sizeof(msgbuf),
+                 "Copy your %s installation into the OpenJKDF2 app's Documents folder "
+                 "(via Finder file sharing or the Files app), then relaunch.\n\nExpected: %s",
+                 Main_bMotsCompat ? "JKMOTS" : "JKDF2", dataDir);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "OpenJKDF2 Install Helper", msgbuf, NULL);
+    }
+    return 0;
+#else
     int buttonid;
     if (!SDL_ShowMessageBox(&messageboxdata, &buttonid)) {
         SDL_Log("error displaying message box");
@@ -1167,6 +1215,7 @@ int InstallHelper_AttemptInstall()
 
     return InstallHelper_AttemptInstallFromExisting(path);
 #endif // TARGET_ANDROID
+#endif // TARGET_IOS
 }
 
 void InstallHelper_CheckRequiredAssets(int doInstall)
@@ -1233,8 +1282,10 @@ void InstallHelper_SetCwd()
 
     int found_override = 0;
 
-#if defined(TARGET_ANDROID)
-    // Android always runs from the app-specific data dir (jk1/ or mots/).
+#if defined(TARGET_ANDROID) || defined(TARGET_IOS)
+    // Android and iOS always run from the app-specific data dir (jk1/ or mots/):
+    // the process starts with its CWD inside the read-only app bundle, so there is
+    // no "current working directory install" to fall back to.
     InstallHelper_UseLocalData();
     found_override = 1;
 #else
@@ -1296,7 +1347,7 @@ void InstallHelper_SetCwd()
 void InstallHelper_SetCwd()
 {
 #if defined(TARGET_DREAMCAST)
-    // Added: assets stay read-only on the GD-ROM (/cd/jk1 or /cd/mots); the CWD
+    // Assets stay read-only on the GD-ROM (/cd/jk1 or /cd/mots); the CWD
     // becomes writable storage (SD card, else RAM disk) so player/, saves, and
     // config JSON can be written. dcStorage routes relative asset reads back to
     // the asset root. See src/Platform/Dreamcast/dcStorage.c.

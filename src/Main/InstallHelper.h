@@ -29,7 +29,7 @@ int InstallHelper_CopyFile(const char* pFolder, const char* pName);
 int InstallHelper_CopyFileDisk(const char* pFolder, const char* pName);
 int InstallHelper_GetLocalDataDir(char* pOut, size_t pOut_sz, int bChdir);
 int InstallHelper_UseLocalData();
-#ifndef TARGET_ANDROID
+#if !defined(TARGET_ANDROID) && !defined(TARGET_IOS)
 int InstallHelper_AttemptInstallFromExisting(char* path);
 int InstallHelper_AttemptInstallFromDisk(char* path);
 #endif

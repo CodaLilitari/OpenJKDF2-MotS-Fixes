@@ -752,6 +752,8 @@ void jkHudInv_InputInit()
 {
     // TODO: what is the second param, DIK?
     sithControl_BindControl(INPUT_FUNC_CAMERAMODE, DIK_F1, 0);
+    // JKM.EXE puts F2-F4 on ACTIVATE19-17. The upstream port credits
+    // OpenJKDF2-MotS-Fixes by Andrei Kiralv/Darkahn and Coda Lilitari.
     // Use the mode flag rather than the loaded inventory table: dedicated
     // startup can create a profile before MotS items have been initialized.
     const int inventoryHotkeyBase =

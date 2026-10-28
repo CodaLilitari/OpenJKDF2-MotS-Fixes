@@ -21,7 +21,10 @@
 
 #ifdef __cplusplus
 #ifdef EXPERIMENTAL_FIXED_POINT
+// fixed.h is C++-only, and globals.h includes this header inside extern "C"
+extern "C++" {
 #include "fixed.h"
+}
 #endif
 #endif
 
@@ -462,6 +465,8 @@ extern int32_t openjkdf2_bIsExtraLowMemoryPlatform;
 extern char openjkdf2_aRestartPath[256];
 extern int32_t Main_bMotsCompat;
 extern int32_t Main_bDwCompat;
+extern int32_t Main_bDroidWorks;
+extern int32_t Main_bDwCogVerbs;
 extern char* openjkdf2_pExecutablePath;
 
 // All the typedefs
@@ -1348,13 +1353,10 @@ typedef struct SithPuppetClassSubmode
 
 typedef struct sithAnimclassMode
 {
-    SithPuppetClassSubmode keyframe[42];
-    uint32_t field_2A0;
-    uint32_t field_2A4;
-    uint32_t field_2A8;
-    uint32_t field_2AC;
-#ifdef JKM_TYPES
-    uint32_t pad[8];
+#if defined(GHIDRA_IMPORT) && !defined(JKM_TYPES)
+    SithPuppetClassSubmode keyframe[43];
+#else
+    SithPuppetClassSubmode keyframe[45];
 #endif
 } sithAnimclassMode;
 
@@ -1659,6 +1661,17 @@ typedef struct rdFace
     flex_t extraLight;
     rdVector3 normal;
 } rdFace;
+
+// DroidWorks rdRaycast hit record filled by rdRaycast_RayPlane/RayFace/RayMesh
+typedef struct rdRaycastHit
+{
+    rdMesh* pMesh;          // +0x00: mesh containing the best hit face
+    rdFace* pFace;          // +0x04: best hit face
+    rdVector3 worldHitPos;  // +0x08: hit point in the caller's (world) space
+    rdVector3 localHitPos;  // +0x14: hit point in mesh-local space
+    flex_t distance;        // +0x20: ray parameter t of the best hit
+    uint32_t reserved[5];   // +0x24: present in the binary record, never written field-wise
+} rdRaycastHit;
 
 typedef struct sithSurfaceInfo
 {
@@ -2340,6 +2353,7 @@ typedef struct sithArchLight
 typedef void (__cdecl *sithWorldProgressCallback_t)(flex_t);
 
 typedef struct sDwLaser tDwLaser;
+typedef struct sDwLaser sDwLaser;
 
 typedef struct SithWorld
 {
@@ -2426,19 +2440,20 @@ typedef struct SithWorld
     sithArchLight* aArchlights;
 #endif
 #ifdef DW_LASERS
-    sDwLaser* paLasers;
-    sDwLaser* pLastLaser;
+    int32_t numDwLasers;
+    sDwLaser* aDwLasers;
 #endif
 } SithWorld;
 
+// DroidWorks laser/beam pool entry
 typedef struct sDwLaser
 {
-    uint32_t field_0;
-    uint32_t field_4;
-    uint32_t pad[0xF];
-    uint32_t pad2[0x10];
-    uint32_t pad3[0x10];
-    uint32_t pad4[0x8];
+    uint32_t id;             // +0x00: from dwLaser_nextId (getlaserid COG verb result)
+    SithThing* pOwnerThing;  // +0x04: beam source; NULL = free pool slot
+    SithThing* pTargetThing; // +0x08: set = straight owner->target beam; NULL = raytraced bounce beam
+    flex_t width;            // +0x0c: beam half-width
+    rdMaterial material;     // +0x10: inline solid-color material handed to rdCache proc entries
+    rdTexinfo texinfo;       // +0xc4: inline texinfo; header.solidColor = beam color index
 } tDwLaser;
 
 typedef int (*sithWorldSectionParser_t)(SithWorld*, int);
@@ -2929,7 +2944,11 @@ typedef struct SithItemInfo
     uint32_t msecLastTouchTime;
     int16_t numBins;
     int16_t field_1E;
+#ifdef QOL_IMPROVEMENTS
+    SithBackpackItem contents[16]; // Added: JK.EXE and JKM.EXE write up to 16 items here, though their struct has room for 12
+#else
     SithBackpackItem contents[12];
+#endif
     uint32_t field_80;
 } SithItemInfo;
 

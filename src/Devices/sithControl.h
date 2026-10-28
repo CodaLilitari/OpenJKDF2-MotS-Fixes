@@ -37,6 +37,10 @@
 #define sithControl_PlayerMovement_ADDR (0x004D8A00)
 #define sithControl_FreeCam_ADDR (0x004D8C90)
 #define sithControl_PlayerLook_ADDR (0x004D8F40)
+#define SITHCONTROL_OPTION_TOGGLE_CROUCH 0x40
+
+// Added: physics steps sithMain runs after this frame's controls, or -1 when unstepped
+extern int sithControl_physStepsThisFrame;
 
 int sithControl_Startup();
 int sithControl_Shutdown();
@@ -44,6 +48,7 @@ int sithControl_IsOpen();
 int sithControl_Open();
 void sithControl_Close();
 void sithControl_RegisterAxisFunction(int functionId, uint32_t flag);
+void sithControl_ResetCrouchToggle(void);
 void sithControl_Reset();
 void sithControl_RegisterControlFunctions();
 void sithControl_Update(flex_t secDeltaTime, int msecDeltaTime);
@@ -56,6 +61,8 @@ MATH_FUNC void sithControl_FreeCam(SithThing *player);
 
 stdControlKeyInfoEntry* sithControl_BindControl(int functionId, int controlId, int flags);
 stdControlKeyInfoEntry* sithControl_BindAxis(int functionId, int axis, uint32_t flags);
+// Added: DroidWorks in-mission control bindings
+void sithControl_MapDefaultsDroidworks(void);
 void sithControl_UnbindFunctionIndex(int funcId, unsigned int bindIndex);
 void sithControl_UnbindControl(int flags, int controlId);
 int sithControl_ReadConf();
@@ -78,6 +85,11 @@ void sithControl_RebindKeyboard();
 void sithControl_RebindJoystick();
 
 void sithControl_MapDefaultsJoystick();
+// Added: see sithControl.c -- profile loads drop axis binds, this puts them back.
+void sithControl_RestoreAxisBindings();
+// Added
+int sithControl_IsKeyBound(int dxKeyNum);
+void sithControl_FixNumpadTurn();
 
 #ifdef QOL_IMPROVEMENTS
 void sithControl_SetLastSelected(int which);

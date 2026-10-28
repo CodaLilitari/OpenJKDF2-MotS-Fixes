@@ -192,6 +192,46 @@ chmod +x ./.github/build_macos.sh
 </details>
 
 <details>
+  <summary>iOS SDL3/ANGLE</summary>
+
+iOS renders through [ANGLE](https://chromium.googlesource.com/angle/angle)'s Metal backend, which is **not** built by this repo. Point `ANGLE_ROOT` at a tree that already has `include/` plus `out/ios/` and/or `out/ios-sim/` containing `libEGL.framework` and `libGLESv2.framework`:
+
+```
+cd <your angle checkout>
+gn gen out/ios --args='is_debug=false target_os="ios" target_cpu="arm64" \
+    target_environment="device" ios_enable_code_signing=false \
+    angle_enable_vulkan=false angle_enable_swiftshader=false'
+autoninja -C out/ios libEGL libGLESv2
+# ...and target_environment="simulator" into out/ios-sim for the Simulator slice.
+```
+
+Then:
+
+```
+git clone https://github.com/shinyquagsire23/OpenJKDF2.git
+cd OpenJKDF2
+git submodule update --init
+
+export ANGLE_ROOT=<your angle checkout>       # or vendor it at 3rdparty/angle
+./build_ios.sh                                # device  -> OpenJKDF2-iOS.app
+IOS_PLATFORM=SIMULATOR ./build_ios.sh         # sim     -> OpenJKDF2-iOS-Simulator.app
+```
+
+Running in the Simulator:
+
+```
+xcrun simctl boot "<device name>"
+xcrun simctl install booted OpenJKDF2-iOS-Simulator.app
+xcrun simctl launch --console booted org.openjkdf2.openjkdf2
+```
+
+Game assets go in the app's `Documents/jk1` (or `Documents/mots`) directory. They can be copied in over Finder file sharing or the Files app.
+
+The default deployment target is **iOS 18.0**, and Signing is ad-hoc by default. For a device build, export `IOS_CODESIGN_IDENTITY` (e.g. `"Apple Development: you@example.com (XXXXXXXXXX)"`), `IOS_BUNDLE_ID` matching your provisioning profile, and `IOS_ENTITLEMENTS` pointing at an entitlements file for that profile. Note that an ad-hoc signature with entitlements is rejected at launch, which is why entitlements are opt-in.
+
+</details>
+
+<details>
   <summary>Emscripten/WebAssembly</summary>
 
 WASM builds are semi-supported, but break often. The last tested tag for WASM is `v0.2.0`.

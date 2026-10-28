@@ -81,8 +81,8 @@
 #define FOCUS_DOWN  (3)
 #define FOCUS_NONE  (4)
 
-extern int32_t jkGuiRend_thing_five;
-extern int32_t jkGuiRend_thing_four;
+extern int32_t jkGuiRend_menuNestDepth;      // nesting depth of DisplayAndReturnClicked()
+extern int32_t jkGuiRend_bStateChangePending; // a GUI state change was requested while nested
 
 void jkGuiRend_CopyVBuffer(jkGuiMenu *menu, rdRect *rect);
 void jkGuiRend_SetPalette(uint8_t* pal);
@@ -99,6 +99,7 @@ int32_t jkGuiRend_Menuidk();
 void jkGuiRend_sub_50FDB0();
 void jkGuiRend_Startup();
 void jkGuiRend_Shutdown();
+int jkGuiRend_IsMenuActive(void);
 void jkGuiRend_Open(tVBuffer *menuBuffer, tVBuffer *otherBuf, int32_t fillColor);
 void jkGuiRend_Close();
 jkGuiElement* jkGuiRend_MenuGetClickableById(jkGuiMenu *menu, int32_t id);

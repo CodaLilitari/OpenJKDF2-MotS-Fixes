@@ -37,6 +37,7 @@ static rdVector3 jkPlayer_waggleVec, jkSaber_rotateVec;
 static rdMatrix34 jkSaber_rotateMat;
 enum { RD_ZBUFFER_READ_WRITE=1, RD_ZBUFFER_NOREAD_NOWRITE=2, RD_ZBUFFER_READ_NOWRITE=3, JKFLAG_SABERON=1 };
 static int colorMode, modelDraws, saberDraws, flushes, puppetUpdates, zClears, modeAssignments;
+static int rdModel3_bRenderingPOV;
 static void rdSetVertexColorMode(int mode) { colorMode=mode; modeAssignments++; }
 static void rdPuppet_UpdateTracks(void* puppet, flex_t dt) { CHECK(puppet && dt==.04f); puppetUpdates++; }
 static flex_t stdMath_Fabs(flex_t value) { return fabsf(value); }
@@ -58,9 +59,13 @@ static void rdMatrix_PreMultiply34(rdMatrix34* matrix, rdMatrix34* value) { (voi
 static void jkSaber_Draw(rdMatrix34* matrix) { CHECK(matrix && colorMode==0); saberDraws++; }
 static void rdThing_Draw(rdThing* thing, rdMatrix34* matrix) {
     CHECK(thing==&playerThings[0].povModel && matrix && colorMode==0);
+    CHECK(rdModel3_bRenderingPOV==1);
     modelDraws++;
 }
-static void rdCache_Flush(void) { CHECK(colorMode==0 && modelDraws==1); flushes++; }
+static void rdCache_Flush(void) {
+    CHECK(colorMode==0 && modelDraws==1 && rdModel3_bRenderingPOV==0);
+    flushes++;
+}
 
 #include "actual_draw_pov.inc"
 
@@ -75,11 +80,13 @@ static void setup(void) {
     camera.pPrimaryFocusThing=&player; camera.sector=&sector; world.pCameraFocusThing=&player;
     sector.ambientLight=.25f; sector.extraLight=.25f; camera.rdCamera.aspectRatio=1;
     colorMode=1; modelDraws=saberDraws=flushes=puppetUpdates=zClears=modeAssignments=0;
+    rdModel3_bRenderingPOV=0;
 }
 int main(void) {
     for (int incoming=0; incoming<=1; incoming++) {
         setup(); colorMode=incoming; jkPlayer_DrawPov();
         CHECK(colorMode==0 && modelDraws==1 && saberDraws==1);
+        CHECK(rdModel3_bRenderingPOV==0);
         CHECK(puppetUpdates==1 && camera.rdCamera.ambientLight==.5f);
 #ifdef SDL2_RENDER
         CHECK(flushes==2 && zClears==1);
@@ -92,6 +99,7 @@ int main(void) {
     CHECK(colorMode==1 && modeAssignments==0 && modelDraws==0 && flushes==0 && puppetUpdates==0);
     setup(); camera.type=4; jkPlayer_DrawPov();
     CHECK(colorMode==1 && modeAssignments==0 && modelDraws==0 && flushes==0 && puppetUpdates==1);
+    CHECK(rdModel3_bRenderingPOV==0);
     setup(); camera.pPrimaryFocusThing=&other; jkPlayer_DrawPov();
     CHECK(colorMode==1 && modeAssignments==0 && modelDraws==0 && flushes==0 && puppetUpdates==1);
     puts("PASS actual DrawPov: RGB/mono entry, weapon/saber/cache mono contract, absent-model and non-POV paths");

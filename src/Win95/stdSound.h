@@ -196,6 +196,7 @@ int stdSound_BufferReset(stdSound_buffer_t* sound);
 //uint32_t stdSound_ParseWav(int sound_file, int *nSamplesPerSec, int *bitsPerSample, int *bStereo, int *seekOffset);
 int stdSound_BufferPlay(stdSound_buffer_t* buf, int loop);
 int stdSound_BufferQueueAfterAnother(stdSound_buffer_t* bufPrev, stdSound_buffer_t* bufNext); // Added
+void stdSound_BufferUnqueueProcessed(stdSound_buffer_t* buf); // Added
 void stdSound_BufferSetPan(stdSound_buffer_t* a1, flex_t a2);
 void stdSound_BufferSetFrequency(stdSound_buffer_t* a1, int a2);
 stdSound_buffer_t* stdSound_BufferDuplicate(stdSound_buffer_t* sound);
@@ -210,6 +211,11 @@ void stdSound_SetPosition(stdSound_buffer_t* sound, rdVector3 *pos);
 void stdSound_SetVelocity(stdSound_buffer_t* sound, rdVector3 *vel);
 int stdSound_IsPlaying(stdSound_buffer_t* a1, rdVector3 *pos);
 void stdSound_3DBufferRelease(stdSound_3dBuffer_t* p3DBuffer);
+#endif
+
+#ifdef TARGET_ANDROID
+// Added: the output's native sample rate (AudioManager PROPERTY_OUTPUT_SAMPLE_RATE).
+int stdSound_GetNativeOutputRate();
 #endif
 
 #endif // _STDSOUND_H

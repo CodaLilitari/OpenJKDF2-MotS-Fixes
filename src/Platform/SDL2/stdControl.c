@@ -4,6 +4,7 @@
 #include "Win95/Window.h"
 #include "stdPlatform.h"
 #include "Main/jkQuakeConsole.h"
+#include "Main/jkTouchControls.h"
 
 #include <SDL3/SDL.h>
 #include "Platform/SDL2/stdCaptureUi.h"
@@ -91,7 +92,8 @@ const uint8_t stdControl_aSdlToDik[256] =
     0,//DIK_PRINTSCREEN,
     DIK_SCROLL,
     DIK_PAUSE,
-    0, // DIK_INSERT, this gets stuck down?
+    DIK_INSERT, // Added: was off ("this gets stuck down?"): as the Controls screen's
+                // Add shortcut it bound itself; stdControl_IgnoreHeldKeys stops that
     DIK_HOME,
     DIK_PRIOR,
     DIK_DELETE,
@@ -102,7 +104,7 @@ const uint8_t stdControl_aSdlToDik[256] =
     DIK_DOWN,
     DIK_UP,
 
-    0,//DIK_NUMLOCKCLEAR,
+    DIK_NUMLOCK, // Added: was 0
     DIK_DIVIDE,
     DIK_MULTIPLY,
     DIK_SUBTRACT,
@@ -121,7 +123,7 @@ const uint8_t stdControl_aSdlToDik[256] =
     DIK_DECIMAL,
 
     DIK_BACKSLASH,
-    0,//DIK_APPLICATION,
+    DIK_APPS, // Added: was 0
     DIK_POWER,
     DIK_NUMPADEQUALS,
     DIK_F13,
@@ -288,9 +290,27 @@ void stdControl_SetSDLKeydown(int keyNum, int bDown, uint32_t readTime)
     stdControl_UpdateKeyState(stdControl_aSdlToDik[keyNum], bDown, readTime);
 }
 
+// Added: a key held right now counts again only once it's let go and pressed.
+// The Controls screen calls this as it starts waiting for a key, so the Insert
+// that starts the wait (its Add shortcut) isn't read as the key to bind. The
+// original game read buffered DirectInput key events, which behaved this way.
+void stdControl_IgnoreHeldKeys()
+{
+    const bool *state = SDL_GetKeyboardState(NULL);
+    for (int i = 0; i < 256; i++)
+    {
+        stdControl_aDebounce[i] = !!state[i];
+    }
+}
+
+// Added: see stdControl.h -- tracks real hardware separately from
+// stdControl_aJoystickExists, which touch builds populate for the virtual pad.
+int stdControl_bHasPhysicalJoystick = 0;
+
 void stdControl_FreeSdlJoysticks()
 {
     stdPlatform_Printf("Free SDL joysticks...\n");
+    stdControl_bHasPhysicalJoystick = 0; // Added:
     for (int i = 0; i < JK_NUM_JOYSTICKS; i++) {
         if (pJoysticks[i])
             SDL_CloseJoystick(pJoysticks[i]);
@@ -379,6 +399,7 @@ void stdControl_InitSdlJoysticks()
         stdControl_aJoystickQuirks[i] = quirks;
         stdControl_aJoystickExists[i] = 1;
         stdControl_aJoystickEnabled[i] = 1;
+        stdControl_bHasPhysicalJoystick = 1; // Added:
         stdControl_aJoystickMaxButtons[i] = numButtons;
         stdControl_aJoystickNumAxes[i] = numAxes;
         for (int j = 0; j < numAxes; j++) {
@@ -386,6 +407,37 @@ void stdControl_InitSdlJoysticks()
         }
     }
     SDL_free(aJoystickIds);
+
+#if defined(TARGET_IOS) || defined(TARGET_ANDROID)
+    // Added: with no physical pad, touch devices advertise joystick 0 as a
+    // "virtual" Xbox-style pad for the on-screen controls (jkTouchControls) to
+    // report through.
+    //
+    // This has to happen HERE, not in jkTouchControls_Startup(), because
+    // sithControl_BindAxis() bails out unless the axis is already registered
+    // (`if ((stdControl_aAxes[axis].flags & 1) == 0) return 0;`). Register later
+    // than sithControl_DefaultInit() and the stick bindings are silently never
+    // created -- the buttons work, the sticks read as permanently centred.
+    //
+    // The three descriptor arrays below are what jkGuiJoystick_PopulateList()
+    // filters its bindings list on -- aJoystickExists gates the axis rows,
+    // aJoystickMaxButtons the button rows, aJoystickEnabled the hat rows -- so
+    // leaving them clear makes the controls menu report no pad at all and offer
+    // nothing to bind.
+    if (!stdControl_bHasPhysicalJoystick) {
+        stdControl_aJoystickExists[0] = 1;
+        stdControl_aJoystickEnabled[0] = 1;
+        stdControl_aJoystickNumAxes[0] = 4;
+        // Highest button the overlay emits is KEY_JOY1_B17 (right trigger),
+        // which the menu indexes as 16; the list shows buttons < this bound.
+        stdControl_aJoystickMaxButtons[0] = 17;
+
+        stdControl_RegisterAxis(AXIS_JOY1_X, -0x7FFF, 0x7FFF, 0.0);
+        stdControl_RegisterAxis(AXIS_JOY1_Y, -0x7FFF, 0x7FFF, 0.0);
+        stdControl_RegisterAxis(AXIS_JOY1_Z, -0x7FFF, 0x7FFF, 0.0);
+        stdControl_RegisterAxis(AXIS_JOY1_R, -0x7FFF, 0x7FFF, 0.0);
+    }
+#endif
 }
 
 int stdControl_Startup()
@@ -832,27 +884,35 @@ void stdControl_ReadControls()
     static int stdControl_bDisableKeyboard_last = 0;
     if (!stdControl_bDisableKeyboard && stdControl_bDisableKeyboard_last)
     {
-        const bool *state = SDL_GetKeyboardState(NULL);
-        for (int i = 0; i < 256; i++)
-        {
-            stdControl_aDebounce[i] = !!state[i];
-        }
-        stdControl_aDebounce[SDLK_RETURN] = 1;
+        stdControl_IgnoreHeldKeys();
+        stdControl_aDebounce[SDL_SCANCODE_RETURN] = 1; // Added: was SDLK_RETURN, a keycode, which is J's scancode slot
     }
     stdControl_bDisableKeyboard_last = stdControl_bDisableKeyboard;
     stdControl_bControllerEscapeKey_last = stdControl_bControllerEscapeKey;
 
     if ( !stdControl_bDisableKeyboard )
     {
+        // Added: a few game keys come from two scancodes (Page Up and SDL's
+        // Prior, the two backslash keys), and the second one, never held,
+        // let go of the first every frame, so a held Page Up or \ did nothing.
+        // A game key is now held while any of its scancodes is.
         const bool *state = SDL_GetKeyboardState(NULL);
+        uint8_t aDikRead[256] = {0};
+        uint8_t aDikDown[256] = {0};
         for (int i = 0; i < 256; i++)
         {
             int s = !!state[i];
             if (s && stdControl_aDebounce[i]) {
                 continue;
             }
-            stdControl_SetSDLKeydown(i, s, stdControl_curReadTime);
             stdControl_aDebounce[i] = 0;
+            aDikRead[stdControl_aSdlToDik[i]] = 1;
+            aDikDown[stdControl_aSdlToDik[i]] |= s;
+        }
+        for (int dik = 1; dik < 256; dik++)
+        {
+            if (aDikRead[dik])
+                stdControl_UpdateKeyState(dik, aDikDown[dik], stdControl_curReadTime);
         }
         // stdControl_UpdateKeyState(keyNum, keyVal, timestamp)
     }
@@ -994,6 +1054,10 @@ void stdControl_ReadControls()
             stdControl_UpdateKeyState((JK_JOYSTICK_BUTTON_STRIDE*i) + KEY_JOY1_HDOWN, !!(hatState & SDL_HAT_DOWN) /* button val */, stdControl_curReadTime);
         }
     }
+    // Added: fold the on-screen touch pad in before the mouse read -- it feeds
+    // look deltas into the same Window_lastXRel/YRel that ReadMouse consumes.
+    jkTouchControls_ReadControls();
+
     stdControl_ReadMouse();
     stdControl_lastReadTime = stdControl_curReadTime;
 }
@@ -1003,6 +1067,19 @@ void stdControl_ReadMouse()
     if (!stdControl_bReadMouse)
         return;
     if (jkQuakeConsole_bOpen) return; // Hijack input to console
+
+    // Treat mouse wheel movement as two virtual buttons.
+    stdControl_UpdateKeyState(
+        KEY_MOUSE_WHEELUP,
+        Window_mouseWheelY > 0,
+        stdControl_curReadTime
+    );
+
+    stdControl_UpdateKeyState(
+        KEY_MOUSE_WHEELDOWN,
+        Window_mouseWheelY < 0,
+        stdControl_curReadTime
+    );
 
     stdControl_aAxes[AXIS_MOUSE_X].dwYoffs = 0;
     stdControl_aAxes[AXIS_MOUSE_X].uMaxVal = (__int64)(250.0 * (640.0 / Window_screenXSize));

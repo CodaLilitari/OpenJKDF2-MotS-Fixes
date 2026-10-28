@@ -24,9 +24,6 @@
 extern "C" {
 #endif
 
-// Added: Emscripten's `-sUSE_SDL=3` port only exposes namespaced headers
-// (sysroot/include/SDL3/SDL.h), unlike our own vendored SDL3 build's include
-// dirs (which expose both styles) -- the old bare `<SDL.h>` doesn't resolve here.
 #include <SDL3/SDL.h>
 #define GL_GLEXT_PROTOTYPES 1
 #include <SDL3/SDL_opengles2.h>
@@ -41,6 +38,24 @@ extern "C" {
 #ifdef __cplusplus
 }
 #endif
+#elif defined(TARGET_IOS)
+#include <SDL.h>
+#include <GLES3/gl3.h>
+// ANGLE ships no GLES3/gl3ext.h
+#define GL_GLEXT_PROTOTYPES 1
+#include <GLES2/gl2ext.h>
+
+#define GL_UNSIGNED_SHORT_5_6_5_REV       0x8364
+#define GL_UNSIGNED_SHORT_1_5_5_5_REV     0x8366
+
+#ifndef GL_BGRA
+#define GL_BGRA 0x80E1
+#endif
+
+#ifndef GL_BGR
+#define GL_BGR 0x80E0
+#endif
+
 #elif defined(TARGET_ANDROID)
 #include <SDL.h>
 #include <SDL_opengles2.h>

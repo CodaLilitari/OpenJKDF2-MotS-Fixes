@@ -326,7 +326,7 @@ char16_t* _wcscpy(char16_t * a, const char16_t *b);
 int jk_MessageBeep(int a);
 int __strcmpi(const char *a, const char *b);
 int __strnicmp(const char *a, const char *b, size_t c);
-#ifndef MACOS
+#if !defined(MACOS) && !defined(TARGET_IOS)
 char __tolower(char a);
 #endif
 int msvc_sub_512D30(int a, int b);

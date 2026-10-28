@@ -3,7 +3,9 @@
 
 Usage: python3 src/Tests/run_backpack_test.py --cc gcc --ubsan
 No engine build or retail assets are needed. Generated source and binaries live
-in a temporary directory; the original slot-descriptor mutant must fail.
+in a temporary directory. Both the non-QOL 12-entry and QOL 16-entry production
+layouts run the same capacity-derived checks; the original slot-descriptor
+mutant must fail independently in each layout.
 """
 
 import argparse
@@ -125,25 +127,34 @@ def run(compiler, ubsan):
         require_success(version, "Compiler version")
         print(version.stdout.splitlines()[0])
         print("UndefinedBehaviorSanitizer:", "enabled" if ubsan else "disabled")
-        for old_lookup in (False, True):
-            write(directory, "backpack_inventory.inc", mutant if old_lookup else production)
-            binary = directory / ("backpack-old-slot" if old_lookup else "backpack-current")
-            if os.name == "nt":
-                binary = binary.with_suffix(".exe")
-            compiled = execute([compiler, *flags, "backpack_test.c", "-o", str(binary)],
-                               directory, environment)
-            require_success(compiled, "Compile backpack harness")
-            result = execute([str(binary)], directory, environment)
-            if old_lookup:
-                if result.returncode != 1 or not re.search(
-                    r"FAIL drazen-map-bin43-slot0[^\n]*observed_count == 1", result.stderr
-                ):
-                    raise RuntimeError("Old slot-descriptor mutant did not fail the map-pickup assertion\n"
-                                       + result.stdout + result.stderr)
-                print("PASS old slot-descriptor mutant rejected by Drazen map pickup assertion")
-            else:
-                require_success(result, "Production backpack regression")
-                print(result.stdout, end="")
+        for layout, defines, expected_capacity in (
+            ("non-qol", ["-UQOL_IMPROVEMENTS"], 12),
+            ("qol", ["-DQOL_IMPROVEMENTS"], 16),
+        ):
+            print(f"Backpack layout: {layout}, expected capacity {expected_capacity}")
+            for old_lookup in (False, True):
+                write(directory, "backpack_inventory.inc", mutant if old_lookup else production)
+                variant = "old-slot" if old_lookup else "current"
+                binary = directory / f"backpack-{layout}-{variant}"
+                if os.name == "nt":
+                    binary = binary.with_suffix(".exe")
+                compiled = execute([compiler, *flags, *defines, "backpack_test.c", "-o", str(binary)],
+                                   directory, environment)
+                require_success(compiled, f"Compile {layout} backpack harness")
+                result = execute([str(binary)], directory, environment)
+                if old_lookup:
+                    if result.returncode != 1 or not re.search(
+                        r"FAIL drazen-map-bin43-slot0[^\n]*observed_count == 1", result.stderr
+                    ):
+                        raise RuntimeError(f"{layout} old slot-descriptor mutant did not fail the map-pickup assertion\n"
+                                           + result.stdout + result.stderr)
+                    print(f"PASS {layout} old slot-descriptor mutant rejected by Drazen map pickup assertion")
+                else:
+                    require_success(result, f"Production {layout} backpack regression")
+                    if not re.search(rf"\bcapacity {expected_capacity}\s*$", result.stdout):
+                        raise RuntimeError(f"{layout} production backpack capacity differs from {expected_capacity}\n"
+                                           + result.stdout + result.stderr)
+                    print(result.stdout, end="")
         for name, data in source_bytes.items():
             if (REPO_ROOT / name).read_bytes() != data:
                 raise RuntimeError("Production input changed during test: " + name)

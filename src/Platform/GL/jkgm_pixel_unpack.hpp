@@ -4,6 +4,7 @@
 // Include after the platform GL declarations. loadPngImage produces tightly
 // packed unsigned-byte rows, regardless of the caller's pixel-store state.
 // Restore that state even when a later load fails and returns early.
+// Ported from OpenJKDF2-MotS-Fixes by Andrei Kiralv/Darkahn and Coda Lilitari.
 class JkgmScopedPixelUnpack
 {
 public:

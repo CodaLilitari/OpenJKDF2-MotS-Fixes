@@ -1024,9 +1024,20 @@ void sithPhysics_UpdateAttachedThingPhysics(SithThing *pThing, flex_t secDeltaTi
             }
             rdVector_Add3Acc(&pThing->physicsParams.vel, &out);
             rdVector_ClipPrecision3(&pThing->physicsParams.vel);
-            if ( !rdVector_IsZero3(&pThing->physicsParams.vel) )
+            if (!rdVector_IsZero3(&pThing->physicsParams.vel))
             {
                 rdVector_Scale3(&pThing->physicsParams.deltaVelocity, &pThing->physicsParams.vel, secDeltaTime);
+
+                // Added: Turbo Mode for AI actors.
+                extern int jkDev_bTurbo;
+
+                if (!sithNet_isMulti
+                    && jkDev_bTurbo
+                    && pThing->type == SITH_THING_ACTOR
+                    && pThing->controlType == SITH_CT_AI)
+                {
+                    rdVector_Scale3Acc(&pThing->physicsParams.deltaVelocity, 2.0f);
+                }
             }
             return;
         }
@@ -1054,12 +1065,12 @@ void sithPhysics_UpdateAttachedThingPhysics(SithThing *pThing, flex_t secDeltaTi
             // crazy oscillations
 #ifdef FIXED_TIMESTEP_PHYS
             // Fix physics being tied to framerate?
-            if (NEEDS_STEPPED_PHYS && (secDeltaTime < CANONICAL_PHYS_TICKRATE))
-                v109 *= (secDeltaTime / CANONICAL_PHYS_TICKRATE);
+            if (NEEDS_STEPPED_PHYS && (secDeltaTime < jkPlayer_canonicalPhysTickrate))
+                v109 *= (secDeltaTime / jkPlayer_canonicalPhysTickrate);
 #endif
 #ifdef EXPERIMENTAL_FIXED_POINT
-            if (!(NEEDS_STEPPED_PHYS) && (secDeltaTime < CANONICAL_PHYS_TICKRATE))
-                v109 *= (secDeltaTime / CANONICAL_PHYS_TICKRATE);
+            if (!(NEEDS_STEPPED_PHYS) && (secDeltaTime < jkPlayer_canonicalPhysTickrate))
+                v109 *= (secDeltaTime / jkPlayer_canonicalPhysTickrate);
 #endif
             rdVector_ScaleAdd3Acc(&pThing->physicsParams.vel, &attachedNormal, -v109);
         }
@@ -1072,9 +1083,20 @@ void sithPhysics_UpdateAttachedThingPhysics(SithThing *pThing, flex_t secDeltaTi
 #endif
 
     rdVector_ClipPrecision3(&pThing->physicsParams.vel);
-    if ( !rdVector_IsZero3(&pThing->physicsParams.vel) )
+    if (!rdVector_IsZero3(&pThing->physicsParams.vel))
     {
         rdVector_Scale3(&pThing->physicsParams.deltaVelocity, &pThing->physicsParams.vel, secDeltaTime);
+
+        // Added: Turbo Mode for AI actors.
+        extern int jkDev_bTurbo;
+
+        if (!sithNet_isMulti
+            && jkDev_bTurbo
+            && pThing->type == SITH_THING_ACTOR
+            && pThing->controlType == SITH_CT_AI)
+        {
+            rdVector_Scale3Acc(&pThing->physicsParams.deltaVelocity, 2.0f);
+        }
     }
 
     flex_t v131;
@@ -1102,13 +1124,13 @@ void sithPhysics_UpdateAttachedThingPhysics(SithThing *pThing, flex_t secDeltaTi
     {
         // Fix physics being tied to framerate?
         flex_t orig_v131 = stdMath_ClampValue(v131, secDeltaTime * 0.5);
-        flex_t new_v131 = v131 * (secDeltaTime / CANONICAL_PHYS_TICKRATE);
+        flex_t new_v131 = v131 * (secDeltaTime / jkPlayer_canonicalPhysTickrate);
         new_v131 = stdMath_ClampValue(new_v131, secDeltaTime * 0.5);
 
         // If deltaSeconds is < the canonical phys tickrate, we get these
         // crazy oscillations
 #ifdef FIXED_TIMESTEP_PHYS
-        if (NEEDS_STEPPED_PHYS && secDeltaTime < CANONICAL_PHYS_TICKRATE)
+        if (NEEDS_STEPPED_PHYS && secDeltaTime < jkPlayer_canonicalPhysTickrate)
             v131 = new_v131;
         else
             v131 = orig_v131;
@@ -1116,7 +1138,7 @@ void sithPhysics_UpdateAttachedThingPhysics(SithThing *pThing, flex_t secDeltaTi
         v131 = orig_v131;
 #endif
 #ifdef EXPERIMENTAL_FIXED_POINT
-        if (secDeltaTime < CANONICAL_PHYS_TICKRATE)
+        if (secDeltaTime < jkPlayer_canonicalPhysTickrate)
             v131 = new_v131;
 #endif
 

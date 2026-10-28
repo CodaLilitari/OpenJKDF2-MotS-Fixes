@@ -17,7 +17,7 @@ DF2
 DF2_res
 MOTS
 TPM
-DW
+/DW/
 Pinball
 DF2-demo
 JK.asm
@@ -66,6 +66,8 @@ Makefile.wasm
 OpenJKDF2.app
 OpenJKDF2_x86_64.app
 OpenJKDF2_universal.app
+OpenJKDF2-iOS.app
+OpenJKDF2-iOS-Simulator.app
 build_win64
 macos-debug.tar.gz
 macos-debug.zip
@@ -101,6 +103,8 @@ build_linux64_/*
 build_linux64_flatpak/*
 build_linux_arm64_flatpak/*
 build_linux_x86_64_flatpak/*
+build_ios/*
+build_ios_sim/*
 build_android_aarch64/*
 build_android_arm32/*
 build_nintendo_dsi/*
@@ -112,7 +116,7 @@ flatpak_openjkdf2/*
 .flatpak-builder/*
 OpenJKDF2.flatpak
 org.openjkdf2.OpenJKDF2.yml
-/.vs/VSWorkspaceState.json
+/.vs/
 packaging/android-project/.gradle/*
 packaging/android-project/app/build/*
 packaging/android-project/app/src/main/jniLibs/*
@@ -128,3 +132,4 @@ graphify-out/
 AGENTS.md
 .blocksds
 packaging/dreamcast/disc/*
+CLAUDE.md

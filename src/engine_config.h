@@ -36,12 +36,15 @@
 // able to climb, creating a barrier.
 //
 // This default is based on the boxes in Training.jkl in Droidworks
-#define CANONICAL_PHYS_TICKRATE (1.0 / 25.0)
+#define CANONICAL_PHYS_TICKRATE (Main_bDroidWorks ? (1.0 / 15.0) : (1.0 / 25.0))
 
 // Use microsecond timing to calculate sithTime_deltaSecs/etc
 #if defined(PLATFORM_POSIX) && !defined(TARGET_RETRO_HOMEBREW)
 #define MICROSECOND_TIME
 #endif
+
+// Droidworks app layer (src/Dw/...): PLATFORM_DROIDWORKS is defined by CMake
+// (TARGET_CAN_DROIDWORKS && OPENJKDF2_DROIDWORKS), never on TARGET_RETRO_HOMEBREW
 
 // Original game will speed up if framerate is over 100?
 #ifndef QOL_IMPROVEMENTS
@@ -180,6 +183,9 @@
 // Backport Droidworks misc
 #ifdef QOL_IMPROVEMENTS
 #define DW_CAMERA
+#ifndef DW_LASERS
+#define DW_LASERS
+#endif
 #endif
 
 #ifdef TARGET_RETRO_HOMEBREW
@@ -193,11 +199,13 @@
 
 #ifdef JKM_DSS
 #define NUM_JKPLAYER_THINGS (64)
-#define SITHINVENTORY_NUM_POWERKEYBINDS (SITHINVENTORY_POWERKEYBIND_COUNT_MOTS+1)
 #else
 #define NUM_JKPLAYER_THINGS (16)
-#define SITHINVENTORY_NUM_POWERKEYBINDS (SITHINVENTORY_POWERKEYBIND_COUNT_JK+1)
 #endif
+
+// Keep storage large enough for MotS in every build; mode-specific scans and
+// serialized versions still select the exact JK/MotS usable slot counts.
+#define SITHINVENTORY_NUM_POWERKEYBINDS (SITHINVENTORY_POWERKEYBIND_COUNT_MOTS+1)
 
 #define SITHBIN_NUMBINS (200)
 
@@ -548,6 +556,16 @@ extern FAST_FUNC void* __aeabi_memcpy8(void* dst, const void* src, size_t len);*
 #define NO_ALIAS
 #define LIKELY(cond) (cond)
 #define UNLIKELY(cond) (cond)
+#endif
+
+// How long the nested-menu loop (jkGuiRend_DisplayAndReturnClicked) tolerates a
+// latched jkGuiRend_bStateChangePending/jkGuiRend_menuNestDepth pair before
+// force-unwinding itself.
+// Long enough that the single-frame transient behind the jkGUISingleTally ESC
+// flicker never trips it, short enough that a real deadlock is not felt as a
+// hang. Only used on the SDL/retro paths, which skip the immediate unwind.
+#ifndef JKGUIREND_NESTED_UNWIND_MS
+#define JKGUIREND_NESTED_UNWIND_MS (500)
 #endif
 
 #endif // _OPENJKDF2_ENGINE_CONFIG_H

@@ -768,7 +768,12 @@ char* _strtok(char * a, const char * b)
     // strtok state with libc corrupts the in-progress parse. A private save pointer
     // makes our tokenization immune to any library strtok() use.
     static char* _strtok_saveptr = NULL;
+
+#ifdef _WIN32
+    return strtok_s(a, b, &_strtok_saveptr);
+#else
     return strtok_r(a, b, &_strtok_saveptr);
+#endif
 }
 
 char* _strncat(char* a, const char* b, size_t c)
@@ -872,26 +877,31 @@ int __strcmpi(const char *a, const char *b)
     return ca - cb;
 }
 
-int __strnicmp(const char *a, const char *b, size_t c)
+int __strnicmp(const char* a, const char* b, size_t c)
 {
     int ca, cb, n;
 
+    // Comparing zero characters always produces a match.
+    if (c == 0)
+        return 0;
+
     n = 0;
-    do 
+    do
     {
-        if (n >= c) break;
-        ca = (unsigned char) *a++;
-        cb = (unsigned char) *b++;
+        if (n >= c)
+            break;
+
+        ca = (unsigned char)*a++;
+        cb = (unsigned char)*b++;
         ca = tolower(toupper(ca));
         cb = tolower(toupper(cb));
         n++;
-    }
-    while (ca == cb && ca != '\0');
+    } while (ca == cb && ca != '\0');
 
     return ca - cb;
 }
 
-#ifndef MACOS
+#if !defined(MACOS) && !defined(TARGET_IOS)
 char __tolower(char a)
 {
     return tolower(a);
@@ -938,9 +948,6 @@ void jk_BeginPaint(int a, struct tagPAINTSTRUCT * lpPaint)
 
 int jk_vsnwprintf(char16_t * a, size_t b, const char16_t *fmt, va_list list)
 {
-    // Added: was `return vswprintf(a, b, fmt, list);` under ARCH_WASM -- Emscripten's
-    // libc vswprintf() is a real 4-byte wchar_t implementation, not ours, and corrupted
-    // our 2-byte-wide strings. Use our own vsnwprintf_() everywhere instead.
     return vsnwprintf_(a, b, fmt, list);
 }
 

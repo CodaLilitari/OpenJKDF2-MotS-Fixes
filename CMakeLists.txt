@@ -28,6 +28,7 @@ set(PLAT_LINUX_32 FALSE CACHE BOOL "Linux 32-bit target")
 set(PLAT_LINUX_64 FALSE CACHE BOOL "Linux 64-bit target")
 set(PLAT_MACOS FALSE CACHE BOOL "MacOS target")
 set(PLAT_MACOS_X86_64 FALSE CACHE BOOL "MacOS x86_64")
+set(PLAT_IOS FALSE CACHE BOOL "iOS/iOS Simulator target")
 set(PLAT_MINGW_X86_64 FALSE CACHE BOOL "MinGW Win64 target")
 set(PLAT_MINGW_X86_32 FALSE CACHE BOOL "MinGW Win32 (Windows XP/OpenGL 1.1) target")
 set(PLAT_WASM FALSE CACHE BOOL "Emscripten WASM target")
@@ -39,7 +40,7 @@ set(PLAT_DREAMCAST FALSE CACHE BOOL "Sega Dreamcast (KallistiOS)")
 set(PLAT_AUTO FALSE CACHE BOOL "Target the host OS")
 
 # Set PLAT_AUTO if a platform isn't specifically selected
-if(NOT PLAT_LINUX_32 AND NOT PLAT_LINUX_64 AND NOT PLAT_MACOS AND NOT PLAT_MACOS_X86_64 AND NOT PLAT_MINGW_X86_64 AND NOT PLAT_MINGW_X86_32 AND NOT PLAT_WASM AND NOT PLAT_HOOKS AND NOT PLAT_TWL AND NOT PLAT_DREAMCAST)
+if(NOT PLAT_LINUX_32 AND NOT PLAT_LINUX_64 AND NOT PLAT_MACOS AND NOT PLAT_MACOS_X86_64 AND NOT PLAT_IOS AND NOT PLAT_MINGW_X86_64 AND NOT PLAT_MINGW_X86_32 AND NOT PLAT_WASM AND NOT PLAT_HOOKS AND NOT PLAT_TWL AND NOT PLAT_DREAMCAST)
     set(PLAT_AUTO TRUE)
 endif()
 
@@ -59,6 +60,7 @@ set(TARGET_USE_D3D FALSE)
 set(TARGET_POSIX FALSE)
 set(TARGET_LINUX FALSE)
 set(TARGET_MACOS FALSE)
+set(TARGET_IOS FALSE)
 set(TARGET_WIN32 FALSE)
 set(TARGET_WASM FALSE)
 set(TARGET_ANDROID FALSE)
@@ -69,7 +71,9 @@ set(TARGET_HOOKS FALSE)
 set(TARGET_NO_BLOBS FALSE)
 set(TARGET_CAN_JKGM FALSE)
 set(TARGET_NO_MULTIPLAYER_MENUS FALSE)
+set(TARGET_CAN_DROIDWORKS TRUE)
 set(OPENJKDF2_USE_BLOBS FALSE CACHE BOOL "Use blobs")
+option(OPENJKDF2_DROIDWORKS "Build the DroidWorks app layer (src/Dw, -droidworks) on platforms that support it" ON)
 
 # Options for compiling
 if(DEFINED ENV{TARGET_BUILD_TESTS})
@@ -137,6 +141,8 @@ elseif(PLAT_MACOS)
     include(cmake_modules/plat_macos.cmake)
 elseif(PLAT_MACOS_X86_64)
     include(cmake_modules/plat_macos_x86_64.cmake)
+elseif(PLAT_IOS)
+    include(cmake_modules/plat_ios.cmake)
 elseif(PLAT_MINGW_X86_64)
     include(cmake_modules/plat_mingw_x86_64.cmake)
 elseif(PLAT_MINGW_X86_32)
@@ -159,6 +165,13 @@ endif()
 
 # Establishes compile options, binary/library names, defines, etc
 plat_initialize()
+
+if(TARGET_CAN_DROIDWORKS AND OPENJKDF2_DROIDWORKS)
+    set(TARGET_DROIDWORKS TRUE)
+else()
+    set(TARGET_DROIDWORKS FALSE)
+endif()
+message(STATUS "DroidWorks app layer: ${TARGET_DROIDWORKS}")
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
@@ -202,6 +215,7 @@ endif()
 file(GLOB ENGINE_SOURCE_FILES ${PROJECT_SOURCE_DIR}/src/*.c
                        ${PROJECT_SOURCE_DIR}/src/*/*.c
                        ${PROJECT_SOURCE_DIR}/src/General/*.cpp
+                       ${PROJECT_SOURCE_DIR}/src/Dw/*.cpp
                        ${PROJECT_SOURCE_DIR}/src/Platform/Common/*.c
                        ${PROJECT_SOURCE_DIR}/src/Platform/Common/*.cpp)
 
@@ -223,6 +237,14 @@ if(TARGET_TWL OR TARGET_DREAMCAST)
         ${PROJECT_SOURCE_DIR}/src/Raster/rdAFRaster.c
         ${PROJECT_SOURCE_DIR}/src/Raster/rdNRaster.c
         ${PROJECT_SOURCE_DIR}/src/Raster/rdZRaster.c)
+endif()
+
+# DroidWorks app layer (src/Dw/...), see OPENJKDF2_DROIDWORKS/TARGET_CAN_DROIDWORKS
+if(NOT TARGET_DROIDWORKS)
+    file(GLOB DW_SRCS ${PROJECT_SOURCE_DIR}/src/Dw/*.c ${PROJECT_SOURCE_DIR}/src/Dw/*.cpp)
+    if(DW_SRCS)
+        list(REMOVE_ITEM ENGINE_SOURCE_FILES ${DW_SRCS})
+    endif()
 endif()
 
 # Remove multiplayer menus from compilation
@@ -254,6 +276,7 @@ include(cmake_modules/precompile_globals.cmake)
 file(GLOB ENGINE_SOURCE_FILES_REGLOB ${PROJECT_SOURCE_DIR}/src/*.c
                        ${PROJECT_SOURCE_DIR}/src/*/*.c
                        ${PROJECT_SOURCE_DIR}/src/General/*.cpp
+                       ${PROJECT_SOURCE_DIR}/src/Dw/*.cpp
                        ${PROJECT_SOURCE_DIR}/src/Platform/*/*.c
                        ${PROJECT_SOURCE_DIR}/src/Platform/*/*/*.c
                        ${PROJECT_SOURCE_DIR}/src/Platform/*/*.cpp
@@ -286,6 +309,16 @@ elseif(TARGET_HOOKS)
 else()
     add_executable(${BIN_NAME} ${GAME_MAIN_SOURCE_FILES})
     target_link_libraries(${BIN_NAME} PRIVATE ${SDL2_COMMON_LIBS} sith_engine)
+
+    # OPENJKDF2_FORCE_ASAN=1 applies ASAN to just the game code
+    # (sith_engine object lib + this exe), not the vendored deps — avoids a full
+    # dep rebuild. The env-driven OPENJKDF2_NO_ASAN block below wasn't taking on macOS.
+    if(DEFINED ENV{OPENJKDF2_FORCE_ASAN} AND "$ENV{OPENJKDF2_FORCE_ASAN}" STREQUAL "1")
+        message(STATUS ">>> FORCE ASAN on game targets")
+        target_compile_options(sith_engine PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
+        target_compile_options(${BIN_NAME} PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
+        target_link_options(${BIN_NAME} PRIVATE -fsanitize=address)
+    endif()
 
     if(TARGET_BUILD_TESTS AND TARGET_MACOS)
         if(NOT EXPERIMENTAL_FIXED_POINT)

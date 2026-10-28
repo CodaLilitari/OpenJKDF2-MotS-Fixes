@@ -30,12 +30,22 @@ static jkGuiMenu *jkGuiRend_activeMenu = NULL;
 static tVBuffer* jkGuiRend_menuBuffer = NULL;
 static tVBuffer *jkGuiRend_texture_dword_8561E8 = NULL;
 
-int32_t jkGuiRend_thing_five = 0;
-int32_t jkGuiRend_thing_four = 0;
+// How many jkGuiRend_DisplayAndReturnClicked() loops are on the stack, i.e. how
+// deeply menus are nested (main menu -> options -> Yes/No dialog).
+int32_t jkGuiRend_menuNestDepth = 0;
+// Set by jkMain/jkSmack when a GUI state change (jkSmack_stopTick +
+// jkSmack_nextGuiState) is requested while a menu loop is running, so those
+// loops know to unwind before the new state is entered. Cleared once the state
+// change is actually applied at depth 0, or by the menu loop itself.
+int32_t jkGuiRend_bStateChangePending = 0;
 static int32_t jkGuiRend_bIsSurfaceValid = 0;
 static int32_t jkGuiRend_bInitted = 0;
 static int32_t jkGuiRend_bOpen = 0;
 static int32_t jkGuiRend_HandlerIsSet = 0;
+int jkGuiRend_IsMenuActive(void)
+{
+    return jkGuiRend_HandlerIsSet > 0;
+}
 static int32_t jkGuiRend_fillColor = 0;
 static int32_t jkGuiRend_paletteChecksum = 0;
 static int32_t jkGuiRend_dword_85620C = 0;
@@ -322,7 +332,7 @@ int32_t jkGuiRend_DisplayAndReturnClicked(jkGuiMenu *menu)
     jkGuiMenu *lastActiveMenu;
 
     lastActiveMenu = jkGuiRend_activeMenu;
-    ++jkGuiRend_thing_five;
+    ++jkGuiRend_menuNestDepth;
     jkGuiRend_gui_sets_handler_framebufs(menu);
 
 #ifdef QOL_IMPROVEMENTS
@@ -330,28 +340,58 @@ int32_t jkGuiRend_DisplayAndReturnClicked(jkGuiMenu *menu)
 #endif
 
     jkGuiRend_SetCursorVisible(1);
+#if defined(SDL2_RENDER) || defined(TARGET_RETRO_HOMEBREW)
+    uint32_t stuckSinceMs = 0; // Added: see the watchdog below
+#endif
     while ( !menu->lastClicked )
     {
         msgret = Window_MessageLoop();
-        if ( jkGuiRend_thing_four && jkGuiRend_thing_five )
+
+        // Added: hoisted out of the else below. A quit request has to be honored
+        // whichever branch runs, or asking to quit from inside a nested menu
+        // (main menu -> confirm dialog) latches bStateChangePending and leaves
+        // this loop spinning forever with g_should_exit set but never looked at.
+        if ( g_should_exit )
+            jk_exit(msgret);
+
+        if ( jkGuiRend_bStateChangePending && jkGuiRend_menuNestDepth )
         { 
             // Added: this makes the menu that appears when pressing ESC in jkGUISingleTally flicker,
             //        I think due to how we handle window message emulation.
 #if !defined(SDL2_RENDER) && !defined(TARGET_RETRO_HOMEBREW)
             menu->lastClicked = -1;
+#else
+            // Added: leaving the unwind out entirely deadlocks.
+            // bStateChangePending is only ever cleared by the else branch here,
+            // or by jkMain_GuiAdvance when !menuNestDepth, so once a state
+            // change is requested while a nested menu is up, both conditions
+            // latch and neither clears --
+            // the menu stops responding permanently (every nested Yes/No dialog:
+            // Restore Defaults, quit confirm). Unwinding immediately is what
+            // causes the jkGUISingleTally flicker, so only do it once the pair
+            // has stayed latched long enough to be a genuine deadlock rather
+            // than the single-frame transient the flicker comes from.
+            {
+                uint32_t nowMs = stdPlatform_GetTimeMsec();
+                if ( !stuckSinceMs )
+                    stuckSinceMs = nowMs;
+                else if ( nowMs - stuckSinceMs >= JKGUIREND_NESTED_UNWIND_MS )
+                    menu->lastClicked = -1;
+            }
 #endif
         }
         else
         {
-            jkGuiRend_thing_four = 0;
-            if ( g_should_exit )
-                jk_exit(msgret);
+#if defined(SDL2_RENDER) || defined(TARGET_RETRO_HOMEBREW)
+            stuckSinceMs = 0; // Added:
+#endif
+            jkGuiRend_bStateChangePending = 0;
             if ( menu->idkFunc && !menu->lastClicked )
                 menu->idkFunc(menu);
         }
     }
     jkGuiRend_sub_50FDB0();
-    --jkGuiRend_thing_five;
+    --jkGuiRend_menuNestDepth;
     jkGuiRend_activeMenu = lastActiveMenu;
 
 #ifdef STDBITMAP_PARTIAL_LOAD
@@ -532,8 +572,8 @@ void jkGuiRend_Shutdown()
     jkGuiRend_menuBuffer = NULL;
     jkGuiRend_texture_dword_8561E8 = NULL;
 
-    jkGuiRend_thing_five = 0;
-    jkGuiRend_thing_four = 0;
+    jkGuiRend_menuNestDepth = 0;
+    jkGuiRend_bStateChangePending = 0;
     jkGuiRend_bIsSurfaceValid = 0;
     jkGuiRend_bInitted = 0;
     jkGuiRend_bOpen = 0;
@@ -1720,6 +1760,74 @@ int jkGuiRend_WindowHandler(HWND hWnd, UINT a2, WPARAM wParam, LPARAM lParam, LR
             if ( jkGuiRend_activeMenu->lastMouseDownClickable )
                 jkGuiRend_InvokeEvent(jkGuiRend_activeMenu->lastMouseDownClickable, jkGuiRend_activeMenu, JKGUI_EVENT_MOUSEMOVED, wParam);
             return 1;
+
+        case WM_MBUTTONDOWN:
+        {
+            jkGuiMenu* menu = jkGuiRend_activeMenu;
+            jkGuiElement* target = menu->lastMouseOverClickable;
+
+            // Prefer the element under the mouse.
+            if (!target || !target->bIsVisible || target->enableHover)
+            {
+                target = NULL;
+            }
+
+            // If the mouse is outside clickable elements, activate
+            // the currently focused list box instead.
+            if (!target)
+            {
+                jkGuiElement* focused = menu->focusedElement;
+
+                if (focused &&
+                    focused->type == ELEMENT_LISTBOX &&
+                    focused->bIsVisible &&
+                    !focused->enableHover)
+                {
+                    target = focused;
+                }
+            }
+
+            if (!target)
+                return 1;
+
+            if (target->type == ELEMENT_LISTBOX)
+            {
+                if (target->clickHandlerFunc)
+                {
+                    // Controls lists: activate the highlighted entry.
+                    jkGuiRend_InvokeEvent(
+                        target,
+                        menu,
+                        JKGUI_EVENT_KEYDOWN,
+                        VK_RETURN
+                    );
+                }
+                else
+                {
+                    // Profile and level lists: use normal Enter behavior.
+                    jkGuiRend_WindowHandler(
+                        hWnd,
+                        WM_KEYFIRST,
+                        VK_RETURN,
+                        0,
+                        unused
+                    );
+                }
+            }
+            else
+            {
+                // Ordinary buttons.
+                jkGuiRend_InvokeClicked(
+                    target,
+                    menu,
+                    jkGuiRend_mouseX,
+                    jkGuiRend_mouseY,
+                    1
+                );
+            }
+
+            return 1;
+        }
 
         case WM_KEYFIRST:
             if ( wParam == VK_SHIFT || wParam == VK_LSHIFT || wParam == VK_RSHIFT )

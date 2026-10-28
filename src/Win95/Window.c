@@ -15,6 +15,9 @@
 #include "Devices/sithConsole.h"
 #include "Platform/wuRegistry.h"
 #include "Main/jkQuakeConsole.h"
+#include "Main/jkTouchControls.h"
+
+#include "Dw/dwMain.h"
 
 #include "jk.h"
 
@@ -40,6 +43,14 @@
 //#include <stropts.h>
 
 #include "SDL2_helper.h"
+
+#ifdef TARGET_IOS
+#include "Platform/iOS/iosAngle.h"
+#define SDL_GL_SwapWindow(pWindow)          iosAngle_SwapBuffers()
+#define SDL_GL_SetSwapInterval(interval)    iosAngle_SetSwapInterval(interval)
+#define SDL_GL_DestroyContext(pContext)     iosAngle_DestroyContext()
+#define SDL_GL_MakeCurrent(pWindow, pCtx)   ((void)0)
+#endif
 
 #include <string.h>
 
@@ -443,6 +454,32 @@ int Window_menu_mouseY = 0;
 
 extern int jkGuiBuildMulti_bRendering;
 
+// map raw SDL window coords into the letterboxed 640x480 canvas.
+// The same 4:3 pillarbox math the GL present side uses (std3D_DrawMenu)
+static void Window_TranslateMouseToCanvas(int rawX, int rawY, int* pOutX, int* pOutY)
+{
+    if (!jkGame_isDDraw)
+    {
+        flex_t fX = (flex_t)rawX;
+        flex_t fY = (flex_t)rawY;
+
+        // Keep 4:3 aspect
+        flex_t menu_x = ((flex_t)Window_screenXSize - ((flex_t)Window_screenYSize * (640.0 / 480.0))) / 2.0;
+        flex_t menu_w = ((flex_t)Window_screenYSize * (640.0 / 480.0));
+
+        *pOutX = (int)(((fX - menu_x) / (flex_t)menu_w) * 640.0);
+        *pOutY = (int)((fY / (flex_t)Window_screenYSize) * 480.0);
+    }
+    else
+    {
+        *pOutX = rawX;
+        *pOutY = rawY;
+    }
+
+    if (*pOutX < 0)
+        *pOutX = 0;
+}
+
 void Window_HandleMouseMove(SDL_MouseMotionEvent *event)
 {
     int x = (int)event->x;
@@ -451,28 +488,7 @@ void Window_HandleMouseMove(SDL_MouseMotionEvent *event)
     Window_lastMouseX = Window_mouseX;
     Window_lastMouseY = Window_mouseY;
 
-    if (!jkGame_isDDraw)
-    {
-        // FLEXTODO
-        flex_t fX = (flex_t)x;
-        flex_t fY = (flex_t)y;
-
-        // Keep 4:3 aspect
-        flex_t menu_x = ((flex_t)Window_screenXSize - ((flex_t)Window_screenYSize * (640.0 / 480.0))) / 2.0;
-        flex_t menu_w = ((flex_t)Window_screenYSize * (640.0 / 480.0));
-
-        Window_mouseX = (int)(((fX - menu_x) / (flex_t)menu_w) * 640.0);
-        Window_mouseY = (int)((fY / (flex_t)Window_screenYSize) * 480.0);
-        //printf("%d %d\n", Window_mouseX, Window_mouseY);
-    }
-    else
-    {
-        Window_mouseX = x;
-        Window_mouseY = y;// - (Window_ySize - 480);
-    }
-
-    if (Window_mouseX < 0)
-        Window_mouseX = 0;
+    Window_TranslateMouseToCanvas(x, y, &Window_mouseX, &Window_mouseY);
 
     if (jkQuakeConsole_bOpen) return; // Hijack all input to console
 
@@ -730,10 +746,17 @@ void Window_UpdateHeadless()
         }
 
         jkGui_SetModeGame();
-        
+
+        // -droidworks keeps its own fixed 640x480 canvas, re-push the palette + dirty the whole screen
+        if (Main_bDroidWorks)
+        {
+            dwMain_NotifyWindowResized();
+            Window_msg_main_handler(g_hWnd, WM_PAINT, 0, 0);
+        }
+
         Window_resized = 0;
     }
-    
+
     int sampleTime_roundtrip = SDL_GetTicks() - Window_lastSampleTime;
     //printf("%u\n", sampleTime_roundtrip);
     Window_lastSampleTime = SDL_GetTicks();
@@ -792,6 +815,9 @@ void Window_UpdateHeadless()
     last_jkQuakeConsole_bOpen = jkQuakeConsole_bOpen;
 }
 
+// reentrancy guard for Window_SdlUpdate
+static int Window_bInSdlUpdate = 0;
+
 void Window_SdlUpdate()
 {
     stdCapture_CheckDeadline(SDL_GetTicks());
@@ -824,6 +850,14 @@ void Window_SdlUpdate()
         return;
     }
 
+    // reentrancy guard. This function both drains the SDL event queue AND presents
+    // (std3D_DrawMenu + SDL_GL_SwapWindow) at its tail. DroidWorks' WM_MOUSEMOVE handler calls
+    // dwCursor_Redraw() -> stdDisplay_DDrawGdiSurfaceFlip() -> Window_SdlUpdate(), so a motion
+    // event dispatched from this function's drain re-enters it recursively
+    if (Window_bInSdlUpdate)
+        return;
+    Window_bInSdlUpdate = 1;
+
     uint16_t left, right;
     uint32_t pos, msgl, msgr;
     int hasLeft, hasRight;
@@ -840,6 +874,37 @@ void Window_SdlUpdate()
         int bIsOdin = 0;
         int bIsGamepad = 0;
 
+        // Added: route touches to the on-screen pad first; it returns 1 when it
+        // has claimed the finger.
+        if (jkTouchControls_HandleSdlEvent(&event)) {
+            continue;
+        }
+
+        // Added: any real hardware input retires the on-screen pad. Mouse
+        // events synthesized from touches carry SDL_TOUCH_MOUSEID and must not
+        // count, or the pad would hide itself the instant it was used.
+        switch (event.type)
+        {
+            case SDL_EVENT_KEY_DOWN:
+            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+            case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+            case SDL_EVENT_JOYSTICK_BUTTON_DOWN:
+                jkTouchControls_NotifyPhysicalInput();
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                if (event.button.which != SDL_TOUCH_MOUSEID) {
+                    jkTouchControls_NotifyPhysicalInput();
+                }
+                break;
+            case SDL_EVENT_MOUSE_MOTION:
+                if (event.motion.which != SDL_TOUCH_MOUSEID) {
+                    jkTouchControls_NotifyPhysicalInput();
+                }
+                break;
+            default:
+                break;
+        }
+
         if (event.type == SDL_EVENT_JOYSTICK_BUTTON_DOWN || event.type == SDL_EVENT_JOYSTICK_BUTTON_UP) {
             const char* name = SDL_GetJoystickNameForID(event.jbutton.which);
             bIsOdin = name && strcmp(name, "Odin Controller") == 0;
@@ -852,23 +917,32 @@ void Window_SdlUpdate()
         switch (event.type)
         {
             case SDL_EVENT_JOYSTICK_ADDED: {
+                stdPlatform_Printf("[ev] JOYSTICK_ADDED %d\n", (int)event.jdevice.which); // Added: field-debug
                 stdControl_bReadJoysticks = 1;
                 stdControl_InitSdlJoysticks();
                 break;
             }
             case SDL_EVENT_JOYSTICK_REMOVED: {
+                stdPlatform_Printf("[ev] JOYSTICK_REMOVED %d\n", (int)event.jdevice.which); // Added: field-debug
                 stdControl_InitSdlJoysticks();
                 break;
             }
+            case SDL_EVENT_GAMEPAD_ADDED:
+                stdPlatform_Printf("[ev] GAMEPAD_ADDED %d\n", (int)event.gdevice.which);
+                break;
+            case SDL_EVENT_GAMEPAD_REMOVED:
+                stdPlatform_Printf("[ev] GAMEPAD_REMOVED %d\n", (int)event.gdevice.which);
+                stdControl_InitSdlJoysticks();
+                break;
+            case SDL_EVENT_GAMEPAD_REMAPPED:
+                stdPlatform_Printf("[ev] GAMEPAD_REMAPPED %d\n", (int)event.gdevice.which);
+                break;
 
             case SDL_EVENT_TEXT_INPUT:
                 for (int i = 0; i < _strlen(event.text.text); i++)
                 {
                     Window_msg_main_handler(g_hWnd, WM_CHAR, event.text.text[i], 0);
                 }
-                break;
-            case SDL_EVENT_WINDOW_FIRST ... SDL_EVENT_WINDOW_LAST:
-                Window_HandleWindowEvent(&event);
                 break;
             case SDL_EVENT_KEY_DOWN:
                 //stdPlatform_Printf("scancode %d\n", event.key.scancode);
@@ -1037,10 +1111,33 @@ void Window_SdlUpdate()
                 stdControl_SetSDLKeydown(event.key.scancode, 0, (uint32_t)(event.key.timestamp / 1000000));
                 break;
             case SDL_EVENT_MOUSE_MOTION:
+                // Added: while the on-screen pad owns the screen, drop the mouse
+                // events SDL synthesizes from touches -- otherwise a thumbstick
+                // drag also warps the cursor and holds fire (KEY_MOUSE_B1 is
+                // bound to INPUT_FUNC_FIRE1 by default).
+                //
+                // This deliberately filters the events rather than switching
+                // SDL_HINT_TOUCH_MOUSE_EVENTS off: SDL tracks finger_touching /
+                // track_fingerid *inside* the same `if (touch_mouse_events)`
+                // block that emits the events, so flipping the hint mid-gesture
+                // strands that state -- the synthetic button-up never fires
+                // (stuck firing) and finger_touching stays true forever, after
+                // which no tap ever produces a click again (dead menus, and
+                // cutscenes that cannot be skipped).
+                if (jkTouchControls_IsShown() && event.motion.which == SDL_TOUCH_MOUSEID) {
+                    break;
+                }
                 Window_HandleMouseMove(&event.motion);
                 break;
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
             case SDL_EVENT_MOUSE_BUTTON_UP:
+                // Added: as above -- but a button-UP is always let through, so
+                // that a press which began before the pad came up can never stay
+                // latched down.
+                if (jkTouchControls_IsShown() && event.button.which == SDL_TOUCH_MOUSEID
+                    && event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+                    break;
+                }
 
                 mevent = (SDL_MouseButtonEvent*)&event;
                 left = 0;
@@ -1073,12 +1170,25 @@ void Window_SdlUpdate()
                 if (hasRight)
                     Window_bMouseRight = right;
 
-                Window_mouseX = (int)mevent->x;
-                Window_mouseY = (int)mevent->y;// - (Window_ySize - 480);
+                // route button coords through the same letterbox transform as motion
+                Window_TranslateMouseToCanvas((int)mevent->x, (int)mevent->y, &Window_mouseX, &Window_mouseY);
 
                 pos = ((Window_mouseX) & 0xFFFF) | (((Window_mouseY) << 16) & 0xFFFF0000);
                 msgl = (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? WM_LBUTTONDOWN : WM_LBUTTONUP);
                 msgr = (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? WM_RBUTTONDOWN : WM_RBUTTONUP);
+
+                // Middle mouse button activates the highlighted menu item.
+                if (mevent->button == SDL_BUTTON_MIDDLE &&
+                    jkGuiRend_IsMenuActive())
+                {
+                    if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+                        !jkQuakeConsole_bOpen)
+                    {
+                        Window_msg_main_handler(g_hWnd, WM_MBUTTONDOWN, 0, 0);
+                    }
+
+                    break;
+                }
 
                 if (jkQuakeConsole_bOpen) break; // Hijack all input to console
                 
@@ -1092,11 +1202,32 @@ void Window_SdlUpdate()
 
                 break;
             case SDL_EVENT_MOUSE_WHEEL:
-                Window_mouseWheelY = (int)event.wheel.y;
+            {
+                int wheelY = (int)event.wheel.y;
+
+                Window_mouseWheelY = wheelY;
                 Window_mouseWheelX = (int)event.wheel.x;
 
-                if (jkQuakeConsole_bOpen) break; // Hijack all input to console
+                // Preserve console scrolling.
+                if (jkQuakeConsole_bOpen)
+                    break;
+
+                // Send wheel movement to the active game menu.
+                if (jkGuiRend_IsMenuActive())
+                {
+                    int steps = wheelY > 0 ? wheelY : -wheelY;
+                    int key = wheelY > 0 ? VK_UP : VK_DOWN;
+
+                    for (int i = 0; i < steps; i++)
+                        Window_msg_main_handler(g_hWnd, WM_KEYFIRST, key, 0);
+
+                    // Prevent menu scrolling from reaching gameplay.
+                    Window_mouseWheelY = 0;
+                    Window_mouseWheelX = 0;
+                }
+
                 break;
+            }
 
             // HACK: Escape key for controllers
             case SDL_EVENT_JOYSTICK_BUTTON_DOWN:
@@ -1157,7 +1288,7 @@ void Window_SdlUpdate()
                 }
                 break;
             case SDL_EVENT_GAMEPAD_AXIS_MOTION:
-                //stdPlatform_Printf("Controller %d Axis %d moved to %d\n", 
+                //stdPlatform_Printf("Controller %d Axis %d moved to %d\n",
                 //       event.caxis.which, event.caxis.axis, event.caxis.value);
                 break;
 
@@ -1172,6 +1303,11 @@ void Window_SdlUpdate()
                 exit(-1);
                 break;
             default:
+                if (event.type >= SDL_EVENT_WINDOW_FIRST &&
+                    event.type <= SDL_EVENT_WINDOW_LAST)
+                {
+                    Window_HandleWindowEvent(&event);
+                }
                 break;
         }
     }
@@ -1191,7 +1327,14 @@ void Window_SdlUpdate()
             stdDisplay_SetMode(0, 0, 0);
             //jkMain_FixRes();
         }
-        
+
+        // -droidworks keeps its own fixed 640x480 canvas, re-push the palette + dirty the whole screen
+        if (Main_bDroidWorks)
+        {
+            dwMain_NotifyWindowResized();
+            Window_msg_main_handler(g_hWnd, WM_PAINT, 0, 0);
+        }
+
         Window_resized = 0;
     }
     
@@ -1299,6 +1442,16 @@ void Window_SdlUpdate()
 #ifdef QUAKE_CONSOLE
     last_jkQuakeConsole_bOpen = jkQuakeConsole_bOpen;
 #endif
+
+    Window_bInSdlUpdate = 0; // release the reentrancy guard
+}
+
+void Window_SdlUpdateModal()
+{
+    int saved = Window_bInSdlUpdate;
+    Window_bInSdlUpdate = 0;
+    Window_SdlUpdate();
+    Window_bInSdlUpdate = saved;
 }
 
 void Window_SdlVblank()
@@ -1310,6 +1463,7 @@ void Window_SdlVblank()
 
     //static uint32_t roundtrip = 0;
     //uint32_t before = stdPlatform_GetTimeMsec();
+    jkGame_ScreenshotFlush(); // Added: F12 shots capture the finished frame
 #ifdef ARCH_WASM
     if (!jkGuiBuildMulti_bRendering)
 #endif
@@ -1403,12 +1557,11 @@ void Window_RecreateSDL2Window()
 #endif
 
 #ifdef TARGET_ANDROID
-    // Fixed: SDL_WINDOW_SHOWN removed (windows are shown by default in SDL3), but this
-    // also dropped SDL_WINDOW_OPENGL, which SDL3 requires on the window before
-    // SDL_GL_CreateContext will succeed (SDL2 was more lenient on Android) -- caused
-    // "Failed to initialize SDL OpenGL Context // The specified window isn't an OpenGL
-    // window" at runtime.
     flags = SDL_WINDOW_OPENGL;
+#endif
+
+#ifdef TARGET_IOS
+    flags = SDL_WINDOW_FULLSCREEN | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 #endif
 
     // SDL/GL initialization precedes Main_Startup's command-line parsing.
@@ -1450,7 +1603,7 @@ void Window_RecreateSDL2Window()
     }
     //SDL_SetRenderDrawBlendMode(displayRenderer, SDL_BLENDMODE_BLEND);
 
-#if !defined(ARCH_WASM) && !defined(TARGET_ANDROID)
+#if !defined(ARCH_WASM) && !defined(TARGET_ANDROID) && !defined(TARGET_IOS)
     if (!Window_bRenderProbe) SDL_SetWindowPosition(displayWindow, Window_xPos, Window_yPos);
 #endif
 
@@ -1459,6 +1612,15 @@ void Window_RecreateSDL2Window()
         SDL_RaiseWindow(displayWindow);
     }
 
+#ifdef TARGET_IOS
+    if (!iosAngle_CreateContext(displayWindow))
+    {
+        char errtmp[320];
+        snprintf(errtmp, sizeof(errtmp), "!! Failed to initialize ANGLE !!\n%s", iosAngle_GetError());
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", errtmp, NULL);
+        exit(-1);
+    }
+#else
     glWindowContext = SDL_GL_CreateContext(displayWindow);
     
     // Retry with 3.30 instead
@@ -1494,10 +1656,11 @@ void Window_RecreateSDL2Window()
         }
         exit(-1);
     }
+#endif // TARGET_IOS
 
     SDL_GL_MakeCurrent(displayWindow, glWindowContext);
     SDL_GL_SetSwapInterval(jkPlayer_enableVsync); // Disable vsync
-#ifndef TARGET_ANDROID
+#if !defined(TARGET_ANDROID) && !defined(TARGET_IOS)
     if (!Window_bHeadlessStartup && !Window_bRenderProbe) {
         SDL_StartTextInput(displayWindow);
     }
@@ -1533,7 +1696,7 @@ int Window_Main_Linux(int argc, char** argv)
 
     if (!stdCapture_Init(argc, argv)) { fprintf(stderr, "capture: invalid request or isolated session\n"); return 6; }
     if (stdCapture_IsActive()) {
-#if defined(RENDER_GL11) || defined(ARCH_WASM) || defined(TARGET_ANDROID)
+#if defined(RENDER_GL11) || defined(ARCH_WASM) || defined(TARGET_ANDROID) || defined(TARGET_IOS)
         fprintf(stderr, "capture: this backend is unsupported\n"); return 6;
 #endif
         Window_isFullscreen = 0;
@@ -1545,7 +1708,7 @@ int Window_Main_Linux(int argc, char** argv)
     }
     Window_bRenderProbe = Window_probe.enabled;
     if (Window_bRenderProbe) {
-#if !defined(TARGET_CAN_JKGM) || defined(RENDER_GL11)
+#if !defined(TARGET_CAN_JKGM) || defined(RENDER_GL11) || defined(TARGET_ANDROID) || defined(TARGET_IOS) || defined(ARCH_WASM)
         fprintf(stderr,"Render probe requires the desktop OpenGL3 renderer with PNG support.\n"); exit(2);
 #else
         struct stat outputStat;
@@ -1588,6 +1751,20 @@ int Window_Main_Linux(int argc, char** argv)
     SDL_SetHint("SDL_MIXER_DEBUG_MUSIC_INTERFACES", "1");
     SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "aaudio"); // This is fine for music tbh
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+#endif
+
+#if defined(TARGET_IOS)
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "1");
+    // Added: deliberately do NOT set SDL_HINT_AUDIO_CATEGORY here. Its "playback"
+    // value makes SDL want Playback + DuckOthers alone (0x2), but iOS implicitly
+    // adds MixWithOthers whenever DuckOthers is set, so a live session ALWAYS
+    // reports 0x3 -- a value that hint can never match. SDL's UpdateAudioSession
+    // would then take its mismatch branch every time and call [session
+    // setActive:NO], permanently stopping OpenAL's RemoteIO unit (music, which is
+    // SDL's own device, keeps playing while every sound effect goes silent).
+    // Left unset, SDL derives MixWithOthers|DuckOthers == 0x3, which is exactly
+    // what iosAudioSession_Initialize() installs, so SDL leaves the session alone.
 #endif
 
     SDL_Init(stdCapture_IsActive() ? SDL_INIT_VIDEO : SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD);
@@ -1648,7 +1825,7 @@ int Window_Main_Linux(int argc, char** argv)
 #endif
 
     Window_RecreateSDL2Window();
-#if !defined(TARGET_ANDROID) && !defined(ARCH_WASM) && !defined(RENDER_GL11)
+#if !defined(TARGET_ANDROID) && !defined(TARGET_IOS) && !defined(ARCH_WASM) && !defined(RENDER_GL11)
     glewInit();
 #endif
     
@@ -1733,6 +1910,17 @@ int Window_Main_Linux(int argc, char** argv)
     if (jkPlayer_bHasLoadedSettingsOnce && !Window_bRenderProbe) {
         jkPlayer_WriteConf(jkPlayer_playerShortName);
     }
+
+#if defined(TARGET_IOS) || defined(TARGET_ANDROID)
+    // Added: settings are already flushed above, so quit hard rather than
+    // unwinding. Two things make the orderly path hang here: UIKit owns the run
+    // loop, so returning out of main never terminates the process, and
+    // Main_Shutdown() tears down ANGLE/OpenAL/SDL while the platform still holds
+    // references to them. _Exit rather than exit deliberately -- exit() would
+    // still run atexit handlers and the libraries' static destructors, which is
+    // the teardown being avoided.
+    _Exit(0);
+#endif
 
     Main_Shutdown();
     if (Window_bRenderProbe) {
@@ -1847,6 +2035,10 @@ int Window_DefaultHandler(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam, voi
 
 int Window_MessageLoop()
 {
+    // Recursion guard
+    int bWasInSdlUpdate = Window_bInSdlUpdate;
+    Window_bInSdlUpdate = 0;
+
     // Added: controller menuing
     jkGuiRend_UpdateController();
 
@@ -1854,6 +2046,8 @@ int Window_MessageLoop()
     Window_msg_main_handler(g_hWnd, WM_PAINT, 0, 0);
     
     //Window_SdlUpdate();
+
+    Window_bInSdlUpdate = bWasInSdlUpdate;
     return 0;
 }
 

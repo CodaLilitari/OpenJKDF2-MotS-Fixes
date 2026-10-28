@@ -21,7 +21,19 @@
 #include "Main/jkMain.h"
 #include "Dss/sithMulti.h"
 #include "General/stdMath.h"
+#include "Main/Main.h"
+#include "Dw/dwCog.h"
 #include "jk.h"
+
+// Altered: Optionally match sidestep thrust to forward thrust in QOL builds.
+static flex_d_t sithControl_GetStrafeSpeedScale(void)
+{
+#ifdef QOL_IMPROVEMENTS
+    return jkPlayer_bEqualStrafeSpeed ? 1.0 : 0.7;
+#else
+    return 0.7;
+#endif // QOL_IMPROVEMENTS
+}
 
 // Added
 static int sithControl_followingPlayer = 0;
@@ -35,6 +47,62 @@ static int sithControl_008d7f50 = 0;
 static int sithControl_008d7f54 = 0;
 static int sithControl_008d7f58 = 0;
 static int sithControl_008d7f5c = 0;
+
+// Added: physics steps sithMain will run after this frame's controls, or -1 when unstepped
+int sithControl_physStepsThisFrame = -1;
+static flex_t sithControl_turnAxisBank = 0.0;
+
+// Added: the raw turn axis (mouse) is a per-frame delta, turned into a yaw velocity for
+// one frame of physics. With fixed-step physics, frames that run no step dropped their
+// delta and the next step scaled up only its own frame's delta, so far above the step
+// rate yaw moved in coarse jumps. Bank the delta until a step consumes it.
+static flex_t sithControl_GetTurnAxisVelocity(void)
+{
+    flex_t turnAxis = sithControl_GetAxis(INPUT_FUNC_TURN);
+    if (sithControl_physStepsThisFrame < 0)
+    {
+        sithControl_turnAxisBank = 0.0;
+        return turnAxis * sithTime_g_fps;
+    }
+
+    sithControl_turnAxisBank += turnAxis;
+
+    // Not integrated this frame; keep it nonzero so MotS turn start/stop messages stay as-is
+    if (sithControl_physStepsThisFrame == 0)
+        return sithControl_turnAxisBank * sithTime_g_fps;
+
+    flex_t vel = sithControl_turnAxisBank / (sithControl_physStepsThisFrame * DELTA_PHYSTICK_FPS);
+    sithControl_turnAxisBank = 0.0;
+    return vel;
+}
+
+// Added: Toggle crouch state
+static int sithControl_crouchWasSpecialMovement = 0;
+static int sithControl_crouchToggled = 0;
+static int sithControl_crouchWasPressed = 0;
+// Returns the effective crouch state for normal player movement.
+
+// Added: Toggle crouch state
+static int sithControl_GetCrouchState(void)
+{
+    int pressed = sithControl_GetKey(INPUT_FUNC_DUCK, 0) != 0;
+
+    // Preserve the original hold-to-crouch behavior.
+    if (!(sithWeapon_controlOptions & SITHCONTROL_OPTION_TOGGLE_CROUCH))
+    {
+        sithControl_crouchToggled = 0;
+        sithControl_crouchWasPressed = pressed;
+        return pressed;
+    }
+
+    // Toggle only when the key transitions from released to pressed.
+    if (pressed && !sithControl_crouchWasPressed)
+        sithControl_crouchToggled = !sithControl_crouchToggled;
+
+    sithControl_crouchWasPressed = pressed;
+
+    return sithControl_crouchToggled;
+}
 
 static const char *sithControl_aFunctionStrs[INPUT_FUNC_MAX+1] =
 {
@@ -127,6 +195,10 @@ int sithControl_Startup()
     if ( sithControl_bInitted )
         return 0;
 
+    // Added
+    sithControl_physStepsThisFrame = -1;
+    sithControl_turnAxisBank = 0.0;
+
     if ( stdControl_Startup() )
     {
         sithControl_RegisterControlFunctions();
@@ -204,10 +276,23 @@ void sithControl_RegisterAxisFunction(int functionId, uint32_t flag)
     sithControl_inputFuncToControlType[functionId] = flag | 3;
 }
 
+// Added: Toggle crouch state
+void sithControl_ResetCrouchToggle(void)
+{
+    sithControl_crouchWasSpecialMovement = 0;
+    sithControl_crouchToggled = 0;
+    sithControl_crouchWasPressed =
+        sithControl_GetKey(INPUT_FUNC_DUCK, 0) != 0;
+}
+
 void sithControl_Reset()
 {
     _memset(sithControl_aInputFuncToKeyinfo, 0, sizeof(sithControl_aInputFuncToKeyinfo));
     stdControl_Reset();
+
+    // Added: Toggle crouch state
+    sithControl_crouchToggled = 0;
+    sithControl_crouchWasPressed = 0;
 }
 
 void sithControl_RegisterControlFunctions()
@@ -253,6 +338,11 @@ void sithControl_RegisterControlFunctions()
     sithControl_inputFuncToControlType[INPUT_FUNC_GAMMA] = 4 | 1;
     sithControl_inputFuncToControlType[INPUT_FUNC_SCREENSHOT] = 4 | 1;
     sithControl_inputFuncToControlType[INPUT_FUNC_TALLY] = 4 | 1;
+    // Added: Register user-defined hotkeys as bindable controls.
+    for (int i = INPUT_FUNC_ACTIVATE0; i <= INPUT_FUNC_ACTIVATE31; i++)
+    {
+        sithControl_inputFuncToControlType[i] = 4 | 1;
+    }
     if ( (g_debugmodeFlags & DEBUGFLAG_IN_EDITOR) != 0 )
         sithControl_inputFuncToControlType[INPUT_FUNC_DEBUG] = 4 | 1;
 #ifdef QOL_IMPROVEMENTS
@@ -283,7 +373,9 @@ void sithControl_Update(flex_t secDeltaTime, int msecDeltaTime)
         if ( stdControl_bControlsIdle )
         {
             sithControl_msIdle += msecDeltaTime;
-            if ( sithControl_msIdle > 30000 && sithCamera_g_pCurCamera != &sithCamera_g_aCameras[4] )
+            // Added: DroidWorks removed the switch into the idle camera
+            if ( !Main_bDroidWorks
+              && sithControl_msIdle > 30000 && sithCamera_g_pCurCamera != &sithCamera_g_aCameras[4] )
                 sithCamera_SetCurrentCamera(&sithCamera_g_aCameras[4]);
 #ifdef QOL_IMPROVEMENTS
             else if (sithControl_msIdle < 30000 && sithCamera_g_pCurCamera == &sithCamera_g_aCameras[4] ) {
@@ -673,7 +765,28 @@ LABEL_30:
             }
         }
     }
+    sithControl_FixNumpadTurn(); // Added
     return 1;
+}
+
+// Added: profiles saved with the old default Turn binds have Numpad 4 turning
+// right and Numpad 6 doing nothing. Put Numpad 4 back to left and give Numpad 6
+// right, unless the player has used Numpad 6 for something else.
+void sithControl_FixNumpadTurn()
+{
+    stdControlKeyInfo* pTurn = &sithControl_aInputFuncToKeyinfo[INPUT_FUNC_TURN];
+    if (sithControl_IsKeyBound(DIK_NUMPAD6))
+        return;
+    for (uint32_t i = 0; i < pTurn->numEntries; i++)
+    {
+        stdControlKeyInfoEntry* pEntry = &pTurn->aEntries[i];
+        if ((pEntry->flags & INPUT_MAPPING_FLAG_DXKEY) && pEntry->dxKeyNum == DIK_NUMPAD4 && (pEntry->flags & INPUT_MAPPING_FLAG_AXIS_REVERSED))
+        {
+            pEntry->flags &= ~INPUT_MAPPING_FLAG_AXIS_REVERSED;
+            sithControl_BindControl(INPUT_FUNC_TURN, DIK_NUMPAD6, INPUT_MAPPING_FLAG_AXIS_REVERSED);
+            return;
+        }
+    }
 }
 
 int sithControl_WriteConf()
@@ -969,6 +1082,14 @@ int sithControl_HandlePlayer(SithThing *player, flex_t deltaSecs)
     {
         if (player->flags & SITH_TF_DEAD)
         {
+            // Added: Toggle crouch state
+            // Reset toggle crouch on death.
+            // Preserve the current key state to prevent an accidental
+            // toggle if crouch is held during respawn.
+            sithControl_crouchToggled = 0;
+            sithControl_crouchWasPressed =
+                sithControl_GetKey(INPUT_FUNC_DUCK, 0) != 0;
+
             if (!(player->actorParams.flags & SITH_AF_FALLKILLED))
             {
                 if ( !sithControl_death_msgtimer )
@@ -1034,14 +1155,62 @@ LABEL_39:
                     sithControl_PlayerLook(player, deltaSecs);
                 }
 
+                // Added: Toggle crouch state
+                // Cancel toggle crouch when entering water, noclip,
+                // or becoming airborne while fly mode is enabled.
+                int isUnderwater = player->sector &&
+                    (player->sector->flags & SITH_SECTOR_UNDERWATER) != 0;
+
+                int isNoclip = (g_debugmodeFlags & DEBUGFLAG_NOCLIP) != 0;
+
+                int isFlying = (player->physicsParams.flags & SITH_PF_FLY) != 0;
+                int isAirborne = player->attach_flags == 0;
+
+                int isSpecialMovement =
+                    isUnderwater || isNoclip || (isFlying && isAirborne);
+
+                if (isSpecialMovement && !sithControl_crouchWasSpecialMovement)
+                {
+                    sithControl_ResetCrouchToggle();
+                }
+
+                sithControl_crouchWasSpecialMovement = isSpecialMovement;
+                // End Added: Toggle crouch state
+
                 if ( player->attach_flags )
                     sithControl_PlayerMovement(player);
                 else
                     sithControl_FreeCam(player);
 
-                sithControl_GetKey(INPUT_FUNC_ACTIVATE, &input_read);
-                if ( input_read != 0 &&  sithThing_MotsTick(2,0,1.0)) // MOTS added
-                    sithPlayerActions_Activate(player);
+#ifdef PLATFORM_DROIDWORKS
+                // Added: DroidWorks tool-key dispatch
+                // SELECT1 -> tool arm slot 2, SELECT2 -> tool arm slot 1, ACTIVATE -> body slot 0.
+                // Replaces the stock activate handling
+                if ( Main_bDwCompat )
+                {
+                    sithControl_GetKey(INPUT_FUNC_SELECT1, &input_read);
+                    if ( input_read != 0 )
+                        dwCog_ActivateTool(player, 2);
+                    else
+                    {
+                        sithControl_GetKey(INPUT_FUNC_SELECT2, &input_read);
+                        if ( input_read != 0 )
+                            dwCog_ActivateTool(player, 1);
+                        else
+                        {
+                            sithControl_GetKey(INPUT_FUNC_ACTIVATE, &input_read);
+                            if ( input_read != 0 )
+                                dwCog_ActivateTool(player, 0);
+                        }
+                    }
+                }
+                else
+#endif
+                {
+                    sithControl_GetKey(INPUT_FUNC_ACTIVATE, &input_read);
+                    if ( input_read != 0 &&  sithThing_MotsTick(2,0,1.0)) // MOTS added
+                        sithPlayerActions_Activate(player);
+                }
 
                 sithControl_GetKey(INPUT_FUNC_MAP, &input_read);
                 if ( (input_read & 1) != 0 )
@@ -1318,7 +1487,7 @@ void sithControl_PlayerMovementMots(SithThing *player)
     }
     thing->physicsParams.flags =
          thing->physicsParams.flags & ~SITH_PF_CROUCHING;
-    iVar2 = sithControl_GetKey(INPUT_FUNC_DUCK,(int *)0x0);
+    iVar2 = sithControl_GetCrouchState(); // Added: Toggle crouch state
     if (iVar2 == 0) {
         if (sithControl_008d7f58 != 0) {
             sithThing_MotsTick(1,0,0.0);
@@ -1350,13 +1519,7 @@ void sithControl_PlayerMovementMots(SithThing *player)
     }
     iVar2 = sithControl_GetKey(INPUT_FUNC_SLIDETOGGLE,&local_4);
     if (iVar2 == 0) {
-        fVar4 = sithControl_GetAxis(INPUT_FUNC_TURN);
-#ifdef QOL_IMPROVEMENTS
-        // Scale appropriately to high framerates
-        fVar4 = fVar4 * sithTime_g_fps;
-#else
-        fVar4 = fVar4 * sithTime_g_fps;
-#endif
+        fVar4 = sithControl_GetTurnAxisVelocity(); // Added: was GetAxis(TURN) * fps
         if (1.0 <= move_multiplier) {
             local_8 = 1.0;
         }
@@ -1379,7 +1542,7 @@ void sithControl_PlayerMovementMots(SithThing *player)
             thing->physicsParams.angularVelocity.y = fVar4;
             fVar4 = sithControl_GetKeyAsAxisNormalized(INPUT_FUNC_SLIDE);
             fVar4 = (thing->actorParams.maxThrust +
-                    thing->actorParams.extraSpeed) * -fVar4 * 0.7;
+                    thing->actorParams.extraSpeed) * -fVar4 * sithControl_GetStrafeSpeedScale();
             if (fVar4 == 0.0) goto joined_r0x00527cfa;
             sithControl_008d7f54 = 1;
             iVar2 = sithThing_MotsTick(4,0,fVar4 * move_multiplier);
@@ -1399,7 +1562,7 @@ void sithControl_PlayerMovementMots(SithThing *player)
                 thing->physicsParams.angularVelocity.y = fVar4;
                 fVar4 = sithControl_GetKeyAsAxisNormalized(INPUT_FUNC_SLIDE);
                 fVar4 = (thing->actorParams.maxThrust +
-                        thing->actorParams.extraSpeed) * -fVar4 * 0.7;
+                        thing->actorParams.extraSpeed) * -fVar4 * sithControl_GetStrafeSpeedScale();
                 if (fVar4 == 0.0) goto joined_r0x00527cfa;
                 sithControl_008d7f54 = 1;
                 iVar2 = sithThing_MotsTick(4,0,fVar4 * move_multiplier);
@@ -1421,7 +1584,7 @@ void sithControl_PlayerMovementMots(SithThing *player)
             fVar4 = 1.0;
         }
         fVar4 = (thing->actorParams.maxThrust +
-                thing->actorParams.extraSpeed) * fVar4 * 0.7;
+                thing->actorParams.extraSpeed) * fVar4 * sithControl_GetStrafeSpeedScale();
         if (fVar4 != 0.0) {
             sithControl_008d7f54 = 1;
             iVar2 = sithThing_MotsTick(4,0,fVar4 * move_multiplier);
@@ -1520,7 +1683,7 @@ void sithControl_PlayerMovement(SithThing *player)
     if ( sithControl_GetKey(INPUT_FUNC_SLOW, 0) )
         move_multiplier = move_multiplier * 0.5;
     int old_state = player->physicsParams.flags;
-    if ( !sithControl_GetKey(INPUT_FUNC_DUCK, 0) )
+    if (!sithControl_GetCrouchState()) // Added: Toggle crouch state
     {
         new_state = old_state & ~SITH_PF_CROUCHING;
     }
@@ -1557,7 +1720,7 @@ void sithControl_PlayerMovement(SithThing *player)
             }
             v7 = player->actorParams.maxThrust + player->actorParams.extraSpeed;
             player->physicsParams.angularVelocity.y = 0.0;
-            player->physicsParams.acceleration.x = v7 * v6 * 0.7;
+            player->physicsParams.acceleration.x = v7 * v6 * sithControl_GetStrafeSpeedScale();
         }
         else
         {
@@ -1566,9 +1729,9 @@ void sithControl_PlayerMovement(SithThing *player)
             // These base values only come from raw axis fetches
 #ifdef QOL_IMPROVEMENTS
             // Scale appropriately to high and low framerates
-            player->physicsParams.angularVelocity.y = sithControl_GetAxis(INPUT_FUNC_TURN) * sithTime_g_fps;
+            player->physicsParams.angularVelocity.y = sithControl_GetTurnAxisVelocity(); // Added: was GetAxis(TURN) * fps
 #else
-            player->physicsParams.angularVelocity.y = sithControl_GetAxis(INPUT_FUNC_TURN) * sithTime_g_fps;
+            player->physicsParams.angularVelocity.y = sithControl_GetTurnAxisVelocity(); // Added: was GetAxis(TURN) * fps
 #endif
             if ( move_multiplier <= 1.0 )
                 move_multiplier_ = move_multiplier;
@@ -1585,7 +1748,7 @@ void sithControl_PlayerMovement(SithThing *player)
 
             player->physicsParams.acceleration.x = sithControl_GetKeyAsAxisNormalized(INPUT_FUNC_SLIDE)
                                                             * (player->actorParams.maxThrust + player->actorParams.extraSpeed)
-                                                            * 0.7;
+                                                            * sithControl_GetStrafeSpeedScale();
         }
         v11 = sithControl_GetKeyAsAxisNormalized(0);
         y_vel = (player->actorParams.maxThrust + player->actorParams.extraSpeed) * v11;
@@ -1674,19 +1837,19 @@ void sithControl_FreeCam(SithThing *player)
             }
             v12 = v1->actorParams.extraSpeed + v1->actorParams.maxThrust;
             v1->physicsParams.angularVelocity.y = 0.0;
-            v7->x = v12 * v11 * 0.7;
+            v7->x = v12 * v11 * sithControl_GetStrafeSpeedScale();
         }
         else
         {
             // Why did MoTS do this lol
-            v7->x = (Main_bMotsCompat ? -1 : 1) * sithControl_GetKeyAsAxisNormalized(INPUT_FUNC_SLIDE) * (v1->actorParams.extraSpeed + v1->actorParams.maxThrust) * 0.7;
+            v7->x = (Main_bMotsCompat ? -1 : 1) * sithControl_GetKeyAsAxisNormalized(INPUT_FUNC_SLIDE) * (v1->actorParams.extraSpeed + v1->actorParams.maxThrust) * sithControl_GetStrafeSpeedScale();
             
 #ifdef QOL_IMPROVEMENTS
             // Scale appropriately to high framerates
-            v1->physicsParams.angularVelocity.y = sithControl_GetAxis(INPUT_FUNC_TURN) * sithTime_g_fps;
+            v1->physicsParams.angularVelocity.y = sithControl_GetTurnAxisVelocity(); // Added: was GetAxis(TURN) * fps
             v1->physicsParams.angularVelocity.y +=  sithControl_GetKeyAsAxis(INPUT_FUNC_TURN) * v1->actorParams.maxRotVelocity;// * (sithTime_g_fps / 25.0) * 2.0;
 #else
-            v1->physicsParams.angularVelocity.y = sithControl_GetAxis(INPUT_FUNC_TURN) * sithTime_g_fps;
+            v1->physicsParams.angularVelocity.y = sithControl_GetTurnAxisVelocity(); // Added: was GetAxis(TURN) * fps
             v1->physicsParams.angularVelocity.y += sithControl_GetKeyAsAxis(INPUT_FUNC_TURN) * v1->actorParams.maxRotVelocity;
 #endif
         }
@@ -1798,9 +1961,7 @@ void sithControl_RegisterKeyboardBindings()
     sithControl_DefaultHelper(INPUT_FUNC_TURN, DIK_LEFT, 2);
     sithControl_DefaultHelper(INPUT_FUNC_TURN, DIK_RIGHT, 6);
     sithControl_DefaultHelper(INPUT_FUNC_TURN, DIK_NUMPAD4, 2);
-    sithControl_DefaultHelper(INPUT_FUNC_TURN, DIK_NUMPAD4, 6);
-    sithControl_DefaultHelper(INPUT_FUNC_TURN, DIK_LEFT, 2);
-    sithControl_DefaultHelper(INPUT_FUNC_TURN, DIK_RIGHT, 6);
+    sithControl_DefaultHelper(INPUT_FUNC_TURN, DIK_NUMPAD6, 6); // Added: as in JK.EXE. Was Numpad 4 again, then Left and Right again
 
     sithControl_DefaultHelper(INPUT_FUNC_FORWARD, DIK_UP, 2);
     sithControl_DefaultHelper(INPUT_FUNC_FORWARD, DIK_DOWN, 6);
@@ -1905,6 +2066,84 @@ void sithControl_DefaultInit()
 #ifdef TARGET_RETRO_HOMEBREW
     sithWeapon_controlOptions |= 2;
 #endif // TARGET_RETRO_HOMEBREW
+}
+
+// Added: DroidWorks in-mission control bindings (DW FUN_00456da0 + FUN_00457000 +
+// FUN_00457330). Arrow-key/numpad movement + droid tool selects, then the
+// joystick button/hat + axis defaults and the mouse-look axes. The binary's
+// debug-only WASD binds (g_debugModeFlags & 0x100) are omitted.
+void sithControl_MapDefaultsDroidworks(void)
+{
+    stdControlKeyInfoEntry* pEntry;
+
+    sithControl_Reset();
+    sithWeapon_controlOptions = 0x24;
+
+    // keyboard buttons (DIK scancodes)
+    sithControl_BindControl(INPUT_FUNC_TALK,        DIK_V,       0);
+    sithControl_BindControl(INPUT_FUNC_TURN,        DIK_LEFT,    0);
+    sithControl_BindControl(INPUT_FUNC_TURN,        DIK_RIGHT,   4);
+    sithControl_BindControl(INPUT_FUNC_TURN,        DIK_NUMPAD4, 0);
+    sithControl_BindControl(INPUT_FUNC_TURN,        DIK_NUMPAD6, 4);
+    sithControl_BindControl(INPUT_FUNC_FORWARD,     DIK_UP,      0);
+    sithControl_BindControl(INPUT_FUNC_FORWARD,     DIK_DOWN,    4);
+    sithControl_BindControl(INPUT_FUNC_FORWARD,     DIK_NUMPAD8, 0);
+    sithControl_BindControl(INPUT_FUNC_FORWARD,     DIK_NUMPAD2, 4);
+    sithControl_BindControl(INPUT_FUNC_SLIDE,       DIK_NUMPAD1, 4);
+    sithControl_BindControl(INPUT_FUNC_SLIDE,       DIK_NUMPAD3, 0);
+    sithControl_BindControl(INPUT_FUNC_JUMP,        DIK_ADD,     0);
+    sithControl_BindControl(INPUT_FUNC_JUMP,        DIK_X,       0);
+    sithControl_BindControl(INPUT_FUNC_ACTIVATE,    DIK_SPACE,   0);
+    sithControl_BindControl(INPUT_FUNC_ACTIVATE,    DIK_NUMPAD0, 0);
+    sithControl_BindControl(INPUT_FUNC_SLIDETOGGLE, DIK_RMENU,   0);
+    sithControl_BindControl(INPUT_FUNC_SLIDETOGGLE, DIK_LMENU,   0);
+    sithControl_BindControl(INPUT_FUNC_SLOW,        DIK_LSHIFT,  0);
+    sithControl_BindControl(INPUT_FUNC_SLOW,        DIK_RSHIFT,  0);
+    sithControl_BindControl(INPUT_FUNC_PITCH,       DIK_PRIOR,   0);
+    sithControl_BindControl(INPUT_FUNC_PITCH,       DIK_E,       0);
+    sithControl_BindControl(INPUT_FUNC_PITCH,       DIK_NEXT,    4);
+    sithControl_BindControl(INPUT_FUNC_PITCH,       DIK_C,       4);
+    sithControl_BindControl(INPUT_FUNC_CENTER,      DIK_HOME,    0);
+    sithControl_BindControl(INPUT_FUNC_CENTER,      DIK_D,       0);
+    sithControl_BindControl(INPUT_FUNC_CENTER,      DIK_NUMPAD5, 0);
+    sithControl_BindControl(INPUT_FUNC_DEBUG,       DIK_0,       0);
+    sithControl_BindControl(INPUT_FUNC_SELECT3,     DIK_1,       0);
+    sithControl_BindControl(INPUT_FUNC_SELECT4,     DIK_2,       0);
+    sithControl_BindControl(INPUT_FUNC_SELECT5,     DIK_3,       0);
+    sithControl_BindControl(INPUT_FUNC_SELECT6,     DIK_4,       0);
+    sithControl_BindControl(INPUT_FUNC_SELECT7,     DIK_5,       0);
+    sithControl_BindControl(INPUT_FUNC_SELECT8,     DIK_6,       0);
+    sithControl_BindControl(INPUT_FUNC_SELECT9,     DIK_7,       0);
+    sithControl_BindControl(INPUT_FUNC_SELECT0,     DIK_8,       0);
+    sithControl_BindControl(INPUT_FUNC_GAMESAVE,    DIK_9,       0);
+    sithControl_BindControl(INPUT_FUNC_MLOOK,       DIK_EQUALS,  0);
+    sithControl_BindControl(INPUT_FUNC_CAMERAMODE,  DIK_MINUS,   0);
+    sithControl_BindControl(INPUT_FUNC_SELECT1,     DIK_A,       0);
+    sithControl_BindControl(INPUT_FUNC_SELECT1,     DIK_L,       0);
+    sithControl_BindControl(INPUT_FUNC_SELECT1,     DIK_NUMPAD7, 0);
+    sithControl_BindControl(INPUT_FUNC_SELECT2,     DIK_S,       0);
+    sithControl_BindControl(INPUT_FUNC_SELECT2,     DIK_R,       0);
+    sithControl_BindControl(INPUT_FUNC_SELECT2,     DIK_NUMPAD9, 0);
+
+    // joystick buttons + hat
+    sithControl_BindControl(INPUT_FUNC_FIRE1,       KEY_JOY1_B1,    0);
+    sithControl_BindControl(INPUT_FUNC_FIRE2,       KEY_JOY1_B2,    0);
+    sithControl_BindControl(INPUT_FUNC_ACTIVATE,    KEY_JOY1_B3,    0);
+    sithControl_BindControl(INPUT_FUNC_JUMP,        KEY_JOY1_B4,    0);
+    sithControl_BindControl(INPUT_FUNC_PITCH,       KEY_JOY1_HUP,   4);
+    sithControl_BindControl(INPUT_FUNC_PITCH,       KEY_JOY1_HDOWN, 0);
+    sithControl_BindControl(INPUT_FUNC_SLIDE,       KEY_JOY1_HLEFT, 4);
+    sithControl_BindControl(INPUT_FUNC_SLIDE,       KEY_JOY1_HRIGHT, 0);
+
+    // axes
+    sithControl_BindAxis(INPUT_FUNC_FORWARD, AXIS_JOY1_Y, INPUT_MAPPING_FLAG_AXIS_REVERSED);
+    sithControl_BindAxis(INPUT_FUNC_TURN,    AXIS_JOY1_X, INPUT_MAPPING_FLAG_AXIS_REVERSED);
+    pEntry = sithControl_BindAxis(INPUT_FUNC_TURN,  AXIS_MOUSE_X, INPUT_MAPPING_FLAG_AXIS_REVERSED | INPUT_MAPPING_FLAG_RAW_AXIS);
+    if (pEntry) pEntry->binaryAxisVal = 0.4f;
+    pEntry = sithControl_BindAxis(INPUT_FUNC_PITCH, AXIS_MOUSE_Y, INPUT_MAPPING_FLAG_RAW_AXIS);
+    if (pEntry) pEntry->binaryAxisVal = 0.3f;
+    pEntry = sithControl_BindAxis(INPUT_FUNC_PITCH, AXIS_MOUSE_Z, 0);
+    if (pEntry) pEntry->binaryAxisVal = 4.0f;
 }
 
 void sithControl_RegisterKeyFunction(int functionId)
@@ -2256,6 +2495,45 @@ LABEL_17:
 }
 
 // Added
+// Added: re-establishes ONLY the joystick stick-axis bindings.
+//
+// sithControl_ReadConf() starts by zeroing sithControl_aInputFuncToKeyinfo and
+// then restores just the key/button binds: axis binds are never written by
+// sithControl_WriteConf() in the first place, and ReadConf's "axis" branch
+// parses its two values and throws them away. So every profile load silently
+// drops the stick bindings. On desktop that goes unnoticed because the mouse
+// carries look; on a touch device the on-screen pad's sticks ARE joystick axes,
+// so they come back dead. Mirrors the axis half of
+// sithControl_MapDefaultsJoystick() and leaves button binds untouched.
+void sithControl_RestoreAxisBindings()
+{
+    stdControlKeyInfoEntry* pMapped;
+
+    pMapped = sithControl_BindAxis(INPUT_FUNC_FORWARD, AXIS_JOY1_Y, 4u);
+    if (pMapped) {
+        pMapped->binaryAxisVal = 1.0;
+    }
+
+    if (Main_bMotsCompat) {
+        pMapped = sithControl_BindAxis(INPUT_FUNC_SLIDE, AXIS_JOY1_X, 4u);
+    }
+    else {
+        pMapped = sithControl_BindAxis(INPUT_FUNC_SLIDE, AXIS_JOY1_X, 0u);
+    }
+    if (pMapped) {
+        pMapped->binaryAxisVal = 1.0;
+    }
+
+    pMapped = sithControl_BindAxis(INPUT_FUNC_PITCH, AXIS_JOY1_R, 4u);
+    if (pMapped) {
+        pMapped->binaryAxisVal = 1.25;
+    }
+    pMapped = sithControl_BindAxis(INPUT_FUNC_TURN, AXIS_JOY1_Z, 4u);
+    if (pMapped) {
+        pMapped->binaryAxisVal = 1.5;
+    }
+}
+
 void sithControl_MapDefaultsJoystick() {
 #if !defined(TARGET_RETRO_HOMEBREW) && defined(QOL_IMPROVEMENTS)
     stdControlKeyInfoEntry* mapped;
@@ -2329,6 +2607,21 @@ void sithControl_MapDefaultsJoystick() {
     sithControl_BindControl(INPUT_FUNC_NEXTINV, KEY_JOY1_B5, 0);
     sithControl_BindControl(INPUT_FUNC_USEINV, KEY_JOY1_B7, 0);
 #endif
+}
+
+// Added: whether any control has this key.
+int sithControl_IsKeyBound(int dxKeyNum)
+{
+    for (int i = 0; i < INPUT_FUNC_MAX; i++)
+    {
+        stdControlKeyInfo* pInfo = &sithControl_aInputFuncToKeyinfo[i];
+        for (uint32_t j = 0; j < pInfo->numEntries; j++)
+        {
+            if ((pInfo->aEntries[j].flags & INPUT_MAPPING_FLAG_DXKEY) && pInfo->aEntries[j].dxKeyNum == dxKeyNum)
+                return 1;
+        }
+    }
+    return 0;
 }
 
 // Common button for both items and force power usage for controllers

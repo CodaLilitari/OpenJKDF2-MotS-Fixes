@@ -657,7 +657,11 @@ int jkgm_std3D_AddToTextureCache(tVBuffer *vbuf, rdDDrawSurface *texture, int is
         return 0;
     }
 
-    
+    // same limit as std3D_AddToTextureCache
+    if (std3D_loadedTexturesAmt >= STD3D_MAX_TEXTURES) {
+        return 0;
+    }
+
     if (!jkgm_cache_once) {
         if (!fs::exists(jkgm_materials_path)) {
             jkgm_fastpath_disable = true;
@@ -740,7 +744,9 @@ int jkgm_std3D_AddToTextureCache(tVBuffer *vbuf, rdDDrawSurface *texture, int is
             const char* path = albedo_tex.c_str();
 
             GLubyte* data = (GLubyte*)entry->albedo_data;
+#if !defined(TARGET_IOS) && !defined(TARGET_ANDROID) && !defined(ARCH_WASM)
             const bool albedoWasCached = data != NULL;
+#endif
 
             if (data) {
                 //printf("Using precached %s\n", path);
@@ -759,6 +765,8 @@ int jkgm_std3D_AddToTextureCache(tVBuffer *vbuf, rdDDrawSurface *texture, int is
                 texture->texture_id = image_texture;
                 texture->albedo_data = data;
                 entry->albedo_data = data;
+#if !defined(TARGET_IOS) && !defined(TARGET_ANDROID) && !defined(ARCH_WASM)
+                // Probe receipts use desktop texture queries, outside the GLES3.0 API.
                 if (Window_bRenderProbe) {
                     GLint gpuWidth = 0, gpuHeight = 0, gpuFormat = 0;
                     glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &gpuWidth);
@@ -777,6 +785,7 @@ int jkgm_std3D_AddToTextureCache(tVBuffer *vbuf, rdDDrawSurface *texture, int is
                     printf("RENDERPROBE_JKGM_UPLOAD %s\n", receipt.dump().c_str());
                     fflush(stdout);
                 }
+#endif
             }
             else
             {

@@ -18,6 +18,9 @@
 
 #include <math.h>
 
+// Added: Turbo Mode doubles AI firing animation speed.
+extern int jkDev_bTurbo;
+
 static const char* sithPuppet_animNames[43+2] = {
     "--RESERVED--",
     "stand",
@@ -214,8 +217,26 @@ int sithPuppet_PlayMode(SithThing *pThing, signed int submode, rdPuppetTrackCall
     }
     
     result = sithPuppet_PlayKey(pThing->renderData.puppet, keyframe, lowPri, highPri, flags, pfCallback);
-    if ( result < 0 )
+    if (result < 0)
         return -1;
+
+    // Added: Turbo Mode doubles AI firing animation speed.
+    if (!sithNet_isMulti
+        && jkDev_bTurbo
+        && pThing->type == SITH_THING_ACTOR
+        && pThing->controlType == SITH_CT_AI)
+    {
+        if (submode == SITH_ANIM_FIRE
+            || submode == SITH_ANIM_FIRE2
+            || submode == SITH_ANIM_FIRE3
+            || submode == SITH_ANIM_FIRE4
+            || submode == SITH_ANIM_CHARGE
+            || submode == SITH_ANIM_JUMP)
+        {
+            pThing->renderData.puppet->aTracks[result].speed *= 2.0f;
+        }
+    }
+
     return result;
 }
 
@@ -404,6 +425,16 @@ flex_t sithPuppet_UpdateThingMove(SithThing *pThing)
     else
     {
         rdMatrix_TransformVectorOrtho34(&a1a, &pThing->physicsParams.vel, &pThing->orient);
+
+        // Added: Turbo Mode animation synchronization.
+        if (!sithNet_isMulti
+            && jkDev_bTurbo
+            && pThing->type == SITH_THING_ACTOR
+            && pThing->controlType == SITH_CT_AI)
+        {
+            rdVector_Scale3Acc(&a1a, 2.0f);
+        }
+
         if ( pThing->attach_flags || (pThing->physicsParams.flags & SITH_PF_FLY) != 0 || (pThing->sector->flags & SITH_ANIM_WALK) != 0 )
         {
             v2 = a1a.y;
@@ -467,10 +498,22 @@ flex_t sithPuppet_UpdateThingMove(SithThing *pThing)
         }
         if ( pThing->moveType == SITH_MT_PHYSICS && pThing->attach_flags && (pThing->physicsParams.flags & (SITH_PF_200000|SITH_PF_CROUCHING)) )
         {
-            if ( v3 == SITH_ANIM_STAND && thinga < 0.0 )
+            // Added: Fix crouch animation base pose glitch when moving against walls (previously `thinga < 0.0`)
+            if (v3 == SITH_ANIM_STAND && stdMath_Fabs(thinga) <= 0.02)
+            {
+                if (pThing->puppet->currentAnimation == SITH_ANIM_CROUCHBACK)
+                    anim = SITH_ANIM_CROUCHBACK;
+                else
+                    anim = SITH_ANIM_CROUCHFORWARD;
+            }
+            else if (v3 == SITH_ANIM_STAND && thinga < 0.0)
+            {
                 anim = SITH_ANIM_CROUCHBACK;
+            }
             else
+            {
                 anim = SITH_ANIM_CROUCHFORWARD;
+            }
             goto LABEL_51;
         }
     }
@@ -546,6 +589,7 @@ LABEL_51:
     v18->currentAnimation = anim;
 
     v19 = &v11->modes[v18->majorMode].keyframe[anim];
+
     if ( v19 != v18->playingAnim )
     {
         if ( anim == SITH_ANIM_FALL )
@@ -915,6 +959,16 @@ void sithPuppet_advanceidk(SithThing *pThing, flex_t a2)
                 if ( v8 < 0.0 )
                     v8 = -v8;
                 a3 = v8 * 280.0;
+
+                // Added: Synchronize AI movement animations with Turbo Mode.
+                if (!sithNet_isMulti
+                    && jkDev_bTurbo
+                    && pThing->type == SITH_THING_ACTOR
+                    && pThing->controlType == SITH_CT_AI)
+                {
+                    a3 *= 2.0f;
+                }
+
                 rdPuppet_AdvanceTrack(pThing->renderData.puppet, v6, a3);
             }
         }
