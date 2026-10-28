@@ -4,6 +4,38 @@ This file records behavior, compatibility, build, and validation changes made
 for this fork.  Upstream history remains available in Git; this log describes
 the fork-specific delta and the evidence used to justify it.
 
+## 2026-10-28
+
+### Current backpack capacity after upstream integration
+
+- After integration of upstream #487, backpack capacity is 16 entries with
+  `QOL_IMPROVEMENTS` and 12 without it. Creation, access and packet bounds follow
+  the actual array capacity. The original 12-entry structure layout now applies
+  only to builds without `QOL_IMPROVEMENTS`; the September record below describes
+  the capacity and layout at that earlier revision.
+
+### Coherent game clocks during fixed physics steps
+
+- Synchronize the seconds game clock from the existing integer timestamp before
+  each normal physics substep, then restore the outer-frame seconds value. COG
+  and event consumers now observe coherent `GetGameTime` and `GetFlexGameTime`
+  values. Preserve the existing integer scheduler, step count, truncation,
+  carried remainder and consumer ordering.
+- Production-linked ASan/UBSan tests pass in millisecond and microsecond time
+  configurations, with independent negative controls for missing substep
+  synchronization, missing outer-frame restoration and incorrect units.
+- A native Windows JK single-player COG VM comparison recorded 40 pulse and
+  40 sleep-resume samples per lane. Comparing integer milliseconds with flex
+  seconds converted to milliseconds at a 0.01 ms tolerance, fixed-step baseline
+  `6fa54630` disagreed in 40/40 samples for each handler; corrected `5f4270b0`
+  disagreed in 0/40 for each. The unchanged baseline with fixed physics disabled
+  (`bJankyPhysics=true`) also disagreed in 0/40 for each. The maximum corrected
+  difference was 0.000031 ms, and no lane observed either clock move backwards.
+- These ordinary timed native-fork runs validate the sampled clock consumers,
+  not deterministic simulation, original-retail execution, connected
+  multiplayer, or the reported swoop/vehicle movement issue. The existing
+  integer scheduling and floating-point precision limits remain unchanged.
+
 ## 2026-09-09
 
 ### Multiplayer class/team models and author invitation
@@ -50,12 +82,14 @@ the fork-specific delta and the evidence used to justify it.
   rather than the backpack slot number. The old lookup could reject valid MotS
   items and converted-map treasure items, or admit items using unrelated flags.
 - Creation, item access and packet serialization use the actual contents-array
-  capacity (12). The old creation guard allowed 16 writes into a 12-entry array.
+  capacity (12 at that revision). The old creation guard allowed 16 writes into
+  a 12-entry array.
   Invalid received counts are rejected before changing backpack item state;
   invalid stored inventory bin IDs are skipped before descriptor lookup.
 - Added extracted-production-function regression coverage, including the DSS
   item packet cases, physical bounds and the original slot-lookup mutant.
-  The structure layout, item ordering and valid wire field order are preserved.
+  That September fix preserved the structure layout, item ordering and valid
+  wire field order.
   Capacity limits can still exclude later items from an already-full backpack.
 
 ### Custom-model workarounds and JKGM texture upload alignment
