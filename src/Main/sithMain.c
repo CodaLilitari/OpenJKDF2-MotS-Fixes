@@ -333,6 +333,7 @@ int sithUpdate()
             flex_t tmp4 = stdControl_updateKHz;
             flex_t tmp5 = stdControl_updateHz;
             uint32_t tmp6 = sithTime_g_msecGameTime;
+            flex32_t secGameTimeBeforeSteps = sithTime_g_secGameTime;
             sithTime_g_msecGameTime -= sithTime_g_frameTime;
             sithTime_g_frameTimeFlex = DELTA_PHYSTICK_FPS;
             sithTime_g_frameTime = (int)(DELTA_PHYSTICK_FPS * 1000.0);
@@ -344,6 +345,9 @@ int sithUpdate()
 
             for (int i = 0; i < wholeFramesToApply; i++)
             {
+                // Events and COGs must observe the same time through both
+                // GetGameTime and GetFlexGameTime during each physics step.
+                sithTime_g_secGameTime = (flex32_t)sithTime_g_msecGameTime * 0.001;
                 sithSoundMixer_Update(sithTime_g_frameTimeFlex);
                 sithEvent_Process();
 
@@ -373,6 +377,7 @@ int sithUpdate()
             sithTime_g_frameTime = tmp2;
             sithTime_g_fps = tmp3;
             sithTime_g_msecGameTime = tmp6;
+            sithTime_g_secGameTime = secGameTimeBeforeSteps;
             //stdControl_updateKHz = tmp4;
             //stdControl_updateHz = tmp5;
         }
