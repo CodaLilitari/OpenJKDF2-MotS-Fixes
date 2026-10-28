@@ -87,6 +87,11 @@ back to globally path-first matching.
 
 ## Automated x64 verification
 
+The asset-free fork regression gate also runs on pull requests to `main`, main
+pushes, and manual dispatch through the `Fork host regressions` workflow. Both
+workflows use the same 14-group runner. Local commands, dependencies, and the
+coverage boundary are documented in [src/Tests/README.md](src/Tests/README.md).
+
 The fork-only `Windows x64 retail-fidelity` workflow:
 
 1. checks out the exact source and recursive submodule commits;
@@ -98,6 +103,12 @@ The fork-only `Windows x64 retail-fidelity` workflow:
 6. checks that every imported non-system DLL is packaged;
 7. records source, submodule, import, architecture, and toolchain evidence; and
 8. creates SHA-256 manifests for the files and final archive.
+
+Both workflows retain allowlisted text/JSON validation receipts for 14 days,
+including partial failure evidence when collection can run. The x64 receipts
+include architecture/import reports and package file hashes. Executables,
+runtime libraries, images, game data, raw binary patches, and the evaluation
+archive are excluded from uploaded artifacts.
 
 The generated package contains no LucasArts assets. A licensed Jedi Knight or
 MotS installation is still required to run the engine.
