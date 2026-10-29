@@ -44,5 +44,7 @@ jobs:
           persist-credentials: false
       - name: Test model storage and ownership
         run: python3 -B src/Tests/run_model_cache_test.py --output "$RUNNER_TEMP/model-cache"
+      - name: Test sound storage, ownership, IDs, and PCM eviction
+        run: python3 -B src/Tests/run_sound_cache_test.py --output "$RUNNER_TEMP/sound-cache"
       - name: Check team and model-index compatibility
         run: python3 -B src/Tests/run_team_model_test.py --cc gcc --ubsan
