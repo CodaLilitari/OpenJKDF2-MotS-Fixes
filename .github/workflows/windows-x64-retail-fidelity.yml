@@ -71,37 +71,8 @@ jobs:
 
       - name: Run fork regression tests on the host
         run: |
-          g++ \
-            -std=c++17 \
-            -Wall \
-            -Wextra \
-            -Werror \
-            -pedantic \
-            -DQOL_IMPROVEMENTS \
-            -Isrc \
-            src/Tests/fork_regression_test.cpp \
-            -o "$RUNNER_TEMP/fork_regression_test"
-          "$RUNNER_TEMP/fork_regression_test"
-          python3 src/Tests/run_cog_locality_test.py --cc gcc --ubsan
-          python3 src/Tests/run_backpack_test.py --cc gcc --ubsan
-          python3 src/Tests/run_team_model_test.py --cc gcc --ubsan
-          python3 src/Tests/run_bitmap_test.py --cc gcc
-          python3 src/Tests/run_mots_lighting_test.py --cc gcc --sanitize
-          python3 src/Tests/run_pov_lighting_test.py --cc gcc --sanitize
-          python3 src/Tests/run_takeitem_test.py --cc gcc --sanitize
-          python3 src/Tests/run_capture_test.py --output "$RUNNER_TEMP/capture-contract"
-          gcc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -Isrc \
-            tests/render_probe_options.c -o "$RUNNER_TEMP/render_probe_options"
-          "$RUNNER_TEMP/render_probe_options"
-          gcc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Isrc \
-            tests/test_rdMaterialIO.c -o "$RUNNER_TEMP/packed_material_rows"
-          "$RUNNER_TEMP/packed_material_rows"
-          python3 src/Tests/test_version_override.py
-          python3 -B scripts/model-workarounds/run_tests.py
-          g++ -std=c++17 -Wall -Wextra -Werror -pedantic -Isrc \
-            src/Tests/jkgm_pixel_unpack_gl_test.cpp -lEGL -lGL \
-            -o "$RUNNER_TEMP/jkgm_pixel_unpack_gl_test"
-          LIBGL_ALWAYS_SOFTWARE=1 "$RUNNER_TEMP/jkgm_pixel_unpack_gl_test"
+          python3 -B src/Tests/run_host_regressions.py run \
+            --output "$RUNNER_TEMP/host-regression-results"
 
       - name: Configure the full Windows x64 build
         run: |
@@ -402,3 +373,26 @@ jobs:
             cd "$(dirname "$ARCHIVE_PATH")"
             sha256sum "$(basename "$ARCHIVE_PATH")"
           ) > "$ARCHIVE_PATH.sha256"
+
+      - name: Collect text and JSON validation evidence
+        id: evidence
+        if: always()
+        env:
+          CI_JOB_STATUS: ${{ job.status }}
+        run: |
+          python3 -B src/Tests/run_host_regressions.py collect \
+            --host-results "$RUNNER_TEMP/host-regression-results" \
+            --source-records "$RUNNER_TEMP" \
+            --package "$PACKAGE_DIR" \
+            --job-status "$CI_JOB_STATUS" \
+            --output "$RUNNER_TEMP/retail-fidelity-evidence"
+
+      - name: Upload text and JSON validation evidence
+        if: ${{ always() && steps.evidence.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: retail-fidelity-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/retail-fidelity-evidence/
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: false
