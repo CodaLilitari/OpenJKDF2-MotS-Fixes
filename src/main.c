@@ -11,6 +11,7 @@
 
 #include "General/stdMath.h"
 #include "Main/stdCapture.h"
+#include "Main/stdAgent.h"
 
 #ifndef NO_JK_MMAP
 #include "Cog/sithCog.h"
@@ -768,6 +769,9 @@ int main(int argc, char** argv)
         memset(openjkdf2_aRestartPath, 0, sizeof(openjkdf2_aRestartPath));
         windowResult = Window_Main_Linux(argc, argv);
         if (stdCapture_IsRequested() || windowResult == 6) return 6;
+#ifdef OPENJKDF2_AGENT_HOOKS
+        if (stdAgent_IsQuitRequested()) break;
+#endif
 
         printf("openjkdf2_bOrigWasRunningFromExistingInstall %x\n", openjkdf2_bOrigWasRunningFromExistingInstall);
         printf("openjkdf2_bIsRunningFromExistingInstall %x\n", openjkdf2_bIsRunningFromExistingInstall);
@@ -830,6 +834,11 @@ int main(int argc, char** argv)
     }
 #endif
 
+#ifdef OPENJKDF2_AGENT_HOOKS
+    // An acknowledged agent quit has followed the ordinary window/engine and
+    // PHYSFS cleanup above. Preserve the historical exit code for other modes.
+    if (stdAgent_IsQuitRequested()) return 0;
+#endif
     return Window_bRenderProbe ? windowResult : 1;
 }
 

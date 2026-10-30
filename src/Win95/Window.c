@@ -16,6 +16,7 @@
 #include "Platform/wuRegistry.h"
 #include "Main/jkQuakeConsole.h"
 #include "Main/jkTouchControls.h"
+#include "Main/stdAgent.h"
 
 #include "Dw/dwMain.h"
 
@@ -858,6 +859,11 @@ void Window_SdlUpdate()
         return;
     Window_bInSdlUpdate = 1;
 
+#ifdef OPENJKDF2_AGENT_HOOKS
+    stdAgent_Poll();
+    if (stdAgent_IsQuitRequested()) { Window_bInSdlUpdate = 0; return; }
+#endif
+
     uint16_t left, right;
     uint32_t pos, msgl, msgr;
     int hasLeft, hasRight;
@@ -1108,6 +1114,11 @@ void Window_SdlUpdate()
 
                 if (jkQuakeConsole_bOpen) break; // Hijack all input to console
 
+#ifdef OPENJKDF2_AGENT_HOOKS
+                // Agent holds are sampled by the ordinary keyboard poll, using
+                // its engine clock. SDL event timestamps use a different epoch.
+                if (event.key.which == STDAGENT_KEYBOARD_ID) break;
+#endif
                 stdControl_SetSDLKeydown(event.key.scancode, 0, (uint32_t)(event.key.timestamp / 1000000));
                 break;
             case SDL_EVENT_MOUSE_MOTION:
@@ -1367,6 +1378,9 @@ void Window_SdlUpdate()
 #endif
             std3D_DrawMenu();
             std3D_EndScene();
+#ifdef OPENJKDF2_AGENT_HOOKS
+            stdAgent_BeforeSwap();
+#endif
             SDL_GL_SwapWindow(displayWindow);
         }
         else {
@@ -1374,6 +1388,9 @@ void Window_SdlUpdate()
             jkQuakeConsole_Render();
 #endif
             std3D_DrawMenu();
+#ifdef OPENJKDF2_AGENT_HOOKS
+            stdAgent_BeforeSwap();
+#endif
             SDL_GL_SwapWindow(displayWindow);
             //menu_framelimit_amt_ms = 64;
         }
@@ -1464,6 +1481,9 @@ void Window_SdlVblank()
     //static uint32_t roundtrip = 0;
     //uint32_t before = stdPlatform_GetTimeMsec();
     jkGame_ScreenshotFlush(); // Added: F12 shots capture the finished frame
+#ifdef OPENJKDF2_AGENT_HOOKS
+    stdAgent_BeforeSwap();
+#endif
 #ifdef ARCH_WASM
     if (!jkGuiBuildMulti_bRendering)
 #endif
@@ -1694,6 +1714,16 @@ int Window_Main_Linux(int argc, char** argv)
     char cmdLine[1024];
     int result;
 
+#ifdef OPENJKDF2_AGENT_HOOKS
+    if (!stdAgent_Init(argc, argv)) { fprintf(stderr, "agent: invalid options or private staged session\n"); return 6; }
+#else
+    for (int i = 1; i < argc; ++i) {
+        if (!__strcmpi(argv[i], "-agent") || !__strcmpi(argv[i], "/agent")) {
+            fprintf(stderr, "agent: this build does not include OPENJKDF2_AGENT_HOOKS\n"); return 6;
+        }
+    }
+#endif
+
     if (!stdCapture_Init(argc, argv)) { fprintf(stderr, "capture: invalid request or isolated session\n"); return 6; }
     if (stdCapture_IsActive()) {
 #if defined(RENDER_GL11) || defined(ARCH_WASM) || defined(TARGET_ANDROID) || defined(TARGET_IOS)
@@ -1923,6 +1953,9 @@ int Window_Main_Linux(int argc, char** argv)
 #endif
 
     Main_Shutdown();
+#ifdef OPENJKDF2_AGENT_HOOKS
+    stdAgent_Shutdown();
+#endif
     if (Window_bRenderProbe) {
         if (Window_probeCapture == 3) return 0;
         fprintf(stderr, "RENDERPROBE_FAILED stopped before three captures\n");

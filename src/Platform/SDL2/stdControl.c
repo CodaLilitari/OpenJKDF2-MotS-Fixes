@@ -8,6 +8,7 @@
 
 #include <SDL3/SDL.h>
 #include "Platform/SDL2/stdCaptureUi.h"
+#include "Main/stdAgent.h"
 
 #include "jk.h"
 
@@ -299,7 +300,11 @@ void stdControl_IgnoreHeldKeys()
     const bool *state = SDL_GetKeyboardState(NULL);
     for (int i = 0; i < 256; i++)
     {
-        stdControl_aDebounce[i] = !!state[i];
+        int down = !!state[i];
+#ifdef OPENJKDF2_AGENT_HOOKS
+        down = stdAgent_KeyDown(i, down);
+#endif
+        stdControl_aDebounce[i] = down;
     }
 }
 
@@ -902,6 +907,9 @@ void stdControl_ReadControls()
         for (int i = 0; i < 256; i++)
         {
             int s = !!state[i];
+#ifdef OPENJKDF2_AGENT_HOOKS
+            s = stdAgent_KeyDown(i, s);
+#endif
             if (s && stdControl_aDebounce[i]) {
                 continue;
             }
@@ -1129,8 +1137,17 @@ void stdControl_ReadMouse()
     float x,y;
     uint32_t buttons = SDL_GetMouseState(&x, &y);
 
-    stdControl_UpdateKeyState(KEY_MOUSE_B1, Window_bMouseLeft, stdControl_curReadTime);
-    stdControl_UpdateKeyState(KEY_MOUSE_B2, Window_bMouseRight, stdControl_curReadTime);
+    int left = Window_bMouseLeft, right = Window_bMouseRight;
+#ifdef OPENJKDF2_AGENT_HOOKS
+    buttons = stdAgent_MouseButtons(buttons);
+    if (stdAgent_IsActive()) {
+        left |= !!(buttons & SDL_BUTTON_LMASK);
+        right |= !!(buttons & SDL_BUTTON_RMASK);
+    }
+#endif
+
+    stdControl_UpdateKeyState(KEY_MOUSE_B1, left, stdControl_curReadTime);
+    stdControl_UpdateKeyState(KEY_MOUSE_B2, right, stdControl_curReadTime);
     stdControl_UpdateKeyState(KEY_MOUSE_B3, !!(buttons & SDL_BUTTON_MMASK), stdControl_curReadTime);
     stdControl_UpdateKeyState(KEY_MOUSE_B4, !!(buttons & SDL_BUTTON_X1MASK), stdControl_curReadTime);
     stdControl_UpdateKeyState(KEY_MOUSE_B5, !!(buttons & SDL_BUTTON_X2MASK), stdControl_curReadTime);

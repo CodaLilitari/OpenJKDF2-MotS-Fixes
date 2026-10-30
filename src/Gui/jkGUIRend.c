@@ -18,6 +18,7 @@
 #include "stdPlatform.h"
 #include "jk.h"
 #include "types.h"
+#include "Main/stdAgent.h"
 
 #include <math.h>
 
@@ -328,6 +329,9 @@ void jkGuiRend_MenuSetEscapeKeyShortcutElement(jkGuiMenu *menu, jkGuiElement *el
 
 int32_t jkGuiRend_DisplayAndReturnClicked(jkGuiMenu *menu)
 {
+#ifdef OPENJKDF2_AGENT_HOOKS
+    if (stdAgent_IsQuitRequested()) return -1;
+#endif
     int32_t msgret; // eax
     jkGuiMenu *lastActiveMenu;
 
@@ -352,7 +356,12 @@ int32_t jkGuiRend_DisplayAndReturnClicked(jkGuiMenu *menu)
         // (main menu -> confirm dialog) latches bStateChangePending and leaves
         // this loop spinning forever with g_should_exit set but never looked at.
         if ( g_should_exit )
+        {
+#ifdef OPENJKDF2_AGENT_HOOKS
+            if (stdAgent_IsQuitRequested()) { menu->lastClicked = -1; break; }
+#endif
             jk_exit(msgret);
+        }
 
         if ( jkGuiRend_bStateChangePending && jkGuiRend_menuNestDepth )
         { 

@@ -130,6 +130,9 @@ void std3D_UpdateSettings();
 void std3D_Screenshot(const char* pFpath);
 #if defined(SDL2_RENDER) && !defined(RENDER_GL11)
 int std3D_CaptureInspectionFrame(void);
+#ifdef OPENJKDF2_AGENT_HOOKS
+int std3D_ReadWindowRgb(unsigned char** pixels, int* width, int* height);
+#endif
 #endif
 #ifdef RDRASTER_SOFTWARE_RENDERER
 void std3D_ScreenshotWindow(const char* pFpath);

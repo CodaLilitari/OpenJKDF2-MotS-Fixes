@@ -74,6 +74,7 @@ set(TARGET_NO_MULTIPLAYER_MENUS FALSE)
 set(TARGET_CAN_DROIDWORKS TRUE)
 set(OPENJKDF2_USE_BLOBS FALSE CACHE BOOL "Use blobs")
 option(OPENJKDF2_DROIDWORKS "Build the DroidWorks app layer (src/Dw, -droidworks) on platforms that support it" ON)
+option(OPENJKDF2_AGENT_HOOKS "Build opt-in private local agent controls for Linux SDL play sessions" OFF)
 
 # Options for compiling
 if(DEFINED ENV{TARGET_BUILD_TESTS})
@@ -166,6 +167,13 @@ endif()
 # Establishes compile options, binary/library names, defines, etc
 plat_initialize()
 
+if(OPENJKDF2_AGENT_HOOKS)
+    if(NOT TARGET_LINUX OR NOT TARGET_USE_SDL2)
+        message(FATAL_ERROR "OPENJKDF2_AGENT_HOOKS requires the Linux SDL target")
+    endif()
+    add_compile_definitions(OPENJKDF2_AGENT_HOOKS)
+endif()
+
 if(TARGET_CAN_DROIDWORKS AND OPENJKDF2_DROIDWORKS)
     set(TARGET_DROIDWORKS TRUE)
 else()
@@ -226,6 +234,12 @@ file(GLOB GAME_MAIN_SOURCE_FILES ${PROJECT_SOURCE_DIR}/src/main.c)
 file(GLOB TEST_SRCS ${PROJECT_SOURCE_DIR}/src/Tests/*.c)
 list(REMOVE_ITEM ENGINE_SOURCE_FILES ${TEST_SRCS})
 list(REMOVE_ITEM ENGINE_SOURCE_FILES ${PROJECT_SOURCE_DIR}/src/main.c)
+if(NOT OPENJKDF2_AGENT_HOOKS)
+    list(REMOVE_ITEM ENGINE_SOURCE_FILES
+        ${PROJECT_SOURCE_DIR}/src/Main/stdAgent.c
+        ${PROJECT_SOURCE_DIR}/src/Main/stdAgentProtocol.c
+        ${PROJECT_SOURCE_DIR}/src/Main/stdAgentSession.c)
+endif()
 
 # The software (CPU) renderer is desktop-only (RDRASTER_SOFTWARE_RENDERER, off on
 # TARGET_RETRO_HOMEBREW — TWL/DC can't afford CPU rasterization). rdAFRaster.c/rdNRaster.c/

@@ -31,6 +31,7 @@ GROUPS = (
     ("version-overrides", "Release version overrides", []),
     ("model-tools", "Model-workaround tools (four suites)", []),
     ("pixel-unpack-gl", "Surfaceless EGL pixel-unpack readback", []),
+    ("agent-workspace", "Linux agent protocol, sessions and client", ["address", "undefined"]),
 )
 SOURCE_RECORDS = (
     "SOURCE_COMMIT.txt", "SOURCE_STATUS_BEFORE_BUILD.txt", "SUBMODULES.txt",
@@ -89,6 +90,9 @@ def command_plan(work, cc, cxx):
         "model-tools": [python + ["scripts/model-workarounds/run_tests.py"]],
         "pixel-unpack-gl": compiled(cxx, cpp_flags, "src/Tests/jkgm_pixel_unpack_gl_test.cpp",
                                     "pixel-unpack-gl", ["-lEGL", "-lGL"]),
+        "agent-workspace": [python + ["src/Tests/run_agent_tests.py", "--cc", cc,
+                                       "--output", str(work / "agent-workspace")],
+                            python + ["src/Tests/test_agent_workspace.py"]],
     }
     for group, stem, extra in (
         ("cog-locality", "cog_locality", ["--ubsan"]),
