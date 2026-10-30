@@ -1,4 +1,6 @@
 *.o
+__pycache__/
+/build_agent_linux/
 *.gob
 *.GOB
 moc*.cpp

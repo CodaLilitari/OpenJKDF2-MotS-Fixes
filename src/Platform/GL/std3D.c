@@ -3769,6 +3769,50 @@ void std3D_Screenshot(const char* pFpath)
 
 // Render-thread capture of the composed back buffer before presentation. PPM
 // writing has a checked, exclusive-file contract unlike the legacy PNG helper.
+#ifdef OPENJKDF2_AGENT_HOOKS
+// Observe the completed normal view. No camera, HUD, rendering settings or
+// simulation state is changed; the caller owns and frees the returned pixels.
+int std3D_ReadWindowRgb(unsigned char** pixels, int* width, int* height)
+{
+    *pixels = NULL; *width = *height = 0;
+    SDL_Window* window = SDL_GL_GetCurrentWindow();
+    if (!window) return 0;
+    int w = 0, h = 0;
+    SDL_GetWindowSizeInPixels(window, &w, &h);
+    if (w < 1 || h < 1 || w > 4096 || h > 2160) return 0;
+    unsigned char* data = (unsigned char*)malloc((size_t)w * (size_t)h * 3);
+    if (!data) return 0;
+    GLint oldReadFbo, oldReadBuffer, oldPack, oldRow, oldSkipRows, oldSkipPixels, oldPbo;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &oldReadFbo);
+    glGetIntegerv(GL_READ_BUFFER, &oldReadBuffer);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &oldPack);
+    glGetIntegerv(GL_PACK_ROW_LENGTH, &oldRow);
+    glGetIntegerv(GL_PACK_SKIP_ROWS, &oldSkipRows);
+    glGetIntegerv(GL_PACK_SKIP_PIXELS, &oldSkipPixels);
+    glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &oldPbo);
+    GLenum priorError = glGetError();
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, std3D_windowFbo);
+    glReadBuffer(std3D_windowFbo ? GL_COLOR_ATTACHMENT0 : GL_BACK);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+    glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+    glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, data);
+    GLenum captureError = glGetError();
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, oldReadFbo);
+    glReadBuffer(oldReadBuffer);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, oldPbo);
+    glPixelStorei(GL_PACK_ALIGNMENT, oldPack);
+    glPixelStorei(GL_PACK_ROW_LENGTH, oldRow);
+    glPixelStorei(GL_PACK_SKIP_ROWS, oldSkipRows);
+    glPixelStorei(GL_PACK_SKIP_PIXELS, oldSkipPixels);
+    if (priorError != GL_NO_ERROR || captureError != GL_NO_ERROR) { free(data); return 0; }
+    *pixels = data; *width = w; *height = h;
+    return 1;
+}
+#endif
+
 int std3D_CaptureInspectionFrame(void)
 {
     extern SDL_Window* displayWindow;

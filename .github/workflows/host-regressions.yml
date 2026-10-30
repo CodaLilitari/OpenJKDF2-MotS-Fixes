@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches: [main, 'agent/**']
   workflow_dispatch:
 
 permissions:
@@ -42,7 +42,7 @@ jobs:
             > "$RUNNER_TEMP/host-orchestration.stdout.txt" \
             2> "$RUNNER_TEMP/host-orchestration.stderr.txt"
 
-      - name: Run all 14 host regression groups
+      - name: Run all host regression groups
         run: |
           python3 -B src/Tests/run_host_regressions.py run \
             --output "$RUNNER_TEMP/host-regression-results"

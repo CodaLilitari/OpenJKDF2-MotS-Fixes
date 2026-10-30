@@ -89,7 +89,7 @@ back to globally path-first matching.
 
 The asset-free fork regression gate also runs on pull requests to `main`, main
 pushes, and manual dispatch through the `Fork host regressions` workflow. Both
-workflows use the same 14-group runner. Local commands, dependencies, and the
+workflows use the same host runner. Local commands, dependencies, and the
 coverage boundary are documented in [src/Tests/README.md](src/Tests/README.md).
 
 The fork-only `Windows x64 retail-fidelity` workflow:
