@@ -155,6 +155,11 @@ separate and unchanged. It cannot be combined with `-agent`.
 
 ## Scripted tests
 
+For a reusable JSON recipe with assertions, named checkpoints, failure evidence,
+and an HTML/PNG report, see [MOD_SCENARIOS.md](MOD_SCENARIOS.md). The included
+stock JK recipe exercises the first level through ordinary controls. Adapt its
+launch target and assertions for a candidate mod.
+
 The same client is importable without packaging or an additional dependency:
 
 ```python
