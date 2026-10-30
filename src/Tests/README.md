@@ -91,7 +91,12 @@ do not compile or launch the engine.
 
 The additional agent group does not enable hooks in ordinary builds or require
 game data. The native parser/session tests compile independently of SDL; the
-Python tests use synthetic asset files and small child-process fixtures. The
+Python tests use synthetic asset files and small child-process fixtures.
+The scenario suite exchanges actual mailbox messages with a fixture process and
+checks assertions, timeouts, cancellation, reports, and owned-process cleanup.
+The report suite verifies exact RGB conversion, bounded reads, HTML escaping,
+and the exclusion of source assets and private paths. These suites are included
+in the same host group. The
 host workflow also runs on `agent/**` branch pushes. See
 [the workspace guide](../../docs/AGENT_WORKSPACE.md) for actual game launches,
 which are separate from this asset-free gate.

@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "name": "JK Nar Shaddaa controls and menu smoke",
+  "launch": {
+    "game": "jk",
+    "episode": "jk1",
+    "map": "01narshadda.jkl"
+  },
+  "steps": [
+    {
+      "op": "wait",
+      "name": "loading-screen-visible",
+      "expect": {"menuActive": true, "worldLoaded": true},
+      "timeout": 30,
+      "stableFor": 0.2
+    },
+    {"op": "checkpoint", "name": "loading-or-objectives"},
+    {
+      "op": "wait",
+      "name": "level-ready",
+      "expect": {
+        "levelActive": true,
+        "menuActive": false,
+        "paused": false,
+        "world": "01narshadda.jkl",
+        "player": {"notNull": true},
+        "multiplayer": false
+      },
+      "timeout": 30,
+      "stableFor": 0.2,
+      "retryTap": {"key": "Enter", "seconds": 0.1, "every": 1}
+    },
+    {"op": "checkpoint", "name": "spawn"},
+    {"op": "tap", "name": "move-forward", "key": "Up", "seconds": 0.4},
+    {"op": "sleep", "name": "settle", "seconds": 0.2},
+    {
+      "op": "assert",
+      "name": "movement-observed",
+      "expect": {"player.health": {"min": 1}, "heldKeys": []},
+      "distanceFrom": {"checkpoint": "spawn", "min": 0.005, "max": 3}
+    },
+    {"op": "checkpoint", "name": "after-movement"},
+    {"op": "tap", "name": "pause", "key": "Escape", "seconds": 0.1},
+    {
+      "op": "wait",
+      "name": "pause-ready",
+      "expect": {"menuActive": true, "paused": true},
+      "timeout": 10,
+      "stableFor": 0.2
+    },
+    {"op": "checkpoint", "name": "pause-menu"}
+  ]
+}

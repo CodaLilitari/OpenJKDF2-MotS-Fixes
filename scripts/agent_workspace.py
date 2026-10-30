@@ -424,7 +424,12 @@ def start_xvfb(session, width=1024, height=768, *, interrupted=()):
             os.close(write_fd)
 
 
-def run_session(args):
+def run_session(args, *, controller=None):
+    """Own the engine/display lifecycle; an optional controller runs after ready.
+
+    The controller receives (session, execution_deadline, interrupted_signals).
+    Its failures still pass through release/quit before owned-child cleanup.
+    """
     session = private_directory(args.session)
     client = Client(session, timeout=1)
     binary = Path(args.binary).resolve(strict=True)
@@ -498,10 +503,19 @@ def run_session(args):
         atomic_json(session / "run.json", record)
         print(json.dumps({"event": "ready", "session": str(session), "pid": child.pid}), flush=True)
         finish = time.monotonic() + args.seconds
-        while child.poll() is None and time.monotonic() < finish and not interrupted:
-            time.sleep(.1)
+        controller_error = None
+        if controller is None:
+            while child.poll() is None and time.monotonic() < finish and not interrupted:
+                time.sleep(.1)
+        else:
+            try:
+                controller(session, finish, interrupted)
+                if interrupted:
+                    raise AgentError("Scenario interrupted by signal")
+            except BaseException as exc:
+                controller_error = exc
         if child.poll() is None:
-            record["stopReason"] = "signal" if interrupted else "duration"
+            record["stopReason"] = "signal" if interrupted else ("controller" if controller else "duration")
             for command_text in ("release", "quit"):
                 try:
                     Client(session, timeout=3).request(command_text)
@@ -513,6 +527,14 @@ def run_session(args):
                 record["forcedStop"] = True
         else:
             record["stopReason"] = "engine-exit"
+        if controller is not None and interrupted:
+            record["stopReason"] = "signal"
+        if controller_error is not None:
+            raise controller_error
+        if controller is not None and interrupted:
+            raise AgentError("Scenario interrupted by signal")
+        if controller is not None and record.get("shutdownErrors"):
+            raise AgentError("Scenario finished, but release/quit was not fully acknowledged")
         record["status"] = "completed"
     except BaseException as exc:
         record.update(status="failed", error=str(exc))
@@ -525,12 +547,18 @@ def run_session(args):
                 record.update(status="failed", error=f"Engine did not finish cleanly: exit {child.returncode}")
         if display_child:
             stop_child(display_child)
+        if controller is not None and interrupted:
+            record["stopReason"] = "signal"
+            if record["status"] == "completed":
+                record.update(status="failed", error="Scenario interrupted by signal")
         for sig, handler in old_handlers.items():
             signal.signal(sig, handler)
         record["finishedAt"] = utc_now()
         atomic_json(session / "run.json", record)
     if record.get("forcedStop") or record.get("exitCode") != 0:
         raise AgentError(f"Engine did not finish cleanly: exit {record.get('exitCode')}")
+    if record["status"] != "completed":
+        raise AgentError(record.get("error", "Engine session did not complete"))
     return record
 
 
