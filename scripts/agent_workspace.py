@@ -402,15 +402,23 @@ def start_xvfb(session, width=1024, height=768, *, interrupted=()):
         os.close(write_fd)
         write_fd = -1
         deadline = time.monotonic() + 10
-        while True:
+        # Xvfb writes the number and the newline separately (os/connection.c) and dies
+        # with "Cannot write display number" if this end closes in between, so read the
+        # whole line before closing the pipe.
+        reported = b""
+        while not reported.endswith(b"\n"):
             if interrupted:
                 raise AgentError("Display startup interrupted by signal")
             if time.monotonic() >= deadline:
                 raise AgentTimeout("Xvfb did not report a display within 10 seconds")
             ready, _, _ = select.select([read_fd], [], [], .05)
-            if ready:
+            if not ready:
+                continue
+            chunk = os.read(read_fd, 32)
+            if not chunk:
                 break
-        display = os.read(read_fd, 32).strip().decode("ascii")
+            reported += chunk
+        display = reported.strip().decode("ascii")
         if not display.isdecimal() or child.poll() is not None:
             raise AgentError("Xvfb startup failed; inspect xvfb.log")
         return child, ":" + display
