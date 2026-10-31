@@ -196,6 +196,57 @@ static void state_response(const stdAgentCommand* command, uint64_t now)
         fputs(",\"health\":", file); json_number(file, player->actorParams.health);
         fputs(",\"headPYR\":", file); json_vector(file, &player->actorParams.headPYR); fputc('}', file);
     } else fputs("null", file);
+    /* Read-only test telemetry (Red, 2026-10-31): PATH-mover poses for mod
+       verification. Observes only; never writes world state. */
+    fputs(",\"paths\":[", file);
+    if (worldReady && world->numThingsLoaded > 0) {
+        int firstPath = 1, listed = 0;
+        for (int i = 0; i < world->numThingsLoaded && listed < 32; ++i) {
+            SithThing* t = &world->aThings[i];
+            if (t->type == SITH_THING_FREE || t->moveType != SITH_MT_PATH) continue;
+            fprintf(file, "%s{\"idx\":%u,\"signature\":%u,\"position\":", firstPath ? "" : ",", t->idx, t->signature);
+            json_vector(file, &t->position);
+            fputs(",\"lvec\":", file); json_vector(file, &t->orient.lvec);
+            fprintf(file, ",\"trackFlags\":%d,\"curframe\":%d,\"progress\":", (int)t->trackParams.flags, (int)t->curframe);
+            json_number(file, t->field_24C);
+            fputc('}', file);
+            firstPath = 0; ++listed;
+        }
+    }
+    fputc(']', file);
+    /* Read-only test telemetry (Red, 2026-10-31): scalar symbols of level COGs
+       whose script name starts with "gb_". Observes only. */
+    fputs(",\"cogs\":[", file);
+    if (worldReady && world->aCogs) {
+        int firstCog = 1;
+        for (int ci = 0; ci < world->numCogs; ++ci) {
+            sithCog* cog = &world->aCogs[ci];
+            if (!cog->pScript || !cog->pSymbolTable) continue;
+#ifdef SITH_DEBUG_STRUCT_NAMES
+            if (strncmp(cog->pScript->aName, "gb_", 3) != 0) continue;
+            fprintf(file, "%s{\"index\":%d,\"script\":\"%s\",\"symbols\":{", firstCog ? "" : ",", ci, cog->pScript->aName);
+#else
+            continue;
+#endif
+            int firstSym = 1;
+            SithCogSymbolTable* tbl = cog->pSymbolTable;
+            for (uint32_t si = 0; si < tbl->numUsedSymbols; ++si) {
+                SithCogSymbol* sym = &tbl->aSymbols[si];
+#ifndef COG_CRC32_SYMBOL_NAMES
+                if (!sym->pName) continue;
+                if (sym->val.type == SITHCOG_VALUE_FLOAT)
+                    fprintf(file, "%s\"%s\":%.9g", firstSym ? "" : ",", sym->pName, (double)sym->val.dataAsFloat[0]);
+                else if (sym->val.type == SITHCOG_VALUE_INT)
+                    fprintf(file, "%s\"%s\":%d", firstSym ? "" : ",", sym->pName, (int)sym->val.data[0]);
+                else continue;
+                firstSym = 0;
+#endif
+            }
+            fputs("}}", file);
+            firstCog = 0;
+        }
+    }
+    fputc(']', file);
     fputc('}', file);
     int failed = ferror(file);
     if (fclose(file)) failed = 1;
