@@ -37,3 +37,7 @@ jobs:
                 -B "$OPENJKDF2_BUILD_DIR"
       - name: Make
         run: make -C "$OPENJKDF2_BUILD_DIR" -j $(nproc)
+      - name: Verify executable default stack reserve
+        run: |
+          python3 -B src/Tests/run_windows_stack_test.py \
+            --check-exe "$OPENJKDF2_BUILD_DIR/openjkdf2-64.exe"

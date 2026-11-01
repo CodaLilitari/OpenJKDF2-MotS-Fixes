@@ -4,6 +4,20 @@ This file records behavior, compatibility, build, and validation changes made
 for this fork.  Upstream history remains available in Git; this log describes
 the fork-specific delta and the evidence used to justify it.
 
+## 2026-11-01
+
+### Windows default thread stack reservation
+
+- Restore the x64 MinGW stack reserve from 128 KiB to 2 MiB, retaining the 8 KiB
+  initial commit. Default-sized library/driver threads inherit this PE policy.
+- A production-toolchain probe reproduces the undersized default worker on
+  native Windows; the correction and an old-policy negative control distinguish
+  passing and failing allocations. Both Windows build workflows check the actual
+  game executable's PE stack fields.
+- This addresses a concrete build limitation relevant to reported AMD driver
+  stack overflows. RX 7900 XT / driver 26.10.2 confirmation remains outstanding.
+  See [validation and limits](docs/WINDOWS_STACK_RESERVE.md).
+
 ## 2026-10-28
 
 ### Current backpack capacity after upstream integration

@@ -254,6 +254,11 @@ jobs:
               )
           PY
 
+      - name: Verify packaged executable default stack reserve
+        run: |
+          python3 -B src/Tests/run_windows_stack_test.py \
+            --check-exe "$PACKAGE_DIR/openjkdf2-64.exe"
+
       - name: Audit packaged DLL closure
         shell: bash
         run: |

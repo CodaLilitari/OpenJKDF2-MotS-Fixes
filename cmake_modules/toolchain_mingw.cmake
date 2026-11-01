@@ -51,7 +51,12 @@ elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL x86_64 OR
        CMAKE_SYSTEM_PROCESSOR STREQUAL AMD64 OR
        CMAKE_SYSTEM_PROCESSOR STREQUAL arm64 OR
        CMAKE_SYSTEM_PROCESSOR STREQUAL aarch64)
-set(MINGW_STACK_SIZE  0x20000,0x2000)
+# Match GNU ld's 2 MiB PE stack reserve instead of restricting default threads
+# to 128 KiB. Driver-created workers can inherit this executable setting; see
+# OpenJKDF2 issues #384/#391 for AMD driver stack-overflow reports. This removes
+# a stack-exhaustion risk, not a guarantee against every AMD driver crash.
+# Keep the initial commit small; Windows commits more reserved pages as needed.
+set(MINGW_STACK_SIZE  0x200000,0x2000)
 set(MINGW_HEAP_SIZE 0x200000,0x20000)
 else()
 set(MINGW_STACK_SIZE  0x10000,0x1000)
