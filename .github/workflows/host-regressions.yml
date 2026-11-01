@@ -47,6 +47,9 @@ jobs:
           python3 -B src/Tests/run_host_regressions.py run \
             --output "$RUNNER_TEMP/host-regression-results"
 
+      - name: Verify ARCH snapshot ownership and reuse
+        run: python3 -B src/Tests/run_arch_lighting_scope_test.py --sanitize --negative-controls
+
       - name: Collect text and JSON validation evidence
         id: evidence
         if: always()

@@ -1,3 +1,5 @@
+/* Adapted from andreipemberton, original contribution 1bfba38600e2ccee7bbd7fbe5f6b5d947b7cc78a;
+ * source snapshot 6fa54630a123485d8c7b602c47992613a1f397b5. */
 /*
  * Asset-free execution of extracted production team-model arrays, lookup and
  * complete JK/MotS saber/team handlers. The packet reader macros are copied
@@ -155,11 +157,7 @@ static void sithMulti_SyncScores(void) { ++scores; }
 static void jk_fatal(void) { CHECK(0); }
 
 #include "team_model_arrays.inc"
-#ifdef OLD_TEAM_INDEX
-#include "team_model_lookup_old_index.inc"
-#else
 #include "team_model_lookup.inc"
-#endif
 
 /* The production network macros declare scratch values for every packet type;
  * decompiled handlers also retain unused locals. Keep warning exceptions scoped
@@ -170,7 +168,8 @@ static void jk_fatal(void) { CHECK(0); }
 #include "team_model_handlers.inc"
 #pragma GCC diagnostic pop
 
-static const char *expected_models[4][5] = {
+static const char *expected_models[5][5] = {
+    {"ky.3do", "kyX0.3do", "kyU0.3do", "kyV0.3do", "kyT0.3do"},
     {"ky.3do", "kyX0.3do", "kyU0.3do", "kyV0.3do", "kyT0.3do"},
     {"kyh4.3do", "kyh4r.3do", "kyh4y.3do", "kyh4b.3do", "kyh4g.3do"},
     {"kypr.3do", "kyprr.3do", "kypry.3do", "kyprb.3do", "kyprg.3do"},
@@ -238,15 +237,15 @@ static void expect_saber(const char *model, const char *sound_name)
 
 static void test_matrix(void)
 {
+    CHECK(sizeof(jkDSS_aMotsKyTeamModels) / sizeof(jkDSS_aMotsKyTeamModels[0]) == 25);
     for (int personality = 0; personality <= 4; ++personality) {
-        int row = personality ? personality - 1 : 0;
         for (int team = 0; team <= 4; ++team) {
             reset("native-and-legacy-class-team-matrix");
-            CHECK(!strcmp(jkDSS_GetMotsTeamModel(personality, team), expected_models[row][team]));
+            CHECK(!strcmp(jkDSS_GetMotsTeamModel(personality, team), expected_models[personality][team]));
             jkPlayer_playerInfos[1].teamNum = team;
             SithMessage message = saber_packet(DSS_SABERINFO1, personality, 1);
             CHECK(jkDSS_ProcessSetSaberInfoMots(&message) == 1);
-            expect_saber(expected_models[row][team], "ky.snd");
+            expect_saber(expected_models[personality][team], "ky.snd");
             CHECK(mots_broadcasts == 1 && broadcast_personality == personality);
             CHECK(jk_broadcasts == 0 && scores == 0);
             if (!team) continue; /* Team-change requests deliberately reject neutral team 0. */
@@ -255,7 +254,7 @@ static void test_matrix(void)
             CHECK(jkDSS_ProcessSetTeam(&message) == 1);
             CHECK(jkPlayer_playerInfos[1].teamNum == team);
             CHECK(model_calls == 1 && model_assignments == 1);
-            CHECK(!strcmp(player.model->filename, expected_models[row][team]));
+            CHECK(!strcmp(player.model->filename, expected_models[personality][team]));
             CHECK(mots_broadcasts == 1 && broadcast_personality == personality);
             CHECK(jk_broadcasts == 0 && scores == 1 && saber_calls == 0);
         }
@@ -296,3 +295,149 @@ static void test_invalid(void)
             CHECK(scores == 1 && mots_broadcasts == 0 && jk_broadcasts == 0);
             CHECK(jkDSS_005aec8c == 99);
         }
+    }
+    for (unsigned i = 0; i < sizeof(invalid_teams) / sizeof(*invalid_teams); ++i) {
+        reset("invalid-team-saber-fallback");
+        int team = invalid_teams[i];
+        CHECK(jkDSS_GetMotsTeamModel(4, team) == NULL);
+        jkPlayer_playerInfos[1].teamNum = team;
+        SithMessage message = saber_packet(DSS_SABERINFO1, 4, 1);
+        CHECK(jkDSS_ProcessSetSaberInfoMots(&message) == 1);
+        expect_saber("kk.3do", "ky.snd");
+        reset("invalid-team-request-no-state-change");
+        message = team_packet(1, team, 4, 1);
+        CHECK(jkDSS_ProcessSetTeam(&message) == 0);
+        CHECK(jkPlayer_playerInfos[1].teamNum == 2 && model_calls == 0 && scores == 0);
+    }
+    reset("neutral-team-request-rejected");
+    SithMessage message = team_packet(1, 0, 4, 1);
+    CHECK(jkDSS_ProcessSetTeam(&message) == 0 && model_calls == 0 && scores == 0);
+    const int invalid_players[] = {-1, 4, 32767};
+    for (unsigned i = 0; i < sizeof(invalid_players) / sizeof(*invalid_players); ++i) {
+        reset("invalid-player-request-rejected");
+        message = team_packet(invalid_players[i], 4, 4, 1);
+        CHECK(jkDSS_ProcessSetTeam(&message) == 0 && model_calls == 0 && scores == 0);
+    }
+}
+
+static void test_preserved_paths(void)
+{
+    for (int server = 0; server <= 1; ++server) {
+        reset("authoritative-saber-broadcast-preserves-custom");
+        sithNet_isServer = server;
+        SithMessage message = saber_packet(DSS_SABERINFO2, 7, 1);
+        CHECK(jkDSS_ProcessSetSaberInfoMots(&message) == 1);
+        expect_saber("custom.3do", "custom.snd");
+        CHECK(jkDSS_005aec8c == 0 && mots_broadcasts == 0);
+    }
+    const int no_substitution_flags[] = {0, MULTIMODEFLAG_TEAMS};
+    for (unsigned i = 0; i < sizeof(no_substitution_flags) / sizeof(*no_substitution_flags); ++i) {
+        reset("no-team-skin-substitution-preserves-custom");
+        sithNet_MultiModeFlags = no_substitution_flags[i];
+        SithMessage message = saber_packet(DSS_SABERINFO1, -1, 1);
+        CHECK(jkDSS_ProcessSetSaberInfoMots(&message) == 1);
+        expect_saber("custom.3do", "custom.snd");
+    }
+    const int inactive_team_flags[] = {0, MULTIMODEFLAG_TEAMS, MULTIMODEFLAG_100};
+    for (unsigned i = 0; i < sizeof(inactive_team_flags) / sizeof(*inactive_team_flags); ++i) {
+        reset("inactive-team-mode-does-not-change-custom-model");
+        sithNet_MultiModeFlags = inactive_team_flags[i];
+        SithMessage message = team_packet(1, 4, -1, 1);
+        CHECK(jkDSS_ProcessSetTeam(&message) == 1);
+        CHECK(jkPlayer_playerInfos[1].teamNum == 2 && model_calls == 0 && scores == 0);
+    }
+    reset("mots-forced-default-skin-preserved");
+    sithNet_MultiModeFlags = MULTIMODEFLAG_20;
+    SithMessage message = saber_packet(DSS_SABERINFO1, 4, 1);
+    CHECK(jkDSS_ProcessSetSaberInfoMots(&message) == 1);
+    expect_saber("kk.3do", "ky.snd");
+    reset("client-does-not-process-saber-request");
+    sithNet_isServer = 0;
+    message = saber_packet(DSS_SABERINFO1, 4, 1);
+    CHECK(jkDSS_ProcessSetSaberInfoMots(&message) == 1 && model_calls == 0);
+    message = team_packet(1, 4, 4, 1);
+    CHECK(jkDSS_ProcessSetTeam(&message) == 0 && model_calls == 0 && scores == 0);
+    for (int absent = 0; absent < 3; ++absent) {
+        reset("missing-player-prerequisite");
+        message = saber_packet(DSS_SABERINFO1, 4, 1);
+        if (absent == 0) memset(message.pktData, 0, 4);
+        if (absent == 1) player.actorParams.pPlayer = NULL;
+        if (absent == 2) player.playerInfo = NULL;
+        CHECK(jkDSS_ProcessSetSaberInfoMots(&message) == 0 && model_calls == 0);
+    }
+    for (int failures = 1; failures <= 2; ++failures) {
+        reset("missing-model-load-fallback");
+        model_failures = failures;
+        message = saber_packet(DSS_SABERINFO1, 4, 1);
+        CHECK(jkDSS_ProcessSetSaberInfoMots(&message) == 1);
+        CHECK(model_calls == 2 && !strcmp(requested_models[1], "kk.3do"));
+        CHECK(model_assignments == (failures == 1) && saber_calls == 1);
+    }
+    reset("missing-team-model-no-assignment-or-broadcast");
+    model_failures = 1;
+    message = team_packet(1, 4, 4, 1);
+    CHECK(jkDSS_ProcessSetTeam(&message) == 1);
+    CHECK(jkPlayer_playerInfos[1].teamNum == 4 && scores == 1);
+    CHECK(model_calls == 1 && model_assignments == 0 && mots_broadcasts == 0);
+    reset("team-change-with-no-local-thing");
+    jkPlayer_playerInfos[1].pLocalPlayer = NULL;
+    message = team_packet(1, 4, 4, 1);
+    CHECK(jkDSS_ProcessSetTeam(&message) == 1);
+    CHECK(jkPlayer_playerInfos[1].teamNum == 4 && scores == 1 && model_calls == 0);
+    reset("missing-sound-keeps-saber-initialization");
+    sound_available = 0;
+    message = saber_packet(DSS_SABERINFO1, 4, 1);
+    CHECK(jkDSS_ProcessSetSaberInfoMots(&message) == 1);
+    CHECK(sound_assignments == 0 && saber_calls == 1 && model_assignments == 1);
+}
+
+static void test_jk(void)
+{
+    for (int team = 0; team <= 4; ++team) {
+        reset("jk-saber-team-models-unchanged");
+        Main_bMotsCompat = 0;
+        jkPlayer_playerInfos[1].teamNum = team;
+        SithMessage message = saber_packet(DSS_SABERINFO1, 0, 0);
+        CHECK(jkDSS_ProcessSetSaberInfo(&message) == 1);
+        expect_saber(expected_models[0][team], "ky.snd");
+        CHECK(jk_broadcasts == 1 && mots_broadcasts == 0);
+        if (!team) continue;
+        reset("jk-four-byte-team-packet-unchanged");
+        Main_bMotsCompat = 0;
+        message = team_packet(1, team, -32768, 0);
+        CHECK(message.netMsg.msg_size == 4);
+        CHECK(jkDSS_ProcessSetTeam(&message) == 1);
+        CHECK(!strcmp(player.model->filename, expected_models[0][team]));
+        CHECK(jk_broadcasts == 1 && mots_broadcasts == 0 && scores == 1);
+    }
+    reset("jk-custom-skin-unchanged");
+    Main_bMotsCompat = sithNet_MultiModeFlags = 0;
+    SithMessage message = saber_packet(DSS_SABERINFO1, 0, 0);
+    CHECK(jkDSS_ProcessSetSaberInfo(&message) == 1);
+    expect_saber("custom.3do", "custom.snd");
+    reset("jk-forced-mode-early-return-unchanged");
+    Main_bMotsCompat = 0;
+    sithNet_MultiModeFlags = MULTIMODEFLAG_20;
+    message = saber_packet(DSS_SABERINFO1, 0, 0);
+    CHECK(jkDSS_ProcessSetSaberInfo(&message) == 1 && model_calls == 0);
+    const int invalid_teams[] = {INT_MIN, -1, 5, INT_MAX};
+    for (unsigned i = 0; i < sizeof(invalid_teams) / sizeof(*invalid_teams); ++i) {
+        reset("jk-invalid-team-rejected-before-model-or-sound-load");
+        Main_bMotsCompat = 0;
+        jkPlayer_playerInfos[1].teamNum = invalid_teams[i];
+        message = saber_packet(DSS_SABERINFO1, 0, 0);
+        CHECK(jkDSS_ProcessSetSaberInfo(&message) == 0);
+        CHECK(model_calls == 0 && sound_calls == 0 && saber_calls == 0 && jk_broadcasts == 0);
+    }
+}
+
+int main(void)
+{
+    test_matrix();
+    test_invalid();
+    test_preserved_paths();
+    test_jk();
+    printf("PASS team-model regression: %u cases, %u assertions; real packet macros and both MotS handlers, JK controls\n",
+           cases, assertions);
+    return 0;
+}
