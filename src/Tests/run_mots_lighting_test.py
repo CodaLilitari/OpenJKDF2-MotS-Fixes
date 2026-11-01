@@ -26,7 +26,7 @@ PATHS = ('src/Engine/sithRender.c', 'src/Raster/rdCache.c',
          'src/Primitives/rdPrimit3.c', 'src/Engine/rdClip.c',
          'src/types.h', 'src/types_enums.h', 'src/Engine/rdLight.c',
          'src/Primitives/rdModel3.c', 'src/World/sithThing.c',
-         'src/General/stdConffile.c')
+         'src/General/stdConffile.c', 'src/Engine/sithRenderArchLighting.h')
 
 
 def between(text, start, end):
@@ -43,7 +43,7 @@ def prepare(work):
     render = src[PATHS[0]]
     alpha = extract_block(render, r'^void sithRender_RenderAlphaAdjoins\(', 'alpha pass')
     write('actual_alpha.inc', alpha)
-    arch = extract_block(render, r'^static int sithRender_DrawLevelGeometryThing\(', 'ARCH draw scope')
+    arch = src[PATHS[10]]
     write('actual_arch.inc', arch)
     old_arch = arch.replace('if (!rgb) mesh->vertices_i = arch->aMeshes[j].aMono;',
                            'if (!rgb) { mesh->vertices_unk = mesh->vertices_i; mesh->vertices_i = arch->aMeshes[j].aMono; }')
