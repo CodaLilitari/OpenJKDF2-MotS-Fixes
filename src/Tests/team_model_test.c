@@ -237,7 +237,8 @@ static void expect_saber(const char *model, const char *sound_name)
 
 static void test_matrix(void)
 {
-    CHECK(sizeof(jkDSS_aMotsKyTeamModels) / sizeof(jkDSS_aMotsKyTeamModels[0]) == 25);
+    /* The fork keeps four stored rows and aliases personality zero to Jedi. */
+    CHECK(sizeof(jkDSS_aMotsKyTeamModels) / sizeof(jkDSS_aMotsKyTeamModels[0]) == 20);
     for (int personality = 0; personality <= 4; ++personality) {
         for (int team = 0; team <= 4; ++team) {
             reset("native-and-legacy-class-team-matrix");

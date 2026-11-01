@@ -1,13 +1,15 @@
 # Compatible team update regression
 
-This is test-only coverage of existing upstream behavior. Production `jkDSS.c`
-is unchanged from the upstream base; no team assignment is reordered.
+The fork preserves its existing four-row model table and personality-zero alias,
+while restoring compatible team assignment and score synchronization on a model
+lookup miss. The independent upstream PR is test-only against its equivalent
+five-row table; the fork's storage layout remains separate.
 
 ```sh
 python3 -B src/Tests/run_team_model_test.py --cc gcc --ubsan
 ```
 
-The runner extracts upstream's five-row model table, bounded helper, complete
+The runner extracts the fork's four-row model table, bounded helper, complete
 JK/MotS saber handlers and team handler, using actual packet macros. Literal
 expectations cover valid models and colors. An out-of-range personality returns
 no team model; an otherwise valid active-team request still assigns the team
