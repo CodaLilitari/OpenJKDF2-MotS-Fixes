@@ -386,6 +386,7 @@ class GNSServer {
             GNSInfoPacket info=PublicInfo(GNS_INFO,0);if(!SendTransport(event->m_hConn,&info,sizeof(info),false))Drop(event->m_hConn,"Cannot send server information");
         } else if(event->m_info.m_eState==k_ESteamNetworkingConnectionState_ClosedByPeer||event->m_info.m_eState==k_ESteamNetworkingConnectionState_ProblemDetectedLocally){
             if(peers.find(event->m_hConn)!=peers.end()){stdPlatform_Printf("GeoSith connection ended: %s\n",event->m_info.m_szEndDebug);Drop(event->m_hConn,event->m_info.m_szEndDebug);}
+            else api->CloseConnection(event->m_hConn,0,nullptr,false);
         }
     }
     void Authenticate(HSteamNetConnection conn,const void *data,int length) {
@@ -479,7 +480,7 @@ public:
     bool GetServerInfo(const SteamNetworkingIPAddr &address,const std::atomic<bool> &running){sithDplayGNS_numEnumd=0;if(!Init(address,true))return false;while(running&&!discoveryCancelled&&!closed&&!infoReceived&&stdPlatform_GetTimeMsec()-started<12000){RunStep();sleep_ms(10);}bool found=infoReceived&&!closed&&!discoveryCancelled;if(!found&&!closed&&!discoveryCancelled&&running)NetworkStatus("No reply. Check the public IP, UDP port, firewall and router forwarding.");Shutdown();return found;}
     int Receive(int *sender,void *data,int *length){int capacity=*length;*length=0;*sender=0;if(closed){*sender=1;return 2;}if(id==0xffffffff)return -1;for(int i=0;i<64;i++){SteamNetworkingMessage_t *message=nullptr;if(g_SteamNetworkingSockets()->ReceiveMessagesOnConnection(connection,&message,1)<=0)return -1;
         if(message->m_cbSize<12||message->m_cbSize>capacity+8){message->Release();continue;}uint32_t from,to;memcpy(&from,message->m_pData,4);memcpy(&to,(char*)message->m_pData+4,4);if(!from||from>32||(to&&to!=id)){message->Release();continue;}uint32_t type;memcpy(&type,(const char*)message->m_pData+8,4);if((type&255)==DSS_THINGPOS&&message->m_cbSize>=16){uint32_t guid;memcpy(&guid,(const char*)message->m_pData+12,4);if(!gnsAcceptPosition(positions,from,guid,message->m_nMessageNumber)){message->Release();continue;}}*sender=from;*length=message->m_cbSize-8;memcpy(data,(char*)message->m_pData+8,*length);message->Release();return 0;}return -1;}
-    int Send(uint32_t from,uint32_t to,void *data,uint32_t length){if(closed)return 0;if(id==0xffffffff)return 1;if(length<4||length>2052)return 0;unsigned char packet[2060];memcpy(packet,&from,4);memcpy(packet+4,&to,4);memcpy(packet+8,data,length);return SendTransport(connection,packet,length+8);}
+    int Send(uint32_t from,uint32_t to,void *data,uint32_t length){if(closed)return 0;if(id==0xffffffff)return 0;if(length<4||length>2052)return 0;unsigned char packet[2060];memcpy(packet,&from,4);memcpy(packet+4,&to,4);memcpy(packet+8,data,length);return SendTransport(connection,packet,length+8);}
 };
 GNSClient *GNSClient::instance=nullptr;
 

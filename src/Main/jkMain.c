@@ -38,6 +38,7 @@
 #include "Dw/dwMain.h"
 #include "Gameplay/jkSaber.h"
 #include "World/sithWorld.h"
+#include "Devices/sithComm.h"
 #include "Platform/stdControl.h"
 #include "Win95/Windows.h"
 #include "Win95/Video.h"
