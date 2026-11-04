@@ -275,7 +275,10 @@
 #define JKRES_IS_MOTS_MAGIC(kval) ((kval == JKRES_MOTS_MAGIC_0) || (kval == JKRES_MOTS_MAGIC_1) || (kval == JKRES_MOTS_MAGIC_2) || (kval == JKRES_MOTS_MAGIC_3))
 #define JKRES_IS_DF2_MAGIC(kval) ((kval == JKRES_DF2_MAGIC_0) || (kval == JKRES_DF2_MAGIC_1) || (kval == JKRES_DF2_MAGIC_2) || (kval == JKRES_DF2_MAGIC_3))
 
-#ifndef JKM_PARAMS
+#ifndef TARGET_RETRO_HOMEBREW
+/* Editor-authored things can have a complete path of frame overrides. */
+#define STDCONF_LINEBUFFER_LEN (16384)
+#elif !defined(JKM_PARAMS)
 #define STDCONF_LINEBUFFER_LEN (1024)
 #else
 #define STDCONF_LINEBUFFER_LEN (2048)
@@ -561,6 +564,13 @@ extern FAST_FUNC void* __aeabi_memcpy8(void* dst, const void* src, size_t len);*
 // hang. Only used on the SDL/retro paths, which skip the immediate unwind.
 #ifndef JKGUIREND_NESTED_UNWIND_MS
 #define JKGUIREND_NESTED_UNWIND_MS (500)
+#endif
+
+// Desktop editor documents can contain many COGs. Allocate each VM stack only
+// when the script uses it, instead of reserving the maximum stack per instance.
+#if defined(QOL_IMPROVEMENTS) && !defined(COG_DYNAMIC_STACKS)
+#define COG_DYNAMIC_STACKS
+#define COG_DYNAMIC_STACKS_INCREMENT (32)
 #endif
 
 #endif // _OPENJKDF2_ENGINE_CONFIG_H

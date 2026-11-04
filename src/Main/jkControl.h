@@ -8,6 +8,8 @@
 #define jkControl_nullsub_37_ADDR (0x004028D0)
 #define jkControl_HandleHudKeys_ADDR (0x004028E0)
 
+void jkControl_HandleScreenshot(void);
+int jkControl_HandleChat(void);
 int jkControl_Startup();
 int jkControl_Shutdown();
 void jkControl_nullsub_37();

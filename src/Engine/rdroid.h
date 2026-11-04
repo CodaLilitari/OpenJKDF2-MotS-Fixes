@@ -68,6 +68,7 @@ int rdGetProcFaceUserData(void);
 int rdGetVertexColorMode(void);
 
 MATH_FUNC int rdSetMipDistances(rdVector4 *dists);
+void rdResetWorldDistances(void);
 int rdSetColorEffects(stdPalEffect *effects);
 
 void rdAdvanceFrame();

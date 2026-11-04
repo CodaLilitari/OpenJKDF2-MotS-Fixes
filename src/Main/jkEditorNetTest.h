@@ -1,0 +1,255 @@
+/* Opt-in, three-process test over the actual game transport. Marker files only
+ * coordinate assertions; every level, edit and undo travels as a game packet. */
+extern "C" {
+#include "Gui/jkGUIMultiplayer.h"
+#include "Dss/sithDSSThing.h"
+extern char jkGuiMultiplayer_ipText_conv[256];
+extern int jkGuiNetHost_portNum;
+}
+static uint32_t netTestModelHash(void){uint32_t size=0;unsigned char *bytes=edWireEncode(model,&size);uint32_t hash=bytes?edNetHash(bytes,size):0;edFree(bytes);return hash;}
+static int netTestRole,netTestStage,netTestPackets;
+static uint32_t netTestStart;
+static uint32_t netTestJoinTime,netTestPulseTime,netTestPositionTime;
+static int netTestJoinPulses;
+static int netTestRollbackSeen;
+static unsigned int netTestLockedRejections;
+static uint32_t netTestEnemyTime;
+static int netTestEnemyStage;
+static int netTestMessage(SithMessage *message){
+    EditorNetHeader header={0};if(message->netMsg.msg_size>=sizeof(header))edCopy(&header,message->pktData,sizeof(header));
+    int result=jkEditor_NetMessage(message);
+    /* The test deliberately drops packets. If the small rejection notice is
+       lost, completing the authoritative rejection snapshot must also revert. */
+    int rejected=header.kind==EN_REJECT||(header.kind==EN_STATE&&!header.origin&&netReady&&netRejections&&netConfirmed&&edModelsEqual(model,netConfirmed));
+    if(!sithNet_isServer&&rejected){
+        if(!netConfirmed||!edModelsEqual(model,netConfirmed)||netQueued||grabbing||
+           sithWorld_g_pCurrentWorld->numSectors!=model->count||fabs(sithWorld_g_pCurrentWorld->gravity-model->header.gravity)>.001)exit(2);
+        netTestRollbackSeen=1;printf("GEOSITH_NET_PREDICTION PASS: rejected preview rolled back immediately\n");fflush(stdout);
+    }return result;
+}
+static void netTestPath(char *out,const char *name){snprintf(out,512,"%s/%s",getenv("GEOSITH_NET_DIR"),name);}
+static int netTestMarker(const char *name){char path[512];netTestPath(path,name);FILE *f=fopen(path,"rb");if(f)fclose(f);return f!=NULL;}
+static void netTestMark(const char *name,uint32_t value){char path[512],temp[520];netTestPath(path,name);if(netTestMarker(name))return;snprintf(temp,sizeof(temp),"%s.tmp",path);FILE *f=fopen(temp,"wb");if(!f)exit(2);fprintf(f,"%u\n",value);fclose(f);if(rename(temp,path))exit(2);}
+static int netTestTransmit(int player,const SithMessage *m){
+    static uint32_t droppedProposal;EditorNetHeader h={0};if(m->netMsg.msg_size>=sizeof(h))edCopy(&h,m->pktData,sizeof(h));EditorNetPeer *peer=netPeer(player,0);
+    if(netTestRole==1&&h.kind==EN_ACK&&peer&&peer->rx.h.kind==EN_EDIT&&h.offset==peer->rx.h.total){
+        if(!droppedProposal){droppedProposal=h.id;printf("GEOSITH_NET_TEST: deliberately dropping final proposal ACK and retries\n");}
+        if(h.id==droppedProposal)return 1;
+    }
+    int n=++netTestPackets;if(n%19==3)return 1;int sent=stdComm_SendToPlayer((SithMessage*)m,player);if(sent&&n%13==7)stdComm_SendToPlayer((SithMessage*)m,player);return sent;}
+static int stressNetwork(SithThing *player){
+    if(!getenv("GEOSITH_NET_DIR"))exit(2);
+    sithNet_isMulti=1;sithMessage_g_outputstream|=1;sithMessage_g_inputstream|=1;
+    if(!netTestRole){Main_bVerboseNetworking=1;netTestRole=atoi(getenv("GEOSITH_NET_ROLE"));netTestStart=stdPlatform_GetTimeMsec();active=1;tool=1;savedPhysics=player->physicsParams.flags;savedDebug=g_debugmodeFlags;savedThingFlags=player->flags;
+        jkEditor_NetPreparePlayers(sithWorld_g_pCurrentWorld);sithPlayer_PlacePlayers(sithWorld_g_pCurrentWorld);
+        for(int i=0;i<jkPlayer_maxPlayers;i++){jkPlayer_playerInfos[i].playerNetId=0;jkPlayer_playerInfos[i].flags=2;}player=sithWorld_g_pCurrentWorld->pLocalPlayer;
+        sithNet_isServer=stdComm_bIsServer=netTestRole==1;sithNet_serverNetId=1;netTestSend=netTestTransmit;sithMessage_aTypeFuncs[JKEDITOR_NET_MESSAGE]=netTestMessage;
+        if(netTestRole==1){jkGuiNetHost_portNum=getenv("GEOSITH_NET_PORT")?atoi(getenv("GEOSITH_NET_PORT")):27020;jkMultiEntry entry={0};entry.maxPlayers=3;stdString_SafeWStrCopy(entry.wPassword,u"geosith-network-test",32);entry.multiModeFlags=JKEDITOR_NET_FLAG;stdString_SafeWStrCopy(entry.serverName,u"GeoSith network test",32);snprintf(entry.episodeGobName,32,"%s",getenv("GEOSITH_NET_LEVEL")?getenv("GEOSITH_NET_LEVEL"):"sithed_smoke");snprintf(entry.mapJklFname,32,"%s",sithWorld_g_pCurrentWorld->map_jkl_fname);if(stdComm_CreatePlayer(&entry)||!stdComm_GNS_TestListener())exit(2);
+            sithPlayer_ShowPlayer(0,stdComm_dplayIdSelf);
+            if(getenv("GEOSITH_NET_LEVEL")){active=0;sithMulti_StartupServer();}else{
+            edCopyModel(candidate,model);if(!edExtrudeStep(candidate,0,4))exit(2);candidate->header.gravity=3.5;candidate->objectCount=1;candidate->objects[0]=EdObject{.position={.2,.4,.2}};snprintf(candidate->objects[0].templateName,64,"network_template");
+            addThingFrame(&candidate->objects[0].attributes,EdFrame{candidate->objects[0].position,edV(0,0,0)});addThingFrame(&candidate->objects[0].attributes,EdFrame{0});candidate->lightCount=1;candidate->lights[0]=EdLight{0,{0,0,.5},1,2};
+            candidate->assetCount=1;strcpy(candidate->assets[0].name,"network_model");candidate->assets[0].origin=edV(0,0,.5);candidate->assets[0].saved=1;if(!edMeshPrimitive(candidate,0,0,edV(0,0,.5),0))exit(2);
+            candidate->templateCount=1;EdTemplate *created=&candidate->templates[0];strcpy(created->name,"network_template");strcpy(created->parent,"_decor");created->count=1;strcpy(created->params[0].key,"model3d");strcpy(created->params[0].value,"network_model.3do");
+            candidate->c[1].extraLight=.35;candidate->c[1].ambientLight=.1;
+            for(int f=0;f<candidate->c[1].count;f++)if(edNormal(&candidate->c[1].f[f]).z>.99){EdFace floor=candidate->c[1].f[f];if(!edCleave(candidate,1,f,floor.v[0].p,floor.v[2].p))exit(2);break;}
+            if(!loadPlacedCog("01_cargoelev1.cog",&candidate->cogs[0]))exit(2);candidate->cogCount=1;candidate->cogs[0].params[0].cell=0;candidate->cogs[0].params[0].face=4;snprintf(candidate->cogs[0].params[1].value,32,"1");remember();if(!commit())exit(2);
+            remember();edCopyModel(candidate,model);if(!edCleaveShape(candidate,0,2,edV(0,-1,0),.25,32)||!commit())exit(2);
+            /* Static GUIDs need not equal local allocation slots after a join. */
+            jkPlayer_playerInfos[0].pLocalPlayer->guid=100001;jkPlayer_playerInfos[1].pLocalPlayer->guid=100000;sithWorld_g_pCurrentWorld->aThings[objectThings[0]].guid=1;
+            }grabbing=objectGrabbing=1;char bootstrap[32]="";if(!jkEditor_NetPrepareJoin(bootstrap,sithWorld_g_pCurrentWorld->map_jkl_fname,JKEDITOR_NET_FLAG))exit(2);char path[512];netTestPath(path,"bootstrap.name");FILE *f=fopen(path,"wb");if(!f)exit(2);fprintf(f,"%s",bootstrap);fclose(f);netTestMark("host.ready",netRevision);
+        }else{if(!stdComm_GNS_TestDiscovery())exit(2);snprintf(jkGuiMultiplayer_ipText_conv,256,"127.0.0.1:27020");if(stdComm_Open(0,u"geosith-network-test"))exit(2);sithMulti_StartupClient();sithNet_serverNetId=0;
+            /* The connection screen has no local player until DSS_WELCOME.
+               Use the real join request, dispatcher and welcome handler. */
+            sithWorld_g_pCurrentWorld->pLocalPlayer=NULL;boundWorld=NULL;g_submodeFlags|=8;
+            if(netTestRole==2){
+                int oldLevel=jkMain_bLevelActive,oldModal=jkMain_bInModalGui;
+                jkMain_bLevelActive=1;jkMain_bInModalGui=1;
+                int joined=jkGuiMultiplayer_ShowSynchronizing();
+                jkMain_bInModalGui=oldModal;jkMain_bLevelActive=oldLevel;
+                if(joined!=1||(g_submodeFlags&8)){printf("GEOSITH_NET_SYNC_MENU FAIL: result %d\n",joined);fflush(stdout);exit(2);}
+                printf("GEOSITH_NET_SYNC_MENU PASS: real synchronization menu survived snapshot and completed welcome\n");fflush(stdout);
+            }
+            while(g_submodeFlags&8){uint32_t now=stdPlatform_GetTimeMsec();
+                if(getenv("GEOSITH_NET_EXPECT_SECTORS")){static uint32_t progress; if(now-progress>5000){progress=now;EditorNetPeer *p=netPeer(sithNet_serverNetId,0);printf("LARGE JOIN role=%d ready=%d rx=%u/%u\n",netTestRole,netReady,p?p->rx.at:0,p?p->rx.h.total:0);fflush(stdout);}}
+                if(now-netTestStart>(getenv("GEOSITH_NET_EXPECT_SECTORS")?120000u:45000u)){printf("GEOSITH_NET_JOIN FAIL: welcome timeout role %d ready %d server %d\n",netTestRole,netReady,sithNet_serverNetId);fflush(stdout);exit(2);}
+                if(now-netTestJoinTime>500){netTestJoinTime=now;if(!sithMulti_SendJoinRequest(sithNet_serverNetId))exit(2);}
+                sithMessage_ProcessMessages();
+            }
+            if(!netReady||!sithWorld_g_pCurrentWorld->pLocalPlayer||sithMulti_quitGameState==2)exit(2);
+            SithThing *custom=sithTemplate_GetTemplate("network_template");if(!getenv("GEOSITH_NET_LEVEL")&&(model->templateCount!=1||!custom||custom->renderData.type!=RD_THING_MODEL3||!custom->renderData.model3||objectThings[0]<0))exit(2);
+            printf("GEOSITH_NET_TEMPLATE PASS: custom model/template and placed instance replicated on join\n");fflush(stdout);
+            printf("GEOSITH_NET_JOIN PASS: role %d synchronized before welcome and assigned local player %d\n",netTestRole,playerThingIdx);fflush(stdout);
+            SithThing *hostBody=jkPlayer_playerInfos[0].pLocalPlayer;
+            printf("GEOSITH_NET_VISIBILITY: role=%d guid=%d flags=%x geo=%d sector=%d model=%p\n",netTestRole,hostBody->guid,hostBody->flags,hostBody->renderData.curGeoMode,hostBody->sector?hostBody->sector->id:-1,(void*)hostBody->renderData.model3);fflush(stdout);
+            if((hostBody->flags&SITH_TF_DISABLED)||!hostBody->renderData.curGeoMode||!hostBody->renderData.model3||!hostBody->sector){puts("GEOSITH_NET_VISIBILITY FAIL: host is hidden after welcome");fflush(stdout);exit(2);}
+        }
+        printf("NETTEST role %d initialized\n",netTestRole);fflush(stdout);
+    }
+    sithNet_isServer=netTestRole==1;if(netTestRole==1)sithNet_serverNetId=1;
+    if(netTestRole==1){int oldLevel=jkMain_bLevelActive,oldModal=jkMain_bInModalGui;jkMain_bLevelActive=1;jkMain_bInModalGui=1;jkMain_NetworkTick();jkMain_bInModalGui=oldModal;jkMain_bLevelActive=oldLevel;}else sithMessage_ProcessMessages();
+    if(getenv("GEOSITH_NET_LEVEL")){
+        if(getenv("GEOSITH_NET_EXPECT_SECTORS")){
+            /* This long-running harness bypasses normal gameplay transmission. */
+            if(netTestRole!=1){static uint32_t heartbeat;uint32_t now=stdPlatform_GetTimeMsec();if(now-heartbeat>=1000){heartbeat=now;sithMulti_Ping(sithNet_serverNetId);}}
+            if(model->count!=atoi(getenv("GEOSITH_NET_EXPECT_SECTORS")))exit(2);jkEditor_NetTick();
+            {static uint32_t traceTime;uint32_t now=stdPlatform_GetTimeMsec();if(now-traceTime>10000){traceTime=now;printf("LARGE STATE role=%d revision=%u gravity=%g ready=%d\n",netTestRole,netRevision,model->header.gravity,netReady);for(int i=0;i<32;i++)if(netPeers[i].player)printf("LARGE PEER player=%d ready=%d tx=%u/%u rev=%u rx=%u/%u dirty=%d\n",netPeers[i].player,netPeers[i].ready,netPeers[i].tx.at,netPeers[i].tx.h.total,netPeers[i].tx.h.revision,netPeers[i].rx.at,netPeers[i].rx.h.total,netPeers[i].dirty);fflush(stdout);}}
+
+            if(stdPlatform_GetTimeMsec()-netTestStart>180000)exit(2);
+            if(netTestRole==1&&!netTestMarker("large.revision")){
+                EditorNetPeer *a=netPeer(2,0),*b=netPeer(3,0);if(!a||!b||(int)sithPlayer_GetPlayerNum(2)<0||(int)sithPlayer_GetPlayerNum(3)<0||a->ready!=(int)netRevision||b->ready!=(int)netRevision)return 1;
+                remember();edCopyModel(candidate,model);candidate->header.gravity=7.25;
+                if(!commit()||!historyStep(0)||!historyStep(1)||model->header.gravity!=7.25)exit(2);
+                netTestMark("large.revision",netRevision);puts("GEOSITH_NET_LARGE PASS: large document edit, undo and redo");fflush(stdout);
+            }
+            if(netTestRole!=1){
+                char path[512];netTestPath(path,"large.revision");FILE *file=fopen(path,"rb");unsigned int revision=0;
+                if(file){fscanf(file,"%u",&revision);fclose(file);}if(!revision||netRevision<revision||model->header.gravity!=7.25)return 1;
+                puts("GEOSITH_NET_LARGE PASS: complete large document and host undo/redo synchronized");fflush(stdout);
+            }
+        }
+        if(netTestRole!=1){char marker[32];snprintf(marker,sizeof(marker),"loaded%d.ok",netTestRole);netTestMark(marker,1);puts("GEOSITH_NET_LOADED PASS: saved custom level joined with visible host");fflush(stdout);exit(0);}
+        if(netTestMarker("loaded2.ok")&&netTestMarker("loaded3.ok")){puts("GEOSITH_NET_LOADED PASS: both clients joined saved level");fflush(stdout);exit(0);}
+        if(stdPlatform_GetTimeMsec()-netTestStart>(getenv("GEOSITH_NET_EXPECT_SECTORS")?180000u:90000u))exit(2);return 1;
+    }
+    jkEditor_NetTick();
+    if(netTestRole==1){
+        EditorNetPeer *first=netPeer(2,0),*second=netPeer(3,0);uint32_t now=stdPlatform_GetTimeMsec();
+        if(first&&first->tx.bytes&&(int)sithPlayer_GetPlayerNum(2)<0&&now-netTestPulseTime>100&&netTestJoinPulses<40){netTestPulseTime=now;remember();edCopyModel(candidate,model);candidate->lights[0].range=2+(++netTestJoinPulses%2)*ED_GRID;if(!commit())exit(2);}
+        if(!netTestMarker("edits.ready")&&first&&second&&(int)sithPlayer_GetPlayerNum(2)>=0&&(int)sithPlayer_GetPlayerNum(3)>=0&&first->ready==(int)netRevision&&second->ready==(int)netRevision){
+            if(!netTestJoinPulses)exit(2);netTestMark("edits.ready",netRevision);printf("GEOSITH_NET_MOVING_JOIN PASS: %d host edits during initial transfer\n",netTestJoinPulses);fflush(stdout);
+        }
+        if(netTestMarker("redo.done")&&!netTestMarker("stale.ready")&&first&&second&&first->ready==(int)netRevision&&second->ready==(int)netRevision)netTestMark("stale.ready",netRevision);
+    }
+    if(netTestRole==1&&netTestMarker("conflict.ready")&&!netTestMarker("conflict.sent")){
+        stdComm_GNS_AllowEdits(0);remember();edCopyModel(candidate,model);candidate->header.gravity=5;if(!commit())exit(2);netTestMark("conflict.sent",netRevision);
+    }
+    if(netTestRole==1&&fabs(model->header.gravity-3.5)>.001&&(grabbing||objectGrabbing))exit(2);
+    if(netTestRole==2&&netReady&&!netBusy&&!netQueued&&netTestMarker("edits.ready")){
+        if(netTestStage==0){if(model->count!=2||model->objectCount!=1||model->objects[0].attributes.frameCount!=2||model->lightCount!=1||model->cogCount!=1||fabs(model->header.gravity-3.5)>.001)exit(2);
+            if(model->c[0].f[2].count!=18||!edValidate(model))exit(2);printf("GEOSITH_NET_SHAPE PASS: clipped 32-sided arch replicated with 18 vertices\n");fflush(stdout);
+            if(fabs(model->c[1].extraLight-.35)>.00001||fabs(model->c[1].ambientLight-.1)>.00001||fabs(sithWorld_g_pCurrentWorld->aSectors[1].extraLight-.35)>.00001)exit(2);
+            printf("GEOSITH_NET_LIGHT PASS: sector brightness replicated independently of point lights\n");fflush(stdout);
+            SithThing *object=&sithWorld_g_pCurrentWorld->aThings[objectThings[0]];if(object->guid!=1||sithThing_GetGuidThing(1)!=object||jkEditor_NetThingSlot(1,1)!=object->idx)exit(2);
+            int freeSlot=jkEditor_NetThingSlot(object->idx,123456);if(freeSlot<0||sithWorld_g_pCurrentWorld->aThings[freeSlot].type)exit(2);
+            SithMessage native={0};native.netMsg.cogMsgId=DSS_THINGPOS;native.netMsg.msg_size=4;edCopy(native.pktData,&object->guid,4);if(!jkEditor_NetIgnoreMessage(&native))exit(2);int guid=100000;edCopy(native.pktData,&guid,4);if(jkEditor_NetIgnoreMessage(&native))exit(2);
+            remember();edCopyModel(candidate,model);candidate->header.gravity=4.5;if(candidate->meshCount!=1||!edMeshExtrude(candidate,EdHit{0,2,-1,-1}))exit(2);if(!edCleanupSector(candidate,1)||candidate->c[1].count!=6||!commit()||!netEditPending()||fabs(model->header.gravity-4.5)>.001||fabs(sithWorld_g_pCurrentWorld->gravity-4.5)>.001||fabs(netConfirmed->header.gravity-3.5)>.001)exit(2);
+            jkEditor_NetTick();if(!netBusy)exit(2);
+            edCopyModel(candidate,model);candidate->header.gravity=4.75;if(!commit()||!netQueued||fabs(model->header.gravity-4.75)>.001)exit(2);netTestStage=1;
+            printf("GEOSITH_NET_PREDICTION PASS: immediate preview and newer drag sample while approval pending\n");fflush(stdout);}
+        else if(netTestStage==1&&fabs(model->header.gravity-4.75)<.001){if(!historyStep(0))exit(2);netTestStage=2;}
+        else if(netTestStage==2&&fabs(model->header.gravity-3.5)<.001){if(model->c[1].count!=7||model->meshes[0].geometry.count!=6||!historyStep(1))exit(2);netTestStage=3;}
+        else if(netTestStage==3&&fabs(model->header.gravity-4.75)<.001){if(model->c[1].count!=6||model->meshes[0].geometry.count!=10)exit(2);printf("GEOSITH_NET_3DO PASS: full join, mesh extrusion, host replication and shared undo/redo\n");printf("GEOSITH_NET_CLEANUP PASS: predicted sector cleanup, host replication and shared undo/redo\n");fflush(stdout);netTestMark("redo.done",netRevision);netTestStage=4;}
+    }
+    if(netTestRole==3&&netReady&&!netBusy&&!netQueued){
+        if(netTestStage==0&&netTestMarker("stale.ready")&&fabs(model->header.gravity-4.75)<.001){remember();edCopyModel(candidate,model);candidate->header.gravity=99;
+            if(!edExtrudeStep(candidate,1,1)||!commit()||model->count!=3||sithWorld_g_pCurrentWorld->numSectors!=3||fabs(model->header.gravity-99)>.001)exit(2);
+            EditorNetPeer *p=netPeer(1,1);if(!netQueueState(p,EN_EDIT,stdComm_dplayIdSelf,netGesture,netQueued))exit(2);edFree(netQueued);netQueued=NULL;p->tx.h.revision=netRevision-1;netBusy=1;netTestStage=1;}
+        else if(netTestStage==1&&netRejections){if(!netTestRollbackSeen||fabs(model->header.gravity-4.75)>.001||model->count!=2)exit(2);remember();edCopyModel(candidate,model);if(!edExtrudeStep(candidate,1,1)||!commit()||model->count!=3||sithWorld_g_pCurrentWorld->numSectors!=3)exit(2);netTestStage=2;}
+        else if(netTestStage==2&&model->count==3){remember();edCopyModel(candidate,model);candidate->objects[0].attributes.frames[1].position.x+=ED_GRID;if(!commit())exit(2);netTestStage=3;}
+        else if(netTestStage==3&&fabs(model->objects[0].attributes.frames[1].position.x-(.2+ED_GRID))<.00001){EdBuffer<unsigned char> result;EdVec outline[3]={{0,0,0},{1,0,0},{0,1,0}};if(!mapAllocatePending()||!edMapPolygon(mapPending,outline,3,0,1,0))exit(2);remember();if(!edMapPaste(candidate,model,mapPending,edV(3,0,0),result)||!commit()||model->count!=4||sithWorld_g_pCurrentWorld->numSectors!=4)exit(2);netTestStage=4;}
+        else if(netTestStage==4&&model->count==4){if(!historyStep(0))exit(2);netTestStage=5;}
+        else if(netTestStage==5&&model->count==3){if(!historyStep(1))exit(2);netTestStage=6;}
+        else if(netTestStage==6&&model->count==4){
+            EdBuffer<unsigned char> selected,result;selected[3]=1;remember();
+            if(!edMapCleave(candidate,model,selected,edV(3.5,-1,0),edV(3.5,2,0),result)||!commit()||model->count!=5||sithWorld_g_pCurrentWorld->numSectors!=5)exit(2);netTestStage=12;
+        }
+        else if(netTestStage==12&&model->count==5){
+            EdBuffer<unsigned char> selected;selected[4]=1;remember();
+            if(!edMapDelete(candidate,model,selected)||!commit()||model->count!=4)exit(2);netTestStage=13;
+        }
+        else if(netTestStage==13&&model->count==4){if(!historyStep(0))exit(2);netTestStage=14;}
+        else if(netTestStage==14&&model->count==5){if(!historyStep(1))exit(2);netTestStage=15;}
+        else if(netTestStage==15&&model->count==4){
+            printf("GEOSITH_NET_MAP PASS: predicted cleave/deletion, host replication and shared undo/redo\n");fflush(stdout);
+            remember();edCopyModel(candidate,model);candidate->header.gravity=88;if(!commit()||fabs(model->header.gravity-88)>.001)exit(2);
+            /* Hold this speculative edit locally while the host commits a
+               competing edit. Its state must cancel, never submit, our draft. */
+            netBusy=1;netTestMark("conflict.ready",netRevision);netTestStage=7;
+        }
+        else if(netTestStage==7&&fabs(model->header.gravity-5)<.001){
+            if(netQueued||grabbing||fabs(netConfirmed->header.gravity-5)>.001)exit(2);
+            printf("GEOSITH_NET_PREDICTION PASS: remote host edit superseded pending preview\n");fflush(stdout);
+            netTestLockedRejections=netRejections;remember();edCopyModel(candidate,model);candidate->header.gravity=99;if(!commit()||fabs(model->header.gravity-99)>.001)exit(2);netTestStage=8;
+        }
+        else if(netTestStage==8&&netRejections>netTestLockedRejections&&fabs(model->header.gravity-5)<.001){
+            printf("GEOSITH_NET_PERMISSION PASS: host edit lock rejects client changes and restores prediction\n");fflush(stdout);netTestMark("map.done",netRevision);netTestStage=9;
+        }
+    }
+    if(netTestRole==2&&netTestStage==1&&fabs(model->header.gravity-4.75)>.001)exit(2);
+    int final=netTestMarker("map.done")&&model->count==4&&model->objectCount==1&&model->cogCount==1&&model->lightCount==1&&model->objects[0].attributes.frameCount==2&&fabs(model->objects[0].attributes.frames[1].position.x-(.2+ED_GRID))<.00001&&fabs(model->header.gravity-5)<.001;
+    if(final&&netTestRole==1&&!netTestEnemyStage){
+        remember();edCopyModel(candidate,model);candidate->objectCount=2;candidate->objects[1]=EdObject{.position={-.3,.2,.2}};snprintf(candidate->objects[1].templateName,64,"stormtroop");
+        if(!commit()||objectThings[1]<0)exit(2);netTestEnemyStage=1;
+    }
+    int enemyPresent=netTestMarker("map.done")&&model->objectCount==2&&objectThings[1]>=0;
+    if(enemyPresent&&netTestRole!=1&&!netTestEnemyStage){
+        if(netTestRole==3)leaveEditor(sithWorld_g_pCurrentWorld->pLocalPlayer);
+        SithThing *enemy=&sithWorld_g_pCurrentWorld->aThings[objectThings[1]];
+        printf("NETTEST enemy role=%d active=%d type=%d guid=%d puppet=%p\n",netTestRole,active,enemy->type,enemy->guid,(void*)enemy->puppet);fflush(stdout);
+        netTestMark(netTestRole==2?"enemy.edit.ready":"enemy.play.ready",netRevision);netTestEnemyStage=1;
+    }
+    if(enemyPresent&&netTestRole==1&&netTestEnemyStage==1&&netTestMarker("enemy.edit.ready")&&netTestMarker("enemy.play.ready")){
+        leaveEditor(sithWorld_g_pCurrentWorld->pLocalPlayer);netCommitted();netTestEnemyStage=2;
+    }
+    if(enemyPresent&&netTestRole==1&&netTestEnemyStage==2){EditorNetPeer *a=netPeer(2,0),*b=netPeer(3,0);
+        if(a&&b&&a->ready==(int)netRevision&&b->ready==(int)netRevision){
+            SithThing *enemy=&sithWorld_g_pCurrentWorld->aThings[objectThings[1]];
+            printf("NETTEST killing stormtrooper guid=%d puppet=%p\n",enemy->guid,(void*)enemy->puppet);fflush(stdout);
+            sithThing_DamageThing(enemy,sithWorld_g_pCurrentWorld->pLocalPlayer,1000,SITH_DAMAGE_SABER);
+            for(int peerId=2;peerId<=3;peerId++){
+                sithDSSThing_Death(enemy,sithWorld_g_pCurrentWorld->pLocalPlayer,0,peerId,1);
+                sithDSSThing_PlayKeyMode(enemy,SITH_ANIM_DEATH,0,peerId,1);
+            }
+            netTestMark("enemy.killed",netRevision);netTestEnemyStage=3;
+        }
+    }
+    if(enemyPresent&&netTestRole!=1&&netTestEnemyStage==1&&netTestMarker("enemy.killed")){
+        if(!netTestEnemyTime)netTestEnemyTime=stdPlatform_GetTimeMsec();
+        SithThing *enemy=&sithWorld_g_pCurrentWorld->aThings[objectThings[1]];
+        if(stdPlatform_GetTimeMsec()-netTestEnemyTime>1000&&(netTestRole==2||enemy->actorParams.health<=0)){
+            if(netTestRole==2&&(enemy->type!=SITH_THING_COG||enemy->puppet))exit(2);
+            netTestMark(netTestRole==2?"enemy.edit.ok":"enemy.play.ok",netRevision);
+            if(netTestEnemyStage<2)printf("GEOSITH_NET_ENEMY PASS: role %d survived host kill in %s mode\n",netTestRole,netTestRole==2?"editor":"play");
+            netTestEnemyStage=2;
+        }
+    }
+    if(enemyPresent&&netTestRole==1&&netTestEnemyStage==3&&netTestMarker("enemy.edit.ok")&&netTestMarker("enemy.play.ok")){
+        active=1;syncEditorObjects(model);suspendPlacedCogs(0);netCommitted();
+        netTestMark("enemy.host.reset",netRevision);netTestEnemyStage=4;
+    }
+    if(enemyPresent&&netTestRole!=1&&netTestEnemyStage==2&&netTestMarker("enemy.host.reset")){
+        active=1;syncEditorObjects(model);suspendPlacedCogs(0);
+        SithThing *enemy=&sithWorld_g_pCurrentWorld->aThings[objectThings[1]];
+        if(enemy->type!=SITH_THING_COG||enemy->puppet||enemy->guid!=netObjectGuids[1])exit(2);
+        netTestMark(netTestRole==2?"enemy.client2.reset":"enemy.client3.reset",netRevision);netTestEnemyStage=4;
+    }
+    if(enemyPresent&&netTestRole==1&&netTestEnemyStage==4&&netTestMarker("enemy.client2.reset")&&netTestMarker("enemy.client3.reset")){
+        leaveEditor(sithWorld_g_pCurrentWorld->pLocalPlayer);netCommitted();netTestEnemyStage=5;
+    }
+    if(enemyPresent&&netTestRole==1&&netTestEnemyStage==5){EditorNetPeer *a=netPeer(2,0),*b=netPeer(3,0);
+        if(a&&b&&a->ready==(int)netRevision&&b->ready==(int)netRevision){
+            SithThing *enemy=&sithWorld_g_pCurrentWorld->aThings[objectThings[1]],*projectile=sithTemplate_GetTemplate("+elaser");
+            rdVector3 direction={0,1,0};if(!projectile||enemy->actorParams.health<=0)exit(2);
+            printf("NETTEST reset stormtrooper firing at editing clients guid=%d\n",enemy->guid);fflush(stdout);
+            for(int peerId=2;peerId<=3;peerId++)sithDSSThing_Fire(enemy,projectile,&enemy->position,&direction,NULL,SITH_ANIM_FIRE,1,0,0,0x70001,peerId,1,0);
+            netTestMark("enemy.reset.fire",netRevision);netTestEnemyStage=6;
+        }
+    }
+    if(enemyPresent&&netTestRole!=1&&netTestEnemyStage==4&&netTestMarker("enemy.reset.fire")){
+        netTestEnemyTime=stdPlatform_GetTimeMsec();netTestEnemyStage=5;
+    }
+    if(enemyPresent&&netTestRole!=1&&netTestEnemyStage==5&&stdPlatform_GetTimeMsec()-netTestEnemyTime>1000){
+        SithThing *enemy=&sithWorld_g_pCurrentWorld->aThings[objectThings[1]];
+        if(enemy->type!=SITH_THING_COG||enemy->puppet||sithThing_GetGuidThing(0x70001))exit(2);
+        netTestMark(netTestRole==2?"enemy.cycle2.ok":"enemy.cycle3.ok",netRevision);netTestEnemyStage=6;
+        printf("GEOSITH_NET_ENEMY_RESET PASS: role %d survived kill, host reset, client reset and host resuming fire\n",netTestRole);fflush(stdout);
+    }
+    final=enemyPresent&&netTestMarker("enemy.cycle2.ok")&&netTestMarker("enemy.cycle3.ok");
+    if(final&&netTestRole==1&&stdPlatform_GetTimeMsec()-netTestPositionTime>100){netTestPositionTime=stdPlatform_GetTimeMsec();SithThing *body=jkPlayer_playerInfos[0].pLocalPlayer;body->position.x=.75;body->physicsParams.vel.x=0;sithDSSThing_Pos(body,2,0);sithDSSThing_Pos(body,3,0);}
+    if(final&&netTestRole==1){EditorNetPeer *a=netPeer(2,0),*b=netPeer(3,0);if(a&&b&&a->ready==(int)netRevision&&b->ready==(int)netRevision)netTestMark("host.hash",netTestModelHash());}
+    if(final&&netTestRole!=1&&netTestMarker("host.hash")&&jkPlayer_playerInfos[0].pLocalPlayer&&fabs(jkPlayer_playerInfos[0].pLocalPlayer->position.x-.75)<.001){printf("GEOSITH_NET_POSITION PASS: remote host movement replicated over sequenced unreliable packets\n");char path[512];netTestPath(path,"host.hash");FILE *f=fopen(path,"rb");unsigned int hash=0;if(!f||fscanf(f,"%u",&hash)!=1)exit(2);fclose(f);if(hash!=netTestModelHash()){printf("GEOSITH_NET FAIL: hash mismatch role=%d revision=%u host=%u local=%u\n",netTestRole,netRevision,hash,netTestModelHash());fflush(stdout);exit(2);}char name[32];snprintf(name,32,"client%d.ok",netTestRole);netTestMark(name,netRevision);printf("GEOSITH_NET_CLIENT PASS: role %d, full level, edits, undo/redo, stale rejection and matching document\n",netTestRole);fflush(stdout);exit(0);}
+    if(netTestRole==1&&netTestMarker("client2.ok")&&netTestMarker("client3.ok")){if(netDeltaTransfers<2)exit(2);printf("GEOSITH_NET_MODAL PASS: discovery, join and edits while host modal; %u delta transfers, %llu / %llu bytes\n",netDeltaTransfers,(unsigned long long)netPackedBytes,(unsigned long long)netRawBytes);printf("GEOSITH_NET_HOST PASS: two clients, authoritative join/edit/undo, dropped and duplicated packets, revision %u\n",netRevision);fflush(stdout);exit(0);}
+    if(stdPlatform_GetTimeMsec()-netTestStart>90000){printf("GEOSITH_NET FAIL: timeout role=%d stage=%d ready=%d busy=%d revision=%u peers=%d,%d self=%d\n",netTestRole,netTestStage,netReady,netBusy,netRevision,netPeers[0].player,netPeers[1].player,stdComm_dplayIdSelf);fflush(stdout);exit(2);}
+    sithNet_isMulti=0;sithMessage_g_outputstream&=~1;sithMessage_g_inputstream&=~1;return 1;
+}

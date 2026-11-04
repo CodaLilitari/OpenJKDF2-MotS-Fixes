@@ -17,6 +17,7 @@
 #include "Platform/wuRegistry.h"
 #include "General/stdString.h"
 #include "Devices/sithComm.h"
+#include "Main/jkEditor.h"
 
 static int jkGuiMultiplayer_bInitted = 0;
 static int32_t jkGuiMultiplayer_aElements2_aIdk[2] = {0xd, 0xe};
@@ -41,11 +42,14 @@ static jkGuiElement jkGuiMultiplayer_aElements2[7] = {
     {ELEMENT_END,  0,  0,  0,  0, {0},  0,  0,  0,  0,  0,  0, {0},  0},
 };
 
-static jkGuiElement jkGuiMultiplayer_aElements3[13] = {
+static char16_t multiplayerNetworkStatus[256];
+static char16_t multiplayerSyncStatus[256];
+static uint32_t multiplayerSyncStarted;
+static jkGuiElement jkGuiMultiplayer_aElements3[15] = {
     {ELEMENT_TEXT,  0,  0,  0,  3, { 0, 0x19A, 0x280, 20},  1,  0,  0,  0,  0,  0, {0},  0},
     {ELEMENT_TEXT,  0,  6, "GUI_MULTIPLAYER",  3, {20, 20, 0x258, 0x28},  1,  0,  0,  0,  0,  0, {0},  0},
-    {ELEMENT_TEXT,  0,  0, "GUI_CHOOSEAGAME",  2, {170, 0x82, 0x1C2, 20},  1,  0,  0,  0,  0,  0, {0},  0},
-    {ELEMENT_LISTBOX,  1,  0,  0,  0, {170, 0xA0, 320, 0x6E},  1,  0, "GUI_GAMESTOJOIN_HINT",  0, jkGuiMultiplayer_sub_413E00, jkGuiMultiplayer_aElements3_aIdk, {0},  0},
+    {ELEMENT_TEXT,  0,  0, "GUI_CHOOSEAGAME",  2, {170, 82, 0x1C2, 20},  1,  0,  0,  0,  0,  0, {0},  0},
+    {ELEMENT_LISTBOX,  1,  0,  0,  0, {170, 110, 320, 110},  1,  0, "GUI_GAMESTOJOIN_HINT",  0, jkGuiMultiplayer_sub_413E00, jkGuiMultiplayer_aElements3_aIdk, {0},  0},
 #ifdef QOL_IMPROVEMENTS
     {ELEMENT_TEXT,  0,  0, "GUINET_PASSWORD",  2, {170, 300+5, 100, 20},  1,  0,  0,  0,  0,  0, {0},  0},
     {ELEMENT_TEXTBOX,  0,  0, jkGuiMultiplayer_stru_556168.field_300, 0x20, {280, 295+10, 210, 20},  1,  0,  0,  0,  0,  0, {0},  0},
@@ -59,8 +63,10 @@ static jkGuiElement jkGuiMultiplayer_aElements3[13] = {
     {ELEMENT_TEXTBUTTON,  1,  2, "GUI_OK",  3, {0x1A4, 0x1AE, 0xC8, 0x28},  1,  0,  0,  0,  0,  0, {0},  0},
     {ELEMENT_TEXTBUTTON, -1,  2, "GUI_CANCEL",  3, {20, 0x1AE, 0xC8, 0x28},  1,  0,  0,  0,  0,  0, {0},  0},
 #ifdef QOL_IMPROVEMENTS
-    { ELEMENT_TEXTBOX, 0, 0, NULL, 255, { 170, 280, 320, 20 }, 1, 0, NULL, NULL, NULL, NULL, { 0, 0, 0, 0, 0, { 0, 0, 0, 0 } }, 0 },
+    { ELEMENT_TEXTBOX, 0, 0, NULL, 255, { 170, 255, 320, 20 }, 1, 0, NULL, NULL, NULL, NULL, { 0, 0, 0, 0, 0, { 0, 0, 0, 0 } }, 0 },
 #endif
+    {ELEMENT_TEXT,0,0,u"LAN, public IP, or hostname:port (default UDP 27020)",3,{20,230,600,20},1},
+    {ELEMENT_TEXT,0,0,multiplayerNetworkStatus,3,{10,280,620,20},1},
     {ELEMENT_END,  0,  0,  0,  0, {0},  0,  0,  0,  0,  0,  0, {0},  0},
 };
 
@@ -89,7 +95,7 @@ void jkGuiMultiplayer_Startup()
     jkGuiMultiplayer_bInitted = 1;
 
 #ifdef QOL_IMPROVEMENTS
-    wuRegistry_GetWString("lastConnectedHost", jkGuiMultiplayer_ipText, 0x100, u"127.0.0.1");
+    wuRegistry_GetWString("lastConnectedHost", jkGuiMultiplayer_ipText, 0x100, u"LAN");
     jkGuiMultiplayer_aElements3[11].wstr = jkGuiMultiplayer_ipText;
     jkGuiMultiplayer_aElements3[11].selectedTextEntry = 255;
 #endif
@@ -290,7 +296,11 @@ LABEL_1:
                             {
                                 v30 = jkStrings_GetUniStringWithFallback("GUINET_NOCONNECT");
                                 v22 = jkStrings_GetUniStringWithFallback("GUINET_HOSTERROR");
-                                jkGuiDialog_ErrorDialog(v22, v30);
+#ifdef PLATFORM_GNS
+                                char detail[256];char16_t wide[256];stdComm_GNS_GetStatus(detail,sizeof(detail));stdString_CharToWchar(wide,detail,256);jkGuiDialog_ErrorDialog(v22,wide);
+#else
+                                jkGuiDialog_ErrorDialog(v22,v30);
+#endif
                             }
                             else if ( jkMain_loadFile2(v34.episodeGobName, v34.mapJklFname) )
                             {
@@ -334,6 +344,7 @@ LABEL_29:
                 goto LABEL_1;
             }
         }
+        if(!jkEditor_NetPrepareJoin(jkGuiMultiplayer_aEntries[jkGuiMultiplayer_aElements3[3].selectedTextEntry].episodeGobName,jkGuiMultiplayer_aEntries[jkGuiMultiplayer_aElements3[3].selectedTextEntry].mapJklFname,jkGuiMultiplayer_aEntries[jkGuiMultiplayer_aElements3[3].selectedTextEntry].multiModeFlags))goto LABEL_28;
         if ( jkGuiBuildMulti_ShowLoad(
                  &jkGuiMultiplayer_mpcInfo,
                  jkGuiMultiplayer_aEntries[jkGuiMultiplayer_aElements3[3].selectedTextEntry].episodeGobName,
@@ -343,18 +354,12 @@ LABEL_29:
                  jkGuiMultiplayer_aEntries[jkGuiMultiplayer_aElements3[3].selectedTextEntry].multiModeFlags & MULTIMODEFLAG_1000) != 1 )
             goto LABEL_28;
 #ifdef QOL_IMPROVEMENTS
-        // HACK: Actually do passwords correctly
-        int check = __wcscmp((const char16_t*)jkGuiMultiplayer_aEntries[jkGuiMultiplayer_aElements3[3].selectedTextEntry].wPassword, (const char16_t*)jkGuiMultiplayer_stru_556168.field_300);
-        if (check) {
-            v27 = jkStrings_GetUniStringWithFallback("GUINET_WRONGPASSWORD");
-            v11 = jkStrings_GetUniStringWithFallback("GUINET_JOINERROR");
-            jkGuiDialog_ErrorDialog(v11, v27);
-            goto LABEL_28;
-        }
-
+#ifndef PLATFORM_GNS
+        if(__wcscmp(jkGuiMultiplayer_aEntries[jkGuiMultiplayer_aElements3[3].selectedTextEntry].wPassword,(const char16_t*)jkGuiMultiplayer_stru_556168.field_300))goto LABEL_28;
+#endif
         wuRegistry_SetWString("lastConnectedHost", jkGuiMultiplayer_ipText);
 #endif
-        v10 = stdComm_Open(v7, v35.sessionName);
+        v10 = stdComm_Open(v7,(char16_t*)jkGuiMultiplayer_stru_556168.field_300);
         if ( v10 )
         {
             if ( v10 == 0x8877014A )
@@ -372,7 +377,11 @@ LABEL_29:
                 v27 = jkStrings_GetUniStringWithFallback("GUINET_NOGAMECONNECT");
                 v11 = jkStrings_GetUniStringWithFallback("GUINET_JOINERROR");
             }
-            jkGuiDialog_ErrorDialog(v11, v27);
+            #ifdef PLATFORM_GNS
+            char detail[256];char16_t wide[256];stdComm_GNS_GetStatus(detail,sizeof(detail));stdString_CharToWchar(wide,detail,256);jkGuiDialog_ErrorDialog(v11,wide);
+#else
+            jkGuiDialog_ErrorDialog(v11,v27);
+#endif
             goto LABEL_28;
         }
         v12 = v7;
@@ -401,6 +410,7 @@ int jkGuiMultiplayer_ShowSynchronizing()
 
     v2 = jkGui_stdBitmaps[JKGUI_BM_BK_MULTI]->palette;
     g_submodeFlags |= 8u;
+    multiplayerSyncStarted=stdPlatform_GetTimeMsec();
     jkGui_SetModeMenu(v2);
     jkGuiMultiplayer_aElements4[1].wstr = jkStrings_GetUniStringWithFallback("GUI_SYNCHRONIZING");
     jkGuiMultiplayer_menu4.idkFunc = jkGuiMultiplayer_idk;
@@ -413,6 +423,7 @@ int jkGuiMultiplayer_ShowSynchronizing()
 
 int jkGuiMultiplayer_CogMsgHandleJoining(SithMessage *msg)
 {
+    if(msg->netMsg.msg_size<8||msg->netMsg.msg_size>sizeof(msg->pktData))return 0;
     char16_t *v2; // eax
     char16_t *v3; // [esp-4h] [ebp-4h]
 
@@ -457,6 +468,11 @@ LABEL_9:
 
 void jkGuiMultiplayer_sub_4140B0(jkGuiMenu *pMenu)
 {
+#ifdef PLATFORM_GNS
+    char status[256];stdComm_GNS_GetStatus(status,sizeof(status));char16_t nextStatus[256];stdString_CharToWchar(nextStatus,status,256);
+    if(__wcscmp(nextStatus,multiplayerNetworkStatus)){stdString_SafeWStrCopy(multiplayerNetworkStatus,nextStatus,256);jkGuiRend_UpdateAndDrawClickable(&jkGuiMultiplayer_aElements3[13],pMenu,1);}
+#endif
+
     uint32_t v1; // eax
     int v2; // esi
     HRESULT v3; // eax
@@ -471,7 +487,7 @@ void jkGuiMultiplayer_sub_4140B0(jkGuiMenu *pMenu)
     if ( g_app_suspended )
     {
         v1 = stdPlatform_GetTimeMsec();
-        if ( v1 > jkGuiMultiplayer_dword_5564E8 + 5000 )
+        if ( v1 > jkGuiMultiplayer_dword_5564E8 + 500 )
         {
             v2 = -1;
             jkGuiMultiplayer_dword_5564E8 = v1;
@@ -630,6 +646,14 @@ void jkGuiMultiplayer_idk(jkGuiMenu *pMenu)
     if ( stdComm_dword_8321E0 && (g_submodeFlags & 8) != 0 )
     {
         v1 = stdPlatform_GetTimeMsec();
+        if(!multiplayerSyncStarted)multiplayerSyncStarted=v1;
+        if(v1-multiplayerSyncStarted>120000){jkGuiDialog_ErrorDialog(u"Connection timed out",u"Level synchronization exceeded two minutes. Check both versions and resource files, and retry.");pMenu->lastClicked=-2;return;}
+#ifdef PLATFORM_GNS
+        char status[256];jkEditor_NetProgress(status,sizeof(status));if(!status[0])stdComm_GNS_GetStatus(status,sizeof(status));stdString_CharToWchar(multiplayerSyncStatus,status,256);
+        jkGuiMultiplayer_aElements4[1].wstr=multiplayerSyncStatus;
+        static uint32_t lastStatusDraw;if(v1-lastStatusDraw>250){lastStatusDraw=v1;jkGuiRend_UpdateAndDrawClickable(&jkGuiMultiplayer_aElements4[1],pMenu,1);}
+        if(jkEditor_NetFailed()){jkGuiDialog_ErrorDialog(u"Level synchronization failed",multiplayerSyncStatus);pMenu->lastClicked=-2;return;}
+#endif
         if ( v1 <= jkGuiMultiplayer_dword_5564EC + 2000 || (jkGuiMultiplayer_dword_5564EC = v1, sithMulti_SendJoinRequest(sithNet_serverNetId)) )
         {
             sithMessage_ProcessMessages();
@@ -640,7 +664,11 @@ void jkGuiMultiplayer_idk(jkGuiMenu *pMenu)
         {
             v3 = jkStrings_GetUniStringWithFallback("GUINET_NOGAMECONNECT");
             v2 = jkStrings_GetUniStringWithFallback("GUINET_JOINERROR");
-            jkGuiDialog_ErrorDialog(v2, v3);
+            #ifdef PLATFORM_GNS
+            char detail[256];char16_t wide[256];stdComm_GNS_GetStatus(detail,sizeof(detail));stdString_CharToWchar(wide,detail,256);jkGuiDialog_ErrorDialog(v2,wide);
+#else
+            jkGuiDialog_ErrorDialog(v2,v3);
+#endif
             pMenu->lastClicked = -2;
         }
     }
@@ -678,6 +706,7 @@ int jkGuiMultiplayer_Show2()
             v2 = jkGuiRend_DisplayAndReturnClicked(&jkGuiMultiplayer_menu4);
             jkGui_SetModeGame();
             if ( v2 == 1
+              && jkEditor_NetPrepareJoin(jkGuiMultiplayer_multiEntry.episodeGobName,jkGuiMultiplayer_multiEntry.mapJklFname,jkGuiMultiplayer_multiEntry.multiModeFlags)
               && jkGuiBuildMulti_ShowLoad(&jkGuiMultiplayer_mpcInfo, jkGuiMultiplayer_multiEntry.episodeGobName, jkGuiMultiplayer_multiEntry.mapJklFname, 0, jkGuiMultiplayer_multiEntry.maxRank, jkGuiMultiplayer_multiEntry.multiModeFlags & MULTIMODEFLAG_1000) == 1 )
             {
                 sithMulti_InitTick(jkGuiMultiplayer_multiEntry.tickRateMs);
@@ -782,6 +811,7 @@ int jkGuiMultiplayer_ShowWaitHostSettings()
 
     v2 = jkGui_stdBitmaps[JKGUI_BM_BK_MULTI]->palette;
     g_submodeFlags |= 8u;
+    multiplayerSyncStarted=stdPlatform_GetTimeMsec();
     jkGui_SetModeMenu(v2);
     jkGuiMultiplayer_aElements4[1].wstr = jkStrings_GetUniStringWithFallback("GUINET_WAITHOSTSETTINGS");
     jkGuiMultiplayer_menu4.idkFunc = jkGuiMultiplayer_sub_4142C0;

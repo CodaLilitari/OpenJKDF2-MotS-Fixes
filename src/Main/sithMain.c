@@ -1,4 +1,5 @@
 #include "sithMain.h"
+#include "Main/jkEditor.h"
 
 #include "Main/jkGame.h"
 #include "Main/Main.h"
@@ -198,6 +199,7 @@ int sithOpen()
     sithRender_Open();
     sithWeapon_StartupEntry();
     sith_bOpen = 1;
+    jkEditor_SelfTest();
     return 1;
 }
 

@@ -209,6 +209,16 @@ int jkMain_SwitchTo5(char *pJklFname)
 }
 
 // MOTS altered
+void jkMain_NetworkTick(void){
+    static uint32_t last,heartbeat;uint32_t now=stdPlatform_GetTimeMsec();
+    if(!sithNet_isMulti||!jkMain_bLevelActive||!jkMain_bInModalGui)return;
+    uint32_t elapsed=now-last;if(elapsed<20)return;last=now;if(elapsed>100)elapsed=100;
+    sithMessage_ProcessMessages();sithMulti_Update(elapsed);
+    /* Before welcome, the host has no player slot for us. Editor transfer ACKs
+       keep synchronization moving; a gameplay ping here would trigger DSS_QUIT. */
+    if(now-heartbeat>=1000){heartbeat=now;if(sithNet_isServer)sithMulti_SyncPlayers(-1,0);else if(sithNet_serverNetId&&!(g_submodeFlags&8))sithMulti_Ping(sithNet_serverNetId);}
+}
+
 void jkMain_GuiAdvance()
 {
     unsigned int v1; // esi
@@ -230,6 +240,8 @@ void jkMain_GuiAdvance()
             stdControl_SetActivation(0);
         if ( jkMain_bLevelActive )
         {
+            /* Modal editor dialogs suspend input/physics, never the network. */
+            jkMain_NetworkTick();
             if ( sithNet_isMulti && !jkMain_bInModalGui)
             {
                 v1 = stdPlatform_GetTimeMsec();

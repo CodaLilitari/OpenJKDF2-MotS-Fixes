@@ -1,3 +1,4 @@
+#include "Main/jkEditor.h"
 #include "jkGUINetHost.h"
 
 #include <errno.h>
@@ -68,7 +69,7 @@ enum jkGuiNetHostAdvancedElement_t
 static int32_t jkGuiNetHost_aIdk[2] = {0xd, 0xe};
 
 // MOTS altered
-static jkGuiElement jkGuiNetHost_aElements[28] =
+static jkGuiElement jkGuiNetHost_aElements[29] =
 {
     { ELEMENT_TEXT,         0, 0, NULL, 3, { 0, 410, 640, 20 }, 1, 0, NULL, NULL, NULL, NULL, { 0, 0, 0, 0, 0, { 0, 0, 0, 0 } }, 0 },
     { ELEMENT_TEXT,         0, 6, "GUI_MULTIPLAYER", 3, { 20, 20, 600, 40 }, 1, 0, NULL, NULL, NULL, NULL, { 0, 0, 0, 0, 0, { 0, 0, 0, 0 } }, 0 },
@@ -100,6 +101,7 @@ static jkGuiElement jkGuiNetHost_aElements[28] =
     { ELEMENT_TEXTBOX, 0, 0, NULL, 16, { 540, 125, 90, 20 }, 1, 0, NULL, NULL, NULL, NULL, { 0, 0, 0, 0, 0, { 0, 0, 0, 0 } }, 0 },
     
 #endif
+    { ELEMENT_TEXTBUTTON, JKEDITOR_CREATE, 0, NULL, 3, {310, 402, 320, 24}, 1, 0, 0, 0, 0, 0, {0}, 0},
     { ELEMENT_END, 0, 0, NULL, 0, { 0, 0, 0, 0 }, 0, 0, NULL, NULL, NULL, NULL, { 0, 0, 0, 0, 0, { 0, 0, 0, 0 } }, 0 }
 };
 
@@ -111,7 +113,7 @@ static jkGuiMenu jkGuiNetHost_menu =
 // MOTS added: MotS's host screen, with its positions. MotS adds the game type checkboxes
 // (personalities or ranked Jedi only) and drops the GUI_MAXSTARS label. The elements keep
 // the order of the list above so the same indices work for both, with the checkboxes last.
-static jkGuiElement jkGuiNetHost_aElementsMots[30] =
+static jkGuiElement jkGuiNetHost_aElementsMots[31] =
 {
     { ELEMENT_TEXT,         0, 0, NULL, 3, { 0, 410, 640, 20 }, 1, 0, NULL, NULL, NULL, NULL, { 0, 0, 0, 0, 0, { 0, 0, 0, 0 } }, 0 },
     { ELEMENT_TEXT,         0, 6, "GUI_MULTIPLAYER", 3, { 20, 15, 600, 50 }, 1, 0, NULL, NULL, NULL, NULL, { 0, 0, 0, 0, 0, { 0, 0, 0, 0 } }, 0 },
@@ -145,6 +147,7 @@ static jkGuiElement jkGuiNetHost_aElementsMots[30] =
 #endif
     { ELEMENT_CHECKBOX,     0, 0, "GUI_TYPEPERSONALITIES", 0, { 310, 88, 330, 20 }, 1, 0, "GUI_PERSONALITIES_HINT", NULL, &jkGuiNetHost_PersonalitiesClicked, NULL, { 0, 0, 0, 0, 0, { 0, 0, 0, 0 } }, 0 },
     { ELEMENT_CHECKBOX,     0, 0, "GUI_TYPEJEDIONLY", 0, { 310, 108, 330, 20 }, 1, 0, "GUI_JEDIONLY_HINT", NULL, &jkGuiNetHost_JediOnlyClicked, NULL, { 0, 0, 0, 0, 0, { 0, 0, 0, 0 } }, 0 },
+    { ELEMENT_TEXTBUTTON, JKEDITOR_CREATE, 0, NULL, 3, {310, 402, 320, 24}, 1, 0, 0, 0, 0, 0, {0}, 0},
     { ELEMENT_END, 0, 0, NULL, 0, { 0, 0, 0, 0 }, 0, 0, NULL, NULL, NULL, NULL, { 0, 0, 0, 0, 0, { 0, 0, 0, 0 } }, 0 }
 };
 
@@ -464,7 +467,12 @@ int jkGuiNetHost_Show(jkMultiEntry3 *pMultiEntry)
 
     do
     {
+        for (jkGuiElement *e=jkGuiNetHost_pElements; e->type != ELEMENT_END; ++e) if(e->hoverId == JKEDITOR_CREATE) e->wstr=u"Create New Level";
         v4 = jkGuiRend_DisplayAndReturnClicked(jkGuiNetHost_pMenu);
+        int editorCreated = v4 == JKEDITOR_CREATE && jkEditor_Create(1);
+        if(v4==JKEDITOR_CREATE&&!editorCreated){v4=GUI_ADVANCED;continue;}
+        char editorGob[32];
+        if (editorCreated) { stdString_SafeStrCopy(editorGob,jkRes_episodeGobName,32); v4=GUI_OK; }
         if ( v4 == GUI_OK )
         {
             pMultiEntry->multiModeFlags = 0;
@@ -472,9 +480,12 @@ int jkGuiNetHost_Show(jkMultiEntry3 *pMultiEntry)
             for ( i = __wcschr(pMultiEntry->serverName, ':'); i; i = __wcschr(pMultiEntry->serverName, ':') )
                 *i = '-';
             
+            if (editorCreated) { stdString_SafeStrCopy(pMultiEntry->episodeGobName,editorGob,32); stdString_SafeStrCopy(pMultiEntry->mapJklFname,"sithed.jkl",128); }
+            else {
             stdString_SafeStrCopy(pMultiEntry->episodeGobName, jkGuiNetHost_pElements[NETHOST_EPISODE_LISTBOX].unistr[jkGuiNetHost_pElements[NETHOST_EPISODE_LISTBOX].selectedTextEntry].c_str, 0x20);
             stdString_SafeStrCopy(pMultiEntry->mapJklFname, jkGuiNetHost_pElements[NETHOST_LEVEL_LISTBOX].unistr[jkGuiNetHost_pElements[NETHOST_LEVEL_LISTBOX].selectedTextEntry].c_str + sizeof(int), 0x80); // Added: +sizeof(int)
             
+            }
             v10 = wstr_to_int_clamped(v25, 1, 32);
 
             // Added: Clamping is slightly different for dedicated

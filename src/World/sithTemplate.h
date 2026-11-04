@@ -27,3 +27,7 @@ SithThing* sithTemplate_GetTemplate(const char *pName);
 SithThing* sithTemplate_Parse(SithWorld *pWorld);
 
 #endif // _SITHTEMPLATE_H
+
+SithThing *sithTemplate_ParseEditor(SithWorld *world);
+
+SithThing *sithTemplate_UpdateEditor(SithWorld *world);

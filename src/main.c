@@ -637,12 +637,15 @@ int main(int argc, char** argv)
     }
 
     FILE* fp;
-    if (!skipConsoleWindow) {
+    DWORD stdoutType = GetFileType(GetStdHandle(STD_OUTPUT_HANDLE));
+    int redirectedOutput = stdoutType == FILE_TYPE_DISK || stdoutType == FILE_TYPE_PIPE;
+    if (!skipConsoleWindow && !redirectedOutput) {
         AllocConsole();
         freopen_s(&fp, "CONIN$", "r", stdin);
         freopen_s(&fp, "CONOUT$", "w", stdout);
-        freopen_s(&fp, "CONOUT$", "w", stdout);
+        freopen_s(&fp, "CONOUT$", "w", stderr);
     }
+    if (redirectedOutput) setvbuf(stdout, NULL, _IONBF, 0);
 
     int can_has_crashdumps = 1;
 

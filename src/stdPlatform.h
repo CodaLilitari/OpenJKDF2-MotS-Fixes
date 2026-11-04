@@ -189,11 +189,17 @@ void stdPlatform_Memset32(void* dst, uint8_t val, uint32_t len);
 // Little-endian (SH4/ARM9).
 static inline void stdPlatform_WriteByte16(void* p, uint8_t val)
 {
+#if defined(TARGET_TWL) || defined(TARGET_DREAMCAST)
     uint16_t* pWord = (uint16_t*)((uintptr_t)p & ~(uintptr_t)1);
     if ((uintptr_t)p & 1)
         *pWord = (*pWord & 0x00FF) | ((uint16_t)val << 8);
     else
         *pWord = (*pWord & 0xFF00) | val;
+#else
+    /* Desktop buffers can end on an odd byte; touching a full word there
+       reads/writes beyond the allocation. Only special console RAM needs it. */
+    *(uint8_t*)p = val;
+#endif
 }
 
 

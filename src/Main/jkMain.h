@@ -96,6 +96,7 @@ void jkMain_InitPlayerThings();
 int jkMain_SwitchTo5_2();
 int jkMain_SwitchTo5(char *pJklFname);
 void jkMain_GuiAdvance();
+void jkMain_NetworkTick(void);
 void jkMain_EscapeMenuShow(int a1, int a2);
 void jkMain_EscapeMenuTick(int a2);
 void jkMain_EscapeMenuLeave(int a2, int a3);

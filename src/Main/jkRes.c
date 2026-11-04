@@ -652,7 +652,15 @@ int jkRes_FileSize(stdFile_t fd)
 
     jkResFile* resFile = &jkRes_aFiles[fd - 1];
     if ( resFile->useLowLevel )
-        return pLowLevelHS->fileSize(resFile->fsHandle);
+    {
+        /* SDL host services do not populate fileSize. Use the seek/tell
+           callbacks, preserving the caller's position for loose files. */
+        int position=pLowLevelHS->ftell(resFile->fsHandle);
+        if(position<0||pLowLevelHS->fseek(resFile->fsHandle,0,SEEK_END))return 0;
+        int size=pLowLevelHS->ftell(resFile->fsHandle);
+        pLowLevelHS->fseek(resFile->fsHandle,position,SEEK_SET);
+        return size<0?0:size;
+    }
     else
         return stdGob_FileSize(resFile->gobHandle);
 }

@@ -8,6 +8,7 @@
 #include "Dss/sithDSSCog.h"
 #include "Win95/stdComm.h"
 #include "jk.h"
+#include "Main/jkEditor.h"
 
 int sithComm_009a1160 = 0;
 int sithComm_version = 6;
@@ -62,6 +63,7 @@ int sithComm_Startup()
     sithMessage_aTypeFuncs[DSS_ENUMPLAYERS] = stdComm_cogMsg_HandleEnumPlayers;
     sithMessage_aTypeFuncs[DSS_RESET] = sithComm_cogMsg_Reset;
     sithMessage_aTypeFuncs[DSS_QUIT] = sithMulti_ProcessQuit;
+    sithMessage_aTypeFuncs[JKEDITOR_NET_MESSAGE] = jkEditor_NetMessage;
 
     if (Main_bMotsCompat) {
         sithMessage_aTypeFuncs[DSS_MOTS_NEW_1] = sithDSSThing_ProcessMOTSNew1;
@@ -286,7 +288,7 @@ LABEL_14:
 LABEL_22:
                     if ( v2 < (unsigned int)DSS_MAX )
                     {
-                        if ( sithMessage_aTypeFuncs[v2] )
+                        if ( sithMessage_aTypeFuncs[v2] && !jkEditor_NetIgnoreMessage(&sithComm_netMsgTmp) )
                             sithMessage_aTypeFuncs[v2](&sithComm_netMsgTmp);
                     }
                 }
@@ -296,6 +298,7 @@ LABEL_22:
               || sithComm_netMsgTmp.netMsg.cogMsgId == DSS_JOINREQUEST
               || sithComm_netMsgTmp.netMsg.cogMsgId == DSS_RESET
               || sithComm_netMsgTmp.netMsg.cogMsgId == DSS_LEAVEJOIN
+              || sithComm_netMsgTmp.netMsg.cogMsgId == JKEDITOR_NET_MESSAGE
               || (g_submodeFlags & 8) != 0 )
             {
                 goto LABEL_14;
@@ -308,6 +311,7 @@ LABEL_25:
             break;
     }
     sithComm_SyncWithPlayers();
+    jkEditor_NetTick();
     return v13;
 }
 
@@ -322,7 +326,7 @@ int sithMessage_Process(SithMessage *pMessage)
 
     int msgId = pMessage->netMsg.cogMsgId;
 
-    if ( (signed int)(uint16_t)msgId < 65 && sithMessage_aTypeFuncs[msgId])
+    if (pMessage->netMsg.msg_size<=sizeof(pMessage->pktData) && msgId>=0 && msgId<DSS_MAX && sithMessage_aTypeFuncs[msgId] && !jkEditor_NetIgnoreMessage(pMessage))
         result = sithMessage_aTypeFuncs[msgId](pMessage);
     else
         result = 1;

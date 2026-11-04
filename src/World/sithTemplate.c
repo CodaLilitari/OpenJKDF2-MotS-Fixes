@@ -1,9 +1,11 @@
+#include "Main/jkEditor.h"
 #include "sithTemplate.h"
 
 #include "stdPlatform.h" // Added: *_ALLOC/*_FREE macros
 
 #include "World/sithThing.h"
 #include "World/sithWorld.h"
+#include "Cog/sithCog.h"
 #include "General/stdString.h"
 #include "General/stdConffile.h"
 #include "General/stdHashtbl.h"
@@ -89,16 +91,24 @@ int sithTemplate_ReadThingTemplatesListText(SithWorld *pWorld, int bSkip)
         return 0;
 
     sizeThingTemplates = _atoi(stdConffile_g_entry.aArgs[2].value);
+    sizeThingTemplates = jkEditor_ResourceCapacity(pWorld,sizeThingTemplates,2048);
     if ( !sizeThingTemplates )
         return 1;
     
     sithTemplate_AllocWorldTemplates(pWorld, sizeThingTemplates);
+    if(jkEditor_ResourceCapacity(pWorld,0,1)&&!pWorld->aCogs)sithCog_AllocWorldCogs(pWorld,128);
     
     while ( stdConffile_ReadArgs() )
     {
         if ( !_memcmp(stdConffile_g_entry.aArgs[0].value, "end", 4u) )
             break;
         sithTemplate_Parse(pWorld);
+    }
+    if(jkEditor_ResourceCapacity(pWorld,0,1)) {
+        if(stdConffile_Open("misc\\sithed_templates.tpl")||stdConffile_Open("../master.tpl")||stdConffile_Open("../mater.tpl")) {
+            while(stdConffile_ReadArgs())if(stdConffile_g_entry.numArgs>=2)sithTemplate_Parse(pWorld);
+            stdConffile_Close();
+        }
     }
     return 1;
 }
@@ -171,16 +181,17 @@ SithThing* sithTemplate_GetTemplate(const char *pName)
     return 0;
 }
 
-SithThing* sithTemplate_Parse(SithWorld *pWorld)
+static SithThing* sithTemplate_ParseInternal(SithWorld *pWorld,int strict)
 {
     SithThing *result;
     SithThing tmp;
     const char* aName;
 
     result = (SithThing *)stdHashtbl_Find(sithTemplate_pHashtable, (const char*)stdConffile_g_entry.aArgs[0].value);
-    if ( result )
-        return result;
+    SithThing *replacement=strict==2?result:NULL;
+    if ( result && !replacement )return result;
 
+    if(strict&&!replacement&&pWorld->numThingTemplates>=pWorld->sizeThingTemplates)return NULL;
     // Added: memset for consistent behavior
     memset(&tmp, 0, sizeof(tmp));
 
@@ -198,24 +209,34 @@ SithThing* sithTemplate_Parse(SithWorld *pWorld)
 
     for (int i = 2; i < stdConffile_g_entry.numArgs; i++)
     {
-        sithThing_ParseArg(&stdConffile_g_entry.aArgs[i], &tmp);
+        if (!sithThing_ParseArg(&stdConffile_g_entry.aArgs[i], &tmp) && strict) {
+            rdThing_FreeEntry(&tmp.renderData);
+            if(tmp.moveType==SITH_MT_PATH&&tmp.trackParams.aFrames)SITH_FREE(tmp.trackParams.aFrames);
+            return NULL;
+        }
     }
 
-    if (!tmp.type )
+    if (!tmp.type ) {
+        if(strict){rdThing_FreeEntry(&tmp.renderData);if(tmp.moveType==SITH_MT_PATH&&tmp.trackParams.aFrames)SITH_FREE(tmp.trackParams.aFrames);}
         return 0;
+    }
 
-    if ( pWorld->numThingTemplates >= pWorld->sizeThingTemplates )
-        return 0;
-
-    result = &pWorld->aThingTemplates[pWorld->numThingTemplates++];
+    if (!replacement&&pWorld->numThingTemplates >= pWorld->sizeThingTemplates)return 0;
+    result = replacement?replacement:&pWorld->aThingTemplates[pWorld->numThingTemplates++];
+    if(replacement){rdThing_FreeEntry(&replacement->renderData);if(replacement->moveType==SITH_MT_PATH&&replacement->trackParams.aFrames)SITH_FREE(replacement->trackParams.aFrames);}
     tmp.idx = result->idx;
     stdPlatform_Memcpy32(result, &tmp, sizeof(SithThing)); // Added: word-safe (array may be word-addressable-only)
 #ifdef SITH_DEBUG_STRUCT_NAMES
     // The copies of names are load-bearing, SetKeyVal stores a reference
-    stdHashtbl_Add(sithTemplate_pHashtable, result->aName, result);
+    if(!replacement)stdHashtbl_Add(sithTemplate_pHashtable, result->aName, result);
 #else
     stdHashtbl_Add(sithTemplate_pHashtable, aName, result);
 #endif
 
     return result;
 }
+
+SithThing *sithTemplate_Parse(SithWorld *world){return sithTemplate_ParseInternal(world,0);}
+SithThing *sithTemplate_ParseEditor(SithWorld *world){return sithTemplate_ParseInternal(world,1);}
+
+SithThing *sithTemplate_UpdateEditor(SithWorld *world){return sithTemplate_ParseInternal(world,2);}

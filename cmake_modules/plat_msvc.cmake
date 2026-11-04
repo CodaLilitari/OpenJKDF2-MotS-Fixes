@@ -14,7 +14,8 @@ macro(plat_initialize)
     set(TARGET_USE_CURL FALSE)
     set(TARGET_COMPILE_FREEGLUT TRUE)
     set(TARGET_FIND_OPENAL FALSE)
-    set(TARGET_USE_GAMENETWORKINGSOCKETS FALSE) # TODO why does this keep breaking :(
+    option(OPENJKDF2_EDITOR_NETWORKING "Build the multiplayer transport" ON)
+    set(TARGET_USE_GAMENETWORKINGSOCKETS ${OPENJKDF2_EDITOR_NETWORKING})
     set(SDL2_COMMON_LIBS SDL::SDL)
     
     set(TARGET_WIN32 TRUE)
@@ -27,6 +28,7 @@ macro(plat_specific_deps)
 endmacro()
 
 macro(plat_link_and_package)
+    target_link_options(${BIN_NAME} PRIVATE /STACK:8388608)
     set_target_properties(${BIN_NAME} PROPERTIES
         ENABLE_EXPORTS FALSE
         WINDOWS_EXPORT_ALL_SYMBOLS FALSE
@@ -55,8 +57,8 @@ macro(plat_link_and_package)
     set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
     set(THREADS_PREFER_PTHREAD_FLAG TRUE)
     find_package(Threads REQUIRED)
-    target_link_libraries(${BIN_NAME} PRIVATE -static)
-    set(CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++")
+    # MSVC selects its CRT via CMAKE_MSVC_RUNTIME_LIBRARY; GNU -static flags
+    # become nonexistent .lib filenames when passed to link.exe.
     target_link_libraries(sith_engine PRIVATE Threads::Threads)
 
     target_link_libraries(sith_engine PRIVATE GLUT::GLUT)
@@ -91,6 +93,7 @@ macro(plat_link_and_package)
             TARGET ${BIN_NAME}
             POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_BINARY_DIR}/openal/bin/OpenAL32.dll ${PROJECT_BINARY_DIR}
+            COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_BINARY_DIR}/openal/bin/OpenAL32.dll $<TARGET_FILE_DIR:${BIN_NAME}>
         )
     endif()
 

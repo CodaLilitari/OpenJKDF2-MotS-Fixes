@@ -182,6 +182,8 @@ int rdGetVertexColorMode(void)
     return rdroid_curVertexColorMode;
 }
 
+static int rdroid_resetWorldDistances;
+void rdResetWorldDistances(void) {rdroid_resetWorldDistances=1;}
 int rdSetMipDistances(rdVector4 *dists)
 {
     rdVector_Copy4(&rdroid_aMipDistances, dists);
@@ -192,8 +194,9 @@ int rdSetMipDistances(rdVector4 *dists)
     static flex_t origPerspective;
     static int once = 0;
     static SithWorld* onceWorld = NULL;
-    if (onceWorld != sithWorld_g_pCurrentWorld) {
+    if (onceWorld != sithWorld_g_pCurrentWorld || rdroid_resetWorldDistances) {
         once = 0;
+        rdroid_resetWorldDistances = 0;
     }
     if (!once) {
         origLod = sithWorld_g_pCurrentWorld->distancesLOD;

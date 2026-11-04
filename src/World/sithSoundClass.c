@@ -1,3 +1,4 @@
+#include "Main/jkEditor.h"
 #include "sithSoundClass.h"
 
 #include "stdPlatform.h"
@@ -175,6 +176,7 @@ int sithSoundClass_ReadSoundClassesListText(SithWorld *pWorld, int bSkip)
     }
 
     num_soundclasses = _atoi(stdConffile_g_entry.aArgs[2].value);
+    num_soundclasses = jkEditor_ResourceCapacity(pWorld,num_soundclasses,256);
 
     // Added
     if ( num_soundclasses <= 0 ) {

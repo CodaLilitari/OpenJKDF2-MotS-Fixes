@@ -1,4 +1,5 @@
 #include "sithDSSThing.h"
+#include "Main/jkEditor.h"
 
 #include "Cog/sithCog.h"
 #include "World/sithSoundClass.h"
@@ -471,7 +472,7 @@ int sithDSSThing_ProcessPlayKeyMode(SithMessage *pMsg)
 
     if (!pThing )
         return 0;
-    if (!pThing->renderData.puppet)
+    if (!pThing->renderData.puppet || !pThing->puppet)
         return 0;
 
     int arg1 = NETMSG_POPS32();
@@ -971,6 +972,9 @@ void sithDSSThing_FullDescription(SithThing *pThing, int idTo, int outstream)
 // MoTS altered
 int sithDSSThing_ProcessFullDescription(SithMessage *pMsg)
 {
+    /* Editor objects were already reconstructed by name and GUID. Their local
+       allocation slots may differ from the host's original JKL slots. */
+    if(pMsg->netMsg.msg_size>=14){int guid;memcpy(&guid,(unsigned char*)pMsg->pktData+10,4);if(jkEditor_NetOwnsGuid(guid))return 1;}
     int16_t idx; // ebp
     int32_t v8; // ecx
     SithThing* thing;
@@ -984,6 +988,8 @@ int sithDSSThing_ProcessFullDescription(SithMessage *pMsg)
         return 0;
 
     idx = NETMSG_POPS16();
+    if(pMsg->netMsg.msg_size>=14){int guid;memcpy(&guid,(unsigned char*)pMsg->pktData+10,4);idx=jkEditor_NetThingSlot(idx,guid);}
+    if(idx<0)return 0;
     if ( idx >= sithWorld_g_pCurrentWorld->numThingsLoaded )
         return 0;
 
@@ -1177,6 +1183,7 @@ int sithDSSThing_ProcessFullDescription(SithMessage *pMsg)
             thing->trackParams.loadedFrames = thing->trackParams.sizeFrames;
         }
 
+        if(thing->trackParams.loadedFrames<0||(size_t)thing->trackParams.loadedFrames>(size_t)(_readingEnd-_readingPacket)/(sizeof(rdVector3)*2))return 0;
         if ( thing->trackParams.loadedFrames )
         {
             // TODO: verify this doesn't leak memory
@@ -1331,10 +1338,12 @@ int sithDSSThing_ProcessAttachment(SithMessage *pMsg)
             return 0;
         if (v3 & SITH_ATTACH_THINGFACE)
         {
+            int faceIndex=NETMSG_POPS16();
+            if(v9->renderData.type!=RD_THING_MODEL3||!v9->renderData.model3||!v9->renderData.model3->aGeos||!v9->renderData.model3->aGeos[0].aMeshes||faceIndex<0||faceIndex>=v9->renderData.model3->aGeos[0].aMeshes->numFaces)return 0;
             sithThing_AttachThingToThingFace(
                 v1,
                 v9,
-                &v9->renderData.model3->aGeos[0].aMeshes->faces[NETMSG_POPS16()],
+                &v9->renderData.model3->aGeos[0].aMeshes->faces[faceIndex],
                 v9->renderData.model3->aGeos[0].aMeshes->aVertices,
                 1);
             v1->attach_flags = v3;

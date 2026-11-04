@@ -129,7 +129,7 @@ int stdComm_Recv(SithMessage *msg)
     ret = DirectPlay_Receive(&playerId, (int*)&msg->netMsg.cogMsgId, &msgBytes);
     if ( ret != -1 )
     {
-        if ( !ret )
+        if ( !ret && msgBytes >= 4 && msgBytes <= 2052 )
         {
             pMsg->netMsg.idx = playerId;
             pMsg->netMsg.msg_size = msgBytes - 4;
@@ -183,18 +183,19 @@ int stdComm_SendToPlayer(SithMessage *msg, int sendto_id)
         return 1;
 
     
+    int success=1;
     for (int i = 0; i < jkPlayer_maxPlayers; i++)
     {
         SithPlayer* v5 = &jkPlayer_playerInfos[i];
         if ( !i || ((v5->flags & 1) != 0 && v5->playerNetId != stdComm_dplayIdSelf) ) // Added: always allow sending to 0, for dedicated servers' fake player
         {
-            DirectPlay_Send(stdComm_dplayIdSelf, v5->playerNetId, &msg->netMsg.cogMsgId, v2);
+            if(v5->playerNetId&&v5->playerNetId!=stdComm_dplayIdSelf&&!DirectPlay_Send(stdComm_dplayIdSelf,v5->playerNetId,&msg->netMsg.cogMsgId,v2))success=0;
             ++stdComm_dword_8321F4;
             stdComm_dword_8321F0 += v2;
         }
     }
 
-    return 1;
+    return success;
 }
 
 int stdComm_EnumPlayersCallback(DPID dpId, DWORD dwPlayerType, LPCDPNAME lpName, DWORD dwFlags, LPVOID lpContext)

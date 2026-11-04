@@ -135,3 +135,5 @@ int sithThing_MotsTick(int param_1,int param_2,flex_t param_3); // MOTS added
 //static int (*sithThing_SetThingModel)(SithThing *a1, rdModel3 *a2) = (void*)sithThing_SetThingModel_ADDR;
 
 #endif // _SITHTHING_H
+
+const char *sithThing_TemplateParameter(int index);

@@ -312,9 +312,6 @@ int sithTrackThing_LoadPathParams(StdConffileArg *arg, SithThing *thing, int par
 
         case THINGPARAM_NUMFRAMES:
         {
-            if ( thing->trackParams.sizeFrames )
-                return 0;
-
             int numFrames = _atoi(arg->value);
             if ( numFrames < 1 ) {
                 // Added: print
@@ -323,7 +320,10 @@ int sithTrackThing_LoadPathParams(StdConffileArg *arg, SithThing *thing, int par
             }
 
             size_t alloc_sz = sizeof(SithPathFrame) * numFrames;
-            thing->trackParams.aFrames = (SithPathFrame*)SITH_ALLOC(alloc_sz);
+            SithPathFrame *frames = (SithPathFrame*)SITH_ALLOC(alloc_sz);
+            if(!frames)return 0;
+            if(thing->trackParams.aFrames)SITH_FREE(thing->trackParams.aFrames);
+            thing->trackParams.aFrames = frames;
             if ( thing->trackParams.aFrames )
             {
                 _memset(thing->trackParams.aFrames, 0, alloc_sz);

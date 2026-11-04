@@ -8,6 +8,7 @@
 #include "World/sithWorld.h"
 #include "Engine/rdColormap.h"
 #include "Main/jkGame.h"
+#include "Main/jkEditor.h"
 #include "World/jkPlayer.h"
 #include "General/stdBitmap.h"
 #include "stdPlatform.h"
@@ -113,6 +114,7 @@ GLuint programDefault, programMenu;
 GLint attribute_coord3d, attribute_v_color, attribute_v_light, attribute_v_uv, attribute_v_norm;
 GLint uniform_mvp, uniform_tex, uniform_texEmiss, uniform_displacement_map, uniform_tex_mode, uniform_blend_mode, uniform_worldPalette, uniform_worldPaletteLights;
 GLint uniform_tint, uniform_filter, uniform_fade, uniform_add, uniform_emissiveFactor, uniform_albedoFactor;
+static GLint uniform_editorModelBlue;
 GLint uniform_light_mult, uniform_displacement_factor, uniform_iResolution;
 
 // Added: Custom RGB lightsaber shader uniforms.
@@ -515,6 +517,7 @@ int init_resources()
     uniform_blend_mode = std3D_tryFindUniform(programDefault, "blend_mode");
     uniform_tint = std3D_tryFindUniform(programDefault, "colorEffects_tint");
     uniform_filter = std3D_tryFindUniform(programDefault, "colorEffects_filter");
+    uniform_editorModelBlue = std3D_tryFindUniform(programDefault, "editorModelBlue");
     uniform_fade = std3D_tryFindUniform(programDefault, "colorEffects_fade");
     uniform_add = std3D_tryFindUniform(programDefault, "colorEffects_add");
     uniform_emissiveFactor = std3D_tryFindUniform(programDefault, "emissiveFactor");
@@ -839,6 +842,30 @@ int std3D_StartScene()
 
         loaded_colormap = sithWorld_g_pCurrentWorld->colormaps;
     }
+
+#ifdef WIN32
+    /* Rendered editor regression: check GPU data, not just the live world CMP. */
+    if (getenv("GEOSITH_COLORMAP_TEST") && getenv("GEOSITH_STRESS") && sithWorld_g_pCurrentWorld && sithWorld_g_pCurrentWorld->colormaps)
+    {
+        static unsigned char previousColors[0x300];
+        static int checks;
+        rdColormap *map = sithWorld_g_pCurrentWorld->colormaps;
+        if (!checks || memcmp(previousColors, map->colors, sizeof(previousColors)))
+        {
+            unsigned char colors[0x300], lights[0x4000];
+            glBindTexture(GL_TEXTURE_2D, worldpal_texture);
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGB, GL_UNSIGNED_BYTE, colors);
+            glBindTexture(GL_TEXTURE_2D, worldpal_lights_texture);
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RED, GL_UNSIGNED_BYTE, lights);
+            if (memcmp(colors, map->colors, sizeof(colors)) || (map->lightlevel && memcmp(lights, map->lightlevel, sizeof(lights))))
+            {
+                printf("GEOSITH_COLORMAP FAIL: stale GPU palette or light table for %s\n", map->colormap_fname);fflush(stdout);exit(2);
+            }
+            memcpy(previousColors, map->colors, sizeof(previousColors));
+            printf("GEOSITH_COLORMAP PASS: GPU palette and light table update %d (%s)\n", ++checks, map->colormap_fname);fflush(stdout);
+        }
+    }
+#endif
 
     if (memcmp(displaypal_data, stdDisplay_masterPalette, 0x300))
     {
@@ -2699,6 +2726,7 @@ void std3D_DrawRenderList()
         glUniform3f(uniform_filter, rdroid_curColorEffects.filter.x ? 1.0 : 0.25, rdroid_curColorEffects.filter.y ? 1.0 : 0.25, rdroid_curColorEffects.filter.z ? 1.0 : 0.25);
     else
         glUniform3f(uniform_filter, 1.0, 1.0, 1.0);
+    glUniform1i(uniform_editorModelBlue,jkEditor_ModelBlue());
     glUniform1f(uniform_fade, rdroid_curColorEffects.fade);
     glUniform3f(uniform_add, (float)rdroid_curColorEffects.add.x / 255.0f, (float)rdroid_curColorEffects.add.y / 255.0f, (float)rdroid_curColorEffects.add.z / 255.0f);
     glUniform3f(uniform_emissiveFactor, 0.0, 0.0, 0.0);
@@ -3847,6 +3875,9 @@ int std3D_PurgeTextureCache(size_t size)
 
 void std3D_PurgeEntireTextureCache()
 {
+    /* A live CMP replacement preserves its address. Invalidate the palette
+       upload too, including when no material textures have been cached. */
+    loaded_colormap = NULL;
     if (Main_bHeadless) {
         std3D_loadedTexturesAmt = 0;
         return;

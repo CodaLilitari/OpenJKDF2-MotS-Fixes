@@ -1,3 +1,4 @@
+#include "Main/jkEditor.h"
 #include "sithModel.h"
 
 #include "Primitives/rdModel3.h"
@@ -40,6 +41,7 @@ int sithModel_ReadStaticModelsListText(SithWorld *pWorld, int bSkip)
     if ( _memcmp(stdConffile_g_entry.aArgs[0].value, "world", 6u) || _memcmp(stdConffile_g_entry.aArgs[1].value, "models", 7u) )
         return 0;
     pWorld->sizeModels = _atoi(stdConffile_g_entry.aArgs[2].value);
+    pWorld->sizeModels = jkEditor_ResourceCapacity(pWorld,pWorld->sizeModels,1024);
     if ( !pWorld->sizeModels )
         return 1;
 
@@ -206,4 +208,20 @@ rdModel3* sithModel_GetModelByIndex(int modelIdx)
         return &world->aModels[modelIdx];
 
     return NULL;
+}
+
+/* Transfer editor geometry into world-owned stable storage. Materials are
+   borrowed, exactly as for ordinary sithModel_Load models. */
+rdModel3 *sithModel_Find(const char *name){return stdHashtbl_Find(sithModel_hashtable,name);}
+rdModel3 *sithModel_RegisterEditor(const char *name,rdModel3 *owned){
+    SithWorld *w=sithWorld_g_pCurrentWorld;rdModel3 *existing=sithModel_Find(name);if(existing)return existing;
+    if(!w||!w->aModels||w->numModels>=w->sizeModels||strlen(name)>=sizeof(owned->filename))return NULL;
+    rdModel3 *m=&w->aModels[w->numModels];*m=*owned;memset(owned,0,sizeof(*owned));m->id=w->numModels++;snprintf(m->filename,sizeof(m->filename),"%s",name);stdHashtbl_Add(sithModel_hashtable,m->filename,m);return m;
+}
+
+/* Keep old model storage alive for existing render instances while templates
+   and things are rebound to the replacement by the editor transaction. */
+rdModel3 *sithModel_ReplaceEditor(const char *name,rdModel3 *owned){
+    SithWorld *w=sithWorld_g_pCurrentWorld;if(!w||!w->aModels||w->numModels>=w->sizeModels||strlen(name)>=sizeof(owned->filename))return NULL;
+    stdHashtbl_Remove(sithModel_hashtable,name);return sithModel_RegisterEditor(name,owned);
 }

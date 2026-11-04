@@ -362,3 +362,6 @@ include(cmake_modules/misc_stdcpp_fs_fix.cmake)
 
 # Runs all the target_link_libraries, platform-specific post-build packaging, etc
 plat_link_and_package()
+
+set_source_files_properties(src/Main/edGeometry.c src/Main/edLevelIO.c src/Main/jkEditor.c PROPERTIES LANGUAGE CXX)
+set_property(SOURCE src/Main/edGeometry.c src/Main/edLevelIO.c src/Main/jkEditor.c APPEND PROPERTY COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:MSVC>:/std:c++20;/Zc:strictStrings->" "$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-std=c++20>")

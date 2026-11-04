@@ -9,6 +9,13 @@ extern "C" {
 
 void stdComm_GNS_Startup();
 void stdComm_GNS_Shutdown();
+void stdComm_GNS_GetStatus(char *text,int size);
+int stdComm_GNS_IsConnecting(void);
+void stdComm_GNS_AllowEdits(int allow);
+int stdComm_GNS_EditsAllowed(void);
+void stdComm_GNS_RetryRouter(void);
+int stdComm_GNS_TestDiscovery(void);
+int stdComm_GNS_TestListener(void);
 
 #endif // PLATFORM_GNS
 

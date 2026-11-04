@@ -12,6 +12,7 @@
 #include "Main/jkHudCameraView.h"
 #include "Main/jkDev.h"
 #include "Main/jkGame.h"
+#include "Main/jkEditor.h"
 #include "World/jkPlayer.h"
 
 static flex_d_t aGammaTable[10] = {
@@ -131,7 +132,7 @@ void Video_swCompositeOverlaysIntoWorld(void)
     // Overlay map (automap): a full-resolution buffer the game draws the map into. Its GL present
     // (std3D_DrawMapOverlay) early-returns on desktop, so compositing it here is what shows the map in
     // the software frame. Full-res -> full-res (1:1), index 0 transparent, only when the map is up.
-    if (sithOverlayMap_bMapVisible && Video_pOverlayMapBuffer != NULL)
+    if ((sithOverlayMap_bMapVisible || jkEditor_Active()) && Video_pOverlayMapBuffer != NULL)
     {
         stdDisplay_VBufferLock(Video_pOverlayMapBuffer);
         int mapW = Video_pOverlayMapBuffer->format.width;

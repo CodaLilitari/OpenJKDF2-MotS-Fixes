@@ -1,3 +1,4 @@
+#include "Main/jkEditor.h"
 #include "sithAnimClass.h"
 
 #include "stdPlatform.h" // Added: *_ALLOC/*_FREE macros
@@ -22,6 +23,7 @@ int sithAnimClass_Load(SithWorld *world, int a2)
     if ( _strcmp(stdConffile_g_entry.aArgs[0].value, "world") || _strcmp(stdConffile_g_entry.aArgs[1].value, "puppets") )
         return 0;
     num_animclasses = _atoi(stdConffile_g_entry.aArgs[2].value);
+    num_animclasses = jkEditor_ResourceCapacity(world,num_animclasses,256);
     if ( !num_animclasses )
         return 1;
 #ifdef TARGET_RETRO_HOMEBREW

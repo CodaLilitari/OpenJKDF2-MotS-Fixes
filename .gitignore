@@ -133,3 +133,14 @@ AGENTS.md
 .blocksds
 packaging/dreamcast/disc/*
 CLAUDE.md
+
+# GeoSith local game files, generated catalogs, and builds
+/JK/
+/build*/
+/exports/
+/master.tpl
+/mater.tpl
+/test-*.gob
+/test-level.gob
+__pycache__/
+*.rpt

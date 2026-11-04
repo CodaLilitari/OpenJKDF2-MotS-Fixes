@@ -188,7 +188,10 @@ int sithPuppet_PlayMode(SithThing *pThing, signed int submode, rdPuppetTrackCall
 
     SITH_ASSERTREL(pThing); // Added: ported from OpenJones3D sithPuppet_PlayMode
     v4 = pThing->pPuppetClass;
-    if ( !v4 )
+    /* Editor previews retain the model/puppet class for display, but do not
+       allocate a gameplay puppet. Fire-projectile and script messages can
+       reach this entry point without going through PlayKeyMode's checks. */
+    if ( !v4 || !pThing->puppet || !pThing->renderData.puppet )
         return -1;
     if ( submode < 0 )
         return -1;

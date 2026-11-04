@@ -29,3 +29,8 @@ rdModel3* sithModel_GetModelByIndex(int modelIdx);
 //#define sithModel_hashtable (*(tHashTable**)0x84DA3C)
 
 #endif // _SITHMODEL_H
+
+rdModel3 *sithModel_Find(const char *name);
+rdModel3 *sithModel_RegisterEditor(const char *name,rdModel3 *owned);
+
+rdModel3 *sithModel_ReplaceEditor(const char *name,rdModel3 *owned);

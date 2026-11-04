@@ -1,3 +1,4 @@
+#include "Main/jkEditor.h"
 #include "sithSound.h"
 
 #include "Win95/stdSound.h"
@@ -86,6 +87,7 @@ int sithSound_ReadSoundsListText(SithWorld *pWorld, int bSkip)
         return 0;
     }
     numSounds = _atoi(stdConffile_g_entry.aArgs[2].value);
+    numSounds = jkEditor_ResourceCapacity(pWorld,numSounds,4096);
     if ( !numSounds )
         return 1;
 

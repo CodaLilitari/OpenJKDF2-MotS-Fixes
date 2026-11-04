@@ -1,352 +1,426 @@
-# OpenJKDF2
+# GeoSith
 
-![MacOS Screenshot](docs/images/screenshot.png)
+An in-game level and 3DO editor built as a fork of [OpenJKDF2](https://github.com/shinyquagsire23/OpenJKDF2).
+Supply your own Jedi Knight installation in `JK/`. No Jedi Knight game resources are included.
 
-## [Latest Releases](https://github.com/shinyquagsire23/OpenJKDF2/releases) | [Report a crash or bug](https://github.com/shinyquagsire23/OpenJKDF2/issues)
+Windows x64 is the tested GeoSith platform. See [upstream documentation](README-OpenJKDF2.md) for OpenJKDF2 background and other platforms; GeoSith-specific support there has not been verified.
 
-OpenJKDF2 is a function-by-function reimplementation of DF2 in C, with 64-bit ports to Windows 7+, macOS 10.15+, and Linux. Files are organized as closely to the original game as possible, based on symbols from the Grim Fandango Remaster Android/Linux/macOS port, as well as scattered assertions from various other games. It also contains the original versions of `byacc` and `flex` used for COG script parsing.
+Clone with `git clone --recurse-submodules https://github.com/SuperDonRobb/GeoSith.git`.
+The original license and third-party notices are retained; see [LICENSE.md](LICENSE.md).
 
-OpenJKDF2 does *not* include any original game assets; a valid copy of JKDF2 is *required* and can be purchased from [GOG](https://www.gog.com/game/star_wars_jedi_knight_dark_forces_ii) or [Steam](https://store.steampowered.com/app/32380/STAR_WARS_Jedi_Knight_Dark_Forces_II/). The GOG version is recommended, since it is DRM-free and also includes the soundtrack in Ogg Vorbis format. If you'd like to try before you buy, a WebAssembly demo of OpenJKDF2 can be found at https://maxthomas.dev/openjkdf2/.
+Run **Launch GeoSith.cmd**, then choose **Create New Level** in single player
+or on the multiplayer host screen. New levels contain one rectangular sector.
+Single-player levels start with one walkplayer; multiplayer levels start with
+four walkplayers spaced around the room. The launcher selects this project's JK installation.
+New sectors start with sector light 0.5. Extrusions inherit their source sector light.
+Placed lights add vertex lighting on top of that baseline; adding/removing lights
+does not reset sector brightness. Sector light is saved and synchronized.
 
-Support for playing the original soundtrack from Ogg Vorbis files is primarily supported for the GOG and Steam versions of the game assets. Original disk soundtracks can also be loaded from `MUSIC/1/Track<2..8>.ogg` and `MUSIC/2/Track<2..12>.ogg` for each disk's soundtrack. If files are missing, it will instead attempt to use a GOG track number from `MUSIC/Track<12..32>.ogg`. Dumping the soundtrack from disks at install time is planned for a future release of OpenJKDF2, but is not currently implemented.
+| Control | Action |
+| --- | --- |
+| F8 | Toggle editor / play mode |
+| Normal movement and look controls | Walk and jump with collision in editor mode |
+| Double-tap jump | Toggle flight on/off; collision starts enabled |
+| Home | Teleport to the next walkplayer, wrapping back to the first |
+| Q while flying | Toggle player collision |
+| Tab | Toggle overhead sector map / 3D editor |
+| Aim near a vertex, edge, or surface | Highlight it |
+| 1, then middle mouse click | Choose Select or Clean Up mode |
+| 1, then primary fire | Toggle the highlighted item in the red selection |
+| 1, then double-click primary fire | Clear the entire selection |
+| 1, then hold secondary fire | Move all selected items together |
+| 1, then hold secondary fire and click primary fire | Extrude all selected surfaces together by one grid unit |
+| 2, then middle mouse click | Open the searchable material thumbnail browser |
+| 2, then hold secondary fire | Grab a surface and move its UVs with travel or mouse-look |
+| 2, then mouse wheel | Cycle the current material |
+| 2, then primary fire on a surface | Apply the current material |
+| 3, then middle mouse click | Open the searchable object template browser |
+| 3, then mouse wheel | Cycle the selected template |
+| 3, then primary fire | Place the chosen template at the aimed collision point |
+| 3, then hold secondary fire | Grab and move an object or walkplayer |
+| 4, then primary fire | Place an editor light in front of the player |
+| 4, then hold secondary fire | Grab and move a light on the editing grid |
+| 4, then wheel while aiming at a surface | Adjust its sector light by 0.05 per notch (0-1) |
+| 4, then wheel while aiming at a light | Adjust intensity by 0.1 per notch |
+| 4, then Shift + wheel while aiming at a light | Adjust range by one grid unit per notch |
+| 4, then Delete while aiming at a light | Delete the light |
+| 5, then middle mouse click | Open Placed COGs; add scripts and assign exposed parameters |
+| 8, middle mouse | Template creator: add/search parameters, browse 3DOs, save a template for Weapon 3 |
+| 9, then primary fire | Enter the 3DO builder with a new draft |
+| 9 inside the 3DO builder | Primary fire places the wireframe primitive; wheel cycles shapes; Shift+wheel sizes it; Ctrl+wheel rotates it; middle mouse opens the list |
+| Escape inside the 3DO builder | Discard the draft or Save as 3DO to the model library; both remove its workspace preview |
+| Hold secondary fire | Grab; player travel and mouse-look move the selection |
+| 0, then hold primary fire on a surface | Start the saber cleave preview |
+| 0 (saber), then Shift + primary fire | Cleave the highlighted sector into two adjoining sectors |
+| Release primary fire | Split the surface along the preview line |
+| Hold secondary fire, click primary fire | Extrude the grabbed surface outward by one grid unit |
+| Hold secondary fire, then Shift + primary fire | Extrude horizontally to a vertical far face; also works on selected surfaces |
+| Shift + primary fire | Copy a surface material |
+| Ctrl + primary fire | Paste the copied material |
+| Shift + hold secondary fire | Move the surface UVs by moving the player |
+| Ctrl + Z | Undo, up to 30 edits |
+| Ctrl + Y or Ctrl + Shift + Z | Redo |
+| 1, then Delete on an edge or vertex | Dissolve it if the remaining geometry is convex |
+| Delete while highlighting a surface | Delete its sector; Ctrl+Z restores it |
+| Escape â Save Level | Name and save `JK/Episode/<name>.gob` |
+| Escape â Level Header | Edit the level title, colormap, physics, sky, rendering and intro text |
+| Escape -> Episode Editor | Edit episode.jk settings, sequence entries and loading strings |
 
-## Platforms
-OpenJKDF2 supports the following configurations:
+Primary and secondary fire follow the player's bindings. Ctrl and Shift act as
+modifiers in the editor; a fire binding on either modifier alone is ignored.
+Assign fire to mouse buttons in the JK control menu if needed.
+Editor mode starts with flight off. Two separate presses of your bound jump
+control within 350 ms toggle flight. Holding jump does not toggle it. While
+flying, jump ascends and crouch descends; double-tap jump again to resume gravity.
+Weapon 9: primary fire starts a new 3DO; middle mouse opens the custom model
+library, where you can edit or delete saved 3DOs. Editing opens a copy in front
+of you; saving with the original name replaces the library model, while
+Discard preserves it. Reopening needs free capacity for the editable copy.
+Weapon 9 enters a separate 3DO workspace. The world turns blue while the current
+model keeps its normal textured colors. A circle marks its origin. With weapon 1, aim at that circle and hold Fire 2
+to drag the origin on the world grid without moving the mesh geometry. This
+works through the mesh and supports undo/redo. 3DO cleave previews and cuts
+snap to half the world grid, matching thing movement. Each placed
+primitive adds one mesh. Only cube vertices snap during placement; spheres,
+cylinders and pyramids keep their generated shapes. Moved vertices snap to the
+world grid. Alt+mouse wheel cycles three sphere/cylinder detail levels.
+While building, weapon 0 cleaves faces (hold primary fire, draw, release), weapon
+1 selects faces/edges/vertices and secondary fire drags the selection, and weapon
+2 paints materials or adjusts UVs with secondary fire. Hold secondary fire and
+click primary fire on a face to extrude one grid unit along its positive/outward
+normal. Movement is grid-snapped; mesh edits never perform level-sector CSG.
+3DO cleave endpoints are connected to adjacent faces. Vertex dragging follows
+connected edges; hold Shift for free movement. Dragging onto a connected corner
+merges the vertices and removes collapsed faces.
+Ctrl+Z / Ctrl+Y use the shared undo history and multiplayer host approval.
+Escape opens a name dialog with Discard, Save as 3DO, and Save as _walkstruct.
+Save as _walkstruct creates a same-name template based on _walkstruct and places
+it exactly where you built the model. Discard removes the
+draft. Save as 3DO keeps it in the level's reusable model library. Both choices
+remove the workspace model from the level view. Weapon 8 opens the Template
+Creator with middle mouse: select a created template to edit or choose New.
+Saving an existing custom name replaces that template. The edit menu also has
+Delete template. Remove placed things or dependent templates before deleting a
+template or model they use. Choose the base from the
+searchable template list, use + Parameter to search
+all supported JK parameters, and edit their values. Clicking a model3d value
+opens a searchable, textured browser of game and custom models. Save template
+adds it to Weapon 3's object browser. Save Level includes standard 3DO 2.1 files
+under 3do/<name>.3do, template definitions, and editable library metadata.
+The builder currently supports 8 models and 16 total meshes per level, with 64
+faces and 512 face-corner vertices per mesh, and 24 vertices per face. These
+models are saved to the level's reusable library. Weapon 8 creates templates
+from game or custom 3DOs, with a base template and editable JK parameters.
+Saved templates immediately appear in Weapon 3. Save Level packages the models
+and templates inside the GOB. Custom templates support undo and multiplayer;
+all peers must use this version.
+Multiplayer participants must all run this version because mesh data extends
+the editor network format.
 
-| Configuration | Renderer | Description |
-| --- | --- | --- |
-| 64-bit Windows/SDL2 | OpenGL 3.3 | 64-bit Windows compilation with SDL2 and OpenAL. DirectX dependencies are replaced with SDL2 and OpenAL. |
-| MacOS x86_64/AArch64 | OpenGL 3.3 | 64-bit MacOS compilation with SDL2 and OpenAL Soft. All release packages include both Intel and ARM64. |
-| 64-bit Linux/SDL2 | OpenGL 3.3 | 64-bit Linux compilation with SDL2 and OpenAL. |
-| ARM64 Android | OpenGL ES 3 | ARMv8 Android compilation with SDL2 and OpenAL Soft. |
-| Nintendo DSi | Custom | Nintendo DSi port with hardware rendering, software audio. Extremely RAM-limited, supports emissive palettes. |
-| Dreamcast | Custom | KallistiOS+Dreamcast port with basic 3D rendering (no emissive palettes), HW accelerated audio including soundtrack and cutscenes. Extremely RAM-limited. |
-| 32-bit Windows/SDL2 | OpenGL 1.1 | Windows compilation with SDL2 and OpenAL Soft. DirectX dependencies are replaced with SDL2 and OpenAL. Targeting Windows XP ~ Windows 7 |
-| Emscripten/WebAssembly | WebGL 2/OpenGL ES 3 | WebAssembly with SDL2 and OpenAL. Runs in a web browser. Since WASM only supports 32-bit pointers, this will likely be less buggy than 64-bit, but less performant. |
+Releasing the movement controls while flying stops you immediately.
+Turning flight off restores collision. Home uses the walkplayer positions and
+orientations saved in the level; walking around does not move those spawn points.
+In the overhead map, green lines show sector geometry on a black background and
+gray lines show the grid. Vertices have circular handles. Left-click a vertex or
+edge to toggle its selection; click other handles to add them. Overlapping handles
+at different heights are picked together. Click inside a sector to select sectors
+beneath the cursor, or left-drag a rectangle to select sectors. Selected geometry
+is red. Right-drag moves the selection on the XY grid without changing its height.
+Weapon 1 vertex, edge and surface selections are retained exactly when switching
+between 3D and map views.
+Press C to cleave selected sectors: click and drag a line, or click its two
+endpoints. The snapped line previews yellow when it crosses selected sectors
+and red when it misses. Completing the line cuts touched selected sectors
+vertically and connects the halves with adjoins. Escape cancels the cleave.
+Delete removes all selected sectors and closes former adjoins, keeping at least
+one sector in the level. Each completed cleave or deletion is one undo step
+and uses the multiplayer host approval path. Ctrl+C still copies sectors.
+Hold Space and move the mouse to pan; use the wheel to zoom around the cursor.
+Right-drag moves selected sectors on the editing grid, including their existing
+objects, walkplayers, path frames and lights. Copying uses sector geometry only.
+Ctrl+C immediately starts an unplaced preview; Ctrl+V recalls the clipboard as
+another preview. Its yellow outline follows the cursor without changing the
+level. Left-click places and merges it, preserving internal adjoins and closing
+exposed boundaries. Escape cancels placement. Insert starts a preview of a new
+default six-sided sector with the same placement controls.
+Shift+left-click starts drawing a sector outline on the grid. Further clicks
+add walls; click the first vertex to close an outline with at least three walls.
+Backspace removes the last placed vertex so drawing continues from the previous
+vertex. Escape cancels unfinished drawing. New sectors use the current material and a
+height of one JK unit, starting at the floor height of the room occupied when
+the map was opened. Only convex outlines are accepted. The live wall turns red when it would make
+the outline non-convex or cross another wall, and clicks there are ignored.
+Drawing no longer automatically splits concave shapes. Placed overlaps use the same rules as
+3D edits. Ctrl+Z/Y undo/redo, including host approval in multiplayer. Player
+movement, look, weapons and other 3D inputs are suspended until Tab returns to
+the 3D editor. F12 screenshots remain available.
 
-The following implementations are in-progress or planned:
+Editor status, tool statistics, object/frame labels and map text use font
+a fixed warm-white tint, with glyph shading read through 01narsh.cmp and colors
+remapped into the active palette. Changing the level
+colormap updates this mapping without changing the level lighting or menus.
 
-| Configuration | Renderer | Description | Status |
-| --- | --- | --- | --- |
-| iOS | Metal? | Not a huge priority, but would be nice to have. | Not started |
-| Switch libnx | OpenGL ES 3 | Not a huge priority, but would be nice to have. | Not started |
-| 32-bit Windows/SDL2 | OpenGL 3.3 | Windows compilation with SDL2 and OpenAL. DirectX dependencies are replaced with SDL2 and OpenAL. Targeting Windows XP ~ Windows 7 | Not started |
-| 32-bit Windows/DirectX | Direct3D 3 | Faithful decompilation with original DirectX bindings/renderer. | Not started |
+Highlights use thick outlined edges and circular vertex markers. The selected
+vertex has a larger circle; markers use the world viewport independently of HUD
+and crosshair settings. The 3D editor uses a compact yellow crosshair with a dark
+orange outline, independent of the normal gameplay crosshair setting.
+Weapon 1 keeps a selection of up to 256 surfaces, edges, or vertices, shown in
+red. Press Enter with one or more surfaces selected to open Surface Attributes.
+Edit the material name, U/V scale, geometry/texture/light modes, extra light,
+and adjoin distance. Surface Flags, Face Flags, and Adjoin Flags open separate
+checkbox dialogs, including unknown bits. Mixed values remain unchanged unless
+edited; a `~` marks mixed flag bits. Only toggled bits are applied to all selected
+surfaces. Apply updates the running level as one undo step; Cancel discards the
+draft. Save Level writes the attributes and scaled UVs into the GOB. Weapon 1
+can select adjoin boundaries; their connection number is read-only, while their
+flags are editable. The opposite side is edited by selecting it too.
+ Shared corners move only once during a group drag. Group extrusion requires
+surfaces only; the new outer faces remain selected for further edits. Adjacent
+extrusions connect through adjoins. The whole group operation uses one undo step.
+Undo retains the latest 30 edits, including geometry, UVs, materials, deletion,
+and header changes. A continuous drag counts as one edit. A new edit after undo
+starts a new history branch and clears redo. History resets when loading a level.
+Before a vertex or edge move, cleave endpoints are connected to every incident
+face edge, including edges that previously omitted that endpoint. This keeps
+door-frame junctions shared during welding instead of reconstructing extra
+polygons around disconnected face loops.
+Vertex welding checks the closed sector boundary, repairs collapsed/reversed
+face patches, and keeps supporting face hulls free of interior vertices so
+merging a corner cannot silently remove a wall triangle. Vertex dragging follows
+connected edge segments and stops at the next vertex; redundant edge vertices
+follow their boundary edge. Hold Shift while dragging a vertex to move it freely
+in all directions. Shift still pans UVs when grabbing a whole surface.
+With weapon 3, aim at a placed thing and press Enter to open Thing Attributes.
+Edit its position, rotation, or thing flags. Numframes has + and - controls:
+the first frame copies the thing's current pose, and additional frames start one
+grid unit above the previous frame. The minus button removes the displayed frame;
+use < and > to choose a frame or type its coordinates and angles directly.
+Apply commits one undo step; Cancel discards the dialog changes.
 
-The following configurations are deprecated:
+Frames appear in edit mode as red translucent model copies with zero-based frame
+numbers and rotation circles. In weapon 3, hold Fire 2 over a frame to move it,
+or over its circle to rotate it. Movement snaps to the editor grid; rotation snaps
+to 5 degrees and stays on the vertical axis unless Shift is held. Frame positions
+are independent of the original thing. Saved levels include native JK numframes
+and frame overrides; path movement is configured automatically, with no manual
+thing-flag setup required. Up to 64 frames per thing are supported.
+Weapon 3 reads the supplied `master.tpl` (also accepts `mater.tpl`). Its browser
+shows textured 3D models, sprite thumbnails, or markers for templates without a
+visual asset; the chosen template also appears at bottom right. Its section button
+filters Sprites, Walkstructs, Projectiles, Pickups, Ammo, Weapon pickups, Enemies,
+NPC, Dark Jedi, Ships, Elevators, Ghosts, Decor, Throwable, or Other. Sections can
+overlap; Walkstructs includes descendants of `_walkstruct`. Placed objects
+stay still while editing and resume template behavior in play mode. Walkplayer
+spawn markers are visible in editor mode and can be moved independently of the
+player. Every object and walkplayer has a green facing line with a circle on its
+end. With weapon 3, hold Fire 2 on that circle and drag to rotate the object;
+grabbing the body still moves it. Rotation keeps the center fixed, updates live,
+and uses one undo step per drag. Rotation snaps to 5-degree increments and
+changes yaw around the vertical axis by default; hold Shift to rotate freely. With weapon 3, Delete removes the hovered object or walkplayer; at least
+one walkplayer is kept. Deletion supports undo/redo. Placement uses the model
+hierarchy bounds (with radius as a fallback) to keep models outside solid walls
+and floors, including corners. Positions snap to the geometry grid along the
+target surface, with a small perpendicular offset for model clearance.
+Up to 1024 objects and 32 walkplayers can be saved. Template definitions are
+included in the saved GOB.
+Weapon 2 shows the current material above the bottom-right ammo display. Its
+browser lists materials from installed GOBs and loose material folders, with
+search and paging. Click its section button to choose Models, Other, All, or a
+numbered level group. Thumbnails preserve the source aspect ratio. Embedded MAT
+palettes take priority; otherwise previews use colormaps identified from the
+installed campaign's surface references, falling back to the default palette.
+Run `tools/prepare_assets.py` again after installing additional asset packs to
+refresh these associations. Saving includes references to any additional
+materials used by the level.
+With weapon 1, Delete on a highlighted edge merges its adjacent coplanar
+surfaces when their union is convex. Delete on a vertex removes redundant
+vertices, merging incident coplanar faces as needed. Deletions must leave closed,
+planar, convex geometry; unsafe deletions leave the level unchanged. Shared
+adjoins are updated on both sides, and surface COG references are remapped.
+Merged faces keep the highlighted surface's material and settings. These edits
+support undo/redo and the normal multiplayer host approval path.
+Delete on a highlighted surface removes its owning sector and closes its former
+adjoins. Walkplayers stranded by the deletion move inside a remaining sector;
+the player also relocates if necessary. The final sector cannot be deleted.
+Dragging compares consecutive crosshair ray intersections with a reference
+plane parallel to the grabbed surface. The plane follows player travel so walking
+past the original wall cannot lose the grab. Cursor motion stays independent of
+live geometry rebuilds. Parallel or missed rays pause only cursor tracking;
+player travel continues, and valid tracing resumes without a jump. Surface movement follows the strongest local
+left/right, up/down, or normal/depth component. UV dragging follows both tangent
+components together, with the visible texture following the cursor. With an empty selection, weapon 1 can directly grab the
+highlighted edge or vertex. Coincident vertices weld to one shared position in
+the live world and saved level, while retaining separate UVs at texture seams.
+Hold Shift with the saber to highlight the entire sector. Start a cleave while
+holding Shift, aim its line on a surface, and release primary fire to cut the
+sector through that line. The two convex sectors connect through an adjoin.
+Without Shift the saber continues to split a single surface.
+Extrusion immediately adds one grid unit along the outward face normal and ends
+the grab. Release secondary fire, then grab the new face to move it farther.
+A harmless rail detonator sprite and sound mark the original surface center.
+The grab distance stays fixed, so distant grabs respond more to mouse-look.
+Edges and vertices follow combined movement with grid snapping. The grid is
+1/16 JK unit (0.0625), about half the default player's width. Surface drags snap
+along their selected local axis; vertex/edge handles and cleave guides snap to
+the grid. Exact CSG intersections are retained to keep sectors sealed.
 
-| Configuration | Renderer | Description |
-| --- | --- | --- |
-| x86 Linux/SDL2, mmap blobs | OpenGL 3.3 | 32-bit Linux compilation with SDL2 and OpenAL. JK.EXE is memory mapped into the process and used as a "binary blob"; Unimplemented functions will fall back to JK.EXE implementations. |
-| 32-bit Linux/SDL2, blobless | OpenGL 3.3 | 32-bit Linux compilation with SDL2 and OpenAL. The output executable is a swap-in replacement for JK.EXE, but will be missing functions and will crash on reaching unimplemented code. |
-| x86 Win32/MinGW DLL | Software/DirectX | Win32 hooked build, JK.EXE is patched to load `df2_reimpl.dll` execute `hook_init_win` before JK.EXE's `main` function. Unimplemented functions will fall back to JK.EXE implementations. `df2_reimpl_kvm.dll` is used for the KVM target |
+Textures use world-aligned planar UV projection at 256 texels per JK unit.
+Moving geometry reveals more or fewer texture repetitions instead of stretching
+the old UVs. Shift-grab adjusts the projection offset in grid-sized increments;
+offsets survive later edits and save/reload. Multiple walkplayers and their
+orientations are preserved when saving.
+Existing editor levels receive the corrected texel density when entering the
+editor; earlier world-mapping offsets are converted with it. Save to retain it.
 
-Linux building works on AArch64/RPi4 with llvmpipe, but V3D GLES has trouble with palettes.
+Level Header has General, Rendering, and Intro Text pages. General includes the
+display name, colormap chooser, gravity, ceiling sky height, horizon distance
+and pixels per revolution. Rendering includes horizon/ceiling offsets, all four
+mipmap and LOD distances, perspective distance and Gouraud distance. Intro Text
+provides all 20 JK loading-screen text lines. Apply updates the working level;
+Save Level writes the settings, title and intro strings into its GOB. The title
+is independent of the save filename. Applying a colormap updates the running
+level and its texture caches immediately, including when undoing the change.
+Save Level makes it persistent. Indexed textures still need a compatible level
+palette (the 01 set normally uses `01narsh.cmp`). JK format version stays at the
+engine-supported 1.
+JK's string format requires text without double quotes.
 
-OpenJKDF2 requires game data from a licensed copy of Jedi Knight: Dark Forces II in order to run; No game assets are provided by OpenJKDF2. On Linux, paths and filenames may be case-sensitive. Your directory structure should look something like this:
-```
-.
-├── JK.EXE
-├── MUSIC
-│   ├── Track12.ogg
-│   ├── Track13.ogg
-│   ├── Track14.ogg
-│   ├── Track15.ogg
-│   ├── Track16.ogg
-│   ├── Track17.ogg
-│   ├── Track18.ogg
-│   ├── Track22.ogg
-│   ├── Track23.ogg
-│   ├── Track24.ogg
-│   ├── Track25.ogg
-│   ├── Track26.ogg
-│   ├── Track27.ogg
-│   ├── Track28.ogg
-│   ├── Track29.ogg
-│   ├── Track30.ogg
-│   ├── Track31.ogg
-│   └── Track32.ogg
-├── episode
-│   ├── JK1.gob
-│   ├── JK1CTF.gob
-│   └── JK1MP.gob
-├── openjkdf2-64
-├── player
-└── resource
-    ├── Res1hi.gob
-    ├── Res2.gob
-    ├── jk_.cd
-    └── video
-        ├── 01-02A.SMK
-        ├── 03-04A.SMK
-        ├── 06A.SMK
-        ├── 08-10A.SMK
-        ├── 12A.SMK
-        ├── 16A.SMK
-        ├── 18-19A.SMK
-        ├── 21A.SMK
-        ├── 23A.SMK
-        ├── 25A.SMK
-        ├── 27A.SMK
-        ├── 33-34A.SMK
-        ├── 36A.SMK
-        ├── 38A.SMK
-        ├── 39A.SMK
-        ├── 41-42A.SMK
-        ├── 41DA.SMK
-        ├── 41DSA.SMK
-        ├── 44A.SMK
-        ├── 46A.SMK
-        ├── 48A.SMK
-        ├── 50A.SMK
-        ├── 52-53A.SMK
-        ├── 54A.SMK
-        └── 57A.SMK
-```
+Convex sector subtraction removes overlapping volume. Opposing faces are split
+at their shared intersection to create reciprocal adjoins. Vertex and edge moves
+rebuild affected convex hulls when necessary; this can change face topology.
+Planar cleanup moves preserve existing cleave partitions. Extra collinear
+vertices on sector edges can slide along that edge and snap onto another
+vertex in the same sector to weld. Degenerate faces disappear after welding;
+cleaning ceiling-edge corners avoids unnecessary extrusion side walls.
+Sector and surface storage grows with the level; there is no fixed 1024-sector
+or 192-surfaces-per-sector ceiling. Geometry scratch buffers, map selections,
+undo snapshots and network snapshots grow with their contents. Surfaces still
+support at most 24 vertices. Placed objects and COGs use growing editor storage
+up to the engine's ID/table limits, with room reserved for players and gameplay.
+Snapshots allocate their actual encoded size. Multiplayer retains a 256 MiB
+uncompressed document budget (including manifests/scripts) and a 512 MiB
+compressed-transfer budget. Hosts and clients must use the same build.
 
-## Building
+Multiplayer edits and undo are synchronized through the host. Stock levels
+can be converted for editing; saving a converted stock level uses a separate
+custom episode rather than replacing the original game archive.
 
-See [here](BUILDING.md) for instructions.
+## Build
 
-## Contributing
+Visual Studio 2022 with the C++ desktop workload, a Windows SDK, CMake, Git, and
+Python 3 are required. From this folder:
 
-Contributions in the form of code cleanup and documentation are highly welcomed. See [CONTRIBUTING.md](CONTRIBUTING.md) for details on what kinds of cleanup tasks still need to be done. OpenJKDF2 is not currently accepting monetary donations, however [detailed bug and crash reports](https://github.com/shinyquagsire23/OpenJKDF2/issues) are always appreciated, including bugs/crashes involving mods.
-
-## TL;DR: What Isn't Implemented, Yet
- - Load Configuration and Save Configuration in Setup > Controls > Options
- - Using plus or minus to resize the screen (with SDL2, resolution auto-resizes to window size)
-
-## Usage with original JK.EXE and DirectX using hooks
-See [here](HOOKS.md) for instructions.
-
-## Methodology
-The bulk of research and documentation occurs in IDA. Every function has been identified to a file prefix (ie `stdHashTable_`) with a corresponding .c/.h file. RenderDroid (`rd*`) and LEC stdlib (`std*`) functions are 90% canonically named, based on symbols from Grim Fandango Remastered.
-
-Reverse engineering is a parallel effort between structure documentation and function identification. Once structures are sufficiently documented, Hex-Rays can be used for decompilation. While most Hex-Rays output works outright, many loops and structures require manual intervention. Output is generally cleaned and tidied to remove redunant stack variables or too-deep nesting. `sizeof` and obvious inlining and macros should also be adjusted as appropriate.
-
-Engine variables and yet-to-be-decompiled functions are referenced using `define` macros and static function pointers, respectively. Once a file is decompiled enough that an engine variable is no longer referenced by non-decompiled code, the variables can be declared in their respective C files. For decompiled functions which are only referenced by non-decompiled functions, a `hook_function` call is added in `main.c` to redirect code execution to `df2_reimpl.dll` from `JK.EXE`.
-
-Progress is tracked using `analyze.py`, `output.map` and `ida_copypaste_funclist_nostdlib.txt`: After compiling `df2_reimpl.dll`, symbols can be compared against the `.idb` to determine how much of the original `.text` is actually in use, and how much has been hooked and replaced.
-
-If you'd like a copy of my IDB to examine functions which haven't been decompiled yet (or for any other use), let me know.
-
-## Current Progress
-
-Generated using `analyze.py`. Some filenames may be inaccurate or incomplete (see `ida_copypaste_funclist_nostdlib.txt` for a full function name listing).
-
-```
-
-[file]                         [size]     [% of text]   [% complete]  [decomp / total] 
-DirectX                        0x1e       0.003%        100.000%        5 / 5          
-jkGob                          0x29       0.004%        100.000%        2 / 2          
-jkGuiDecision                  0x45       0.006%        100.000%        3 / 3          
-sithStrTable                   0x5b       0.008%        100.000%        4 / 4          
-sithCopyright                  0x67       0.010%        100.000%        1 / 1          
-jkStrings                      0x89       0.013%        100.000%        5 / 5          
-jkGuiGeneral                   0xc5       0.018%        100.000%        3 / 3          
-jkSmack                        0xee       0.022%        100.000%        4 / 4          
-rdFace                         0xf6       0.023%        100.000%        4 / 4          
-jkGuiControlOptions            0x105      0.024%        100.000%        3 / 3          
-stdHashKey                     0x107      0.024%        100.000%       10 / 10         
-rdCanvas                       0x113      0.025%        100.000%        4 / 4          
-jkGuiEsc                       0x18f      0.037%        100.000%        3 / 3          
-rdroid                         0x1f6      0.047%        100.000%       27 / 27         
-sithHeader                     0x1f9      0.047%        100.000%        1 / 1          
-sithTime                       0x213      0.049%        100.000%        6 / 6          
-jkGuiSingleTally               0x21b      0.050%        100.000%        4 / 4          
-jkGuiSetup                     0x240      0.053%        100.000%        4 / 4          
-jkGuiSound                     0x274      0.058%        100.000%        3 / 3          
-sithItem                       0x275      0.058%        100.000%        5 / 5          
-jkGuiGameplay                  0x2b2      0.064%        100.000%        3 / 3          
-stdMemory                      0x2ba      0.065%        100.000%        7 / 7          
-sithEvent                      0x2e3      0.069%        100.000%        9 / 9          
-stdMci                         0x2ef      0.070%        100.000%        7 / 7          
-jkGuiObjectives                0x308      0.072%        100.000%        4 / 4          
-jkControl                      0x331      0.076%        100.000%        4 / 4          
-Windows                        0x39a      0.085%        100.000%       11 / 11         
-stdString                      0x3b3      0.088%        100.000%       11 / 11         
-sithRenderSky                  0x3c2      0.089%        100.000%        5 / 5          
-jkGuiDialog                    0x3e0      0.092%        100.000%        6 / 6          
-sithModel                      0x3f1      0.094%        100.000%        8 / 8          
-rdThing                        0x42f      0.099%        100.000%       12 / 12         
-stdGdi                         0x430      0.099%        100.000%       10 / 10         
-jkCutscene                     0x443      0.101%        100.000%        7 / 7          
-sithKeyFrame                   0x44e      0.102%        100.000%        5 / 5          
-stdPcx                         0x45e      0.104%        100.000%        2 / 2          
-sithDSSCog                     0x460      0.104%        100.000%        4 / 4          
-smack                          0x466      0.104%        100.000%        6 / 6          
-sithPlayerActions              0x46f      0.105%        100.000%        3 / 3          
-rdMath                         0x47d      0.107%        100.000%        6 / 6          
-rdLight                        0x49f      0.110%        100.000%        8 / 8          
-jkGuiMain                      0x4b1      0.111%        100.000%        6 / 6          
-stdFnames                      0x4ee      0.117%        100.000%       14 / 14         
-sithSprite                     0x4f1      0.117%        100.000%        6 / 6          
-jkGui                          0x4fb      0.118%        100.000%       10 / 10         
-jkGuiTitle                     0x4fb      0.118%        100.000%       10 / 10         
-sithMaterial                   0x4fd      0.118%        100.000%        9 / 9          
-wuRegistry                     0x5b2      0.135%        100.000%       12 / 12         
-stdHashTable                   0x5d6      0.138%        100.000%       10 / 10         
-Video                          0x5dc      0.139%        100.000%        5 / 5          
-sithConsole                    0x5de      0.139%        100.000%       13 / 13         
-sithExplosion                  0x61d      0.145%        100.000%        4 / 4          
-sithAIClass                    0x689      0.155%        100.000%        7 / 7          
-rdPrimit2                      0x69a      0.157%        100.000%        5 / 5          
-sithCogScript                  0x6ca      0.161%        100.000%        9 / 9          
-Window                         0x6db      0.163%        100.000%       13 / 13         
-stdGob                         0x6dd      0.163%        100.000%       14 / 14         
-jkAI                           0x6e7      0.164%        100.000%        5 / 5          
-sithMain                       0x72b      0.170%        100.000%       16 / 16         
-jkGuiControlSaveLoad           0x732      0.171%        100.000%        6 / 6          
-jkGuiPlayer                    0x73a      0.171%        100.000%        5 / 5          
-rdSprite                       0x76d      0.176%        100.000%        5 / 5          
-stdConffile                    0x78d      0.179%        100.000%       13 / 13         
-jkGuiMap                       0x793      0.180%        100.000%        8 / 8          
-sithTemplate                   0x79d      0.181%        100.000%       10 / 10         
-sithParticle                   0x7f5      0.189%        100.000%       10 / 10         
-sithSector                     0x806      0.190%        100.000%       13 / 13         
-sithComm                       0x80b      0.191%        100.000%       11 / 11         
-sithMap                        0x814      0.192%        100.000%        6 / 6          
-Main                           0x87b      0.201%        100.000%        4 / 4          
-jkGuiMultiTally                0x8aa      0.206%        100.000%        7 / 7          
-jkGuiSingleplayer              0x8d8      0.210%        100.000%        7 / 7          
-jkCredits                      0x8e4      0.211%        100.000%        6 / 6          
-sithCogFunctionSector          0x93a      0.219%        100.000%       22 / 22         
-sithCogFunctionAI              0x943      0.220%        100.000%       20 / 20         
-stdSound                       0x9bf      0.231%        100.000%       27 / 27         
-sithGamesave                   0x9bf      0.231%        100.000%        7 / 7          
-jkGuiForce                     0x9dd      0.234%        100.000%       11 / 11         
-sithSound                      0xa00      0.237%        100.000%       13 / 13         
-rdParticle                     0xa0d      0.239%        100.000%       10 / 10         
-rdMaterial                     0xa2d      0.241%        100.000%        9 / 9          
-sithSoundClass                 0xa46      0.244%        100.000%       16 / 16         
-sithCogFunctionSound           0xa97      0.251%        100.000%       14 / 14         
-rdKeyframe                     0xa99      0.251%        100.000%        8 / 8          
-rdCamera                       0xaa8      0.253%        100.000%       26 / 26         
-jkGuiSaveLoad                  0xb21      0.264%        100.000%        9 / 9          
-rdPolyLine                     0xb42      0.267%        100.000%        6 / 6          
-jkSaber                        0xb54      0.269%        100.000%        8 / 8          
-jkGuiKeyboard                  0xb57      0.269%        100.000%       14 / 14         
-jkGuiNetHost                   0xbc6      0.279%        100.000%        6 / 6          
-sithOverlayMap                 0xbf8      0.284%        100.000%        9 / 9          
-rdVector                       0xd29      0.312%        100.000%       55 / 55         
-jkGuiMouse                     0xdb5      0.325%        100.000%       14 / 14         
-DirectDraw                     0xdd4      0.328%        100.000%       16 / 16         
-jkEpisode                      0xdd9      0.329%        100.000%       10 / 10         
-sithCogFunctionPlayer          0xdf0      0.331%        100.000%       42 / 42         
-jkHudInv                       0xe43      0.338%        100.000%        9 / 9          
-sithCogFunctionSurface         0xe92      0.346%        100.000%       38 / 38         
-sithActor                      0xf9c      0.370%        100.000%       13 / 13         
-stdConsole                     0xfff      0.380%        100.000%       20 / 20         
-jkGuiMultiplayer               0x1097     0.394%        100.000%       13 / 13         
-DirectPlay                     0x10cc     0.399%        100.000%       31 / 31         
-VBuffer                        0x10dc     0.400%        100.000%        4 / 4          
-jkCog                          0x11b8     0.420%        100.000%       40 / 40         
-stdControl                     0x11ec     0.425%        100.000%       22 / 22         
-sithPuppet                     0x1222     0.430%        100.000%       17 / 17         
-sithCamera                     0x124b     0.434%        100.000%       23 / 23         
-jkGuiDisplay                   0x12ff     0.451%        100.000%       11 / 11         
-jkGuiJoystick                  0x13f0     0.473%        100.000%       19 / 19         
-jkDSS                          0x13f6     0.474%        100.000%       32 / 32         
-sithCogYACC                    0x152b     0.502%        100.000%       10 / 10         
-jkRes                          0x15b6     0.515%        100.000%       23 / 23         
-jkMain                         0x16cd     0.541%        100.000%       53 / 53         
-sithWorld                      0x1718     0.548%        100.000%       22 / 22         
-sithDSS                        0x175d     0.554%        100.000%       22 / 22         
-stdMath                        0x182a     0.573%        100.000%       23 / 23         
-rdActive                       0x1a55     0.625%        100.000%        8 / 8          
-sithCogExec                    0x1aec     0.639%        100.000%       31 / 31         
-sithCogParse                   0x1b2a     0.645%        100.000%       26 / 26         
-jkHud                          0x1c9b     0.679%        100.000%       17 / 17         
-jkDev                          0x1fd6     0.755%        100.000%       41 / 41         
-sithInventory                  0x2150     0.791%        100.000%       62 / 62         
-sithDSSThing                   0x22aa     0.823%        100.000%       37 / 37         
-sithRender                     0x23de     0.851%        100.000%       22 / 22         
-jkGuiBuildMulti                0x258b     0.891%        100.000%       24 / 24         
-sithSoundMixer                 0x2626     0.905%        100.000%       37 / 37         
-stdDisplay                     0x267b     0.913%        100.000%       37 / 37         
-sithCogFunction                0x26c2     0.920%        100.000%      119 / 119        
-sithAI                         0x2771     0.936%        100.000%       35 / 35         
-rdModel3                       0x2a7e     1.008%        100.000%       23 / 23         
-std3D                          0x2c4a     1.051%        100.000%       39 / 39         
-rdMatrix                       0x2c85     1.056%        100.000%       56 / 56         
-sithAICmd                      0x2cc0     1.062%        100.000%       22 / 22         
-jkGuiRend                      0x2cd7     1.064%        100.000%       68 / 68         
-jkPlayer                       0x2da2     1.083%        100.000%       45 / 45         
-sithPhysics                    0x310b     1.164%        100.000%       13 / 13         
-sithWeapon                     0x32a8     1.202%        100.000%       33 / 33         
-rdCache                        0x331c     1.213%        100.000%       16 / 16         
-sithCogFunctionThing           0x3a4c     1.383%        100.000%      142 / 142        
-rdClip                         0x81f2     3.084%        100.000%       17 / 17         
-sithAIAwareness                0x31f      0.074%        90.488%         5 / 6          
-stdComm                        0x53c      0.124%        98.955%        16 / 17         
-stdFileUtil                    0x687      0.155%        54.159%         6 / 11         
-stdBmp                         0x6b8      0.159%        0.000%          0 / 3          
-sithAnimClass                  0x6cc      0.161%        94.080%         4 / 5          
-stdStrTable                    0x7b6      0.183%        82.877%         4 / 6          
-stdColor                       0x97e      0.225%        24.198%         3 / 11         
-jkGame                         0x98f      0.227%        80.384%        12 / 13         
-stdPalEffects                  0xa66      0.247%        85.875%        16 / 21         
-stdLbm                         0xc24      0.288%        0.000%          0 / 3          
-rdColormap                     0xcf4      0.307%        47.738%         7 / 12         
-stdPlatform                    0xdde      0.329%        49.042%        37 / 43         
-sithPlayer                     0xe72      0.343%        95.944%        23 / 27         
-stdBitmap                      0xeb6      0.349%        47.398%         6 / 14         
-sithTrackThing                 0xf9f      0.371%        90.098%        12 / 15         
-rdPuppet                       0x101f     0.383%        97.407%        15 / 19         
-stdGif                         0x1162     0.412%        0.000%          0 / 4          
-sithCommand                    0x11b2     0.420%        91.545%        18 / 20         
-sithIntersect                  0x12a8     0.443%        92.588%         9 / 12         
-rdPrimit3                      0x16e0     0.543%        91.684%         7 / 9          
-stdFont                        0x181a     0.572%        75.284%        12 / 20         
-sithSurface                    0x1c6a     0.674%        96.838%        33 / 35         
-sithCog                        0x1ed3     0.731%        90.686%        21 / 28         
-sithMulti                      0x252a     0.882%        91.423%        29 / 35         
-sithCollision                  0x2827     0.953%        91.954%        19 / 22         
-sithControl                    0x285a     0.958%        99.613%        31 / 33         
-sithThing                      0x338c     1.223%        86.829%        43 / 49         
-rdRaster                       0xf04d     5.702%        0.195%          1 / 89         
-rdZRaster                      0x15fb4    8.346%        0.000%          0 / 73         
-rdAFRaster                     0x1620d    8.402%        0.000%          0 / 122        
-rdNRaster                      0x304d4    18.339%       0.000%          0 / 87         
----------------------------------------------------------------------------------
-
-Total completion:
------------------
-56.758% by weight
-95.857% by weight excluding rasterizer
-2694 / 3169 functions
-2694 / 2798 functions excluding rasterizer
-
-Subsystem Breakdown (Not Decomp'd)
-----------------------------------
-[subsys]       [% of text]  [TODO / total]
-sith           0.542%           40 / 1319
-stdPlatform    0.168%            6 / 43
-std            1.494%           47 / 376
-jkGui          0.000%            0 / 284
-rd             0.216%           11 / 345
-jk             0.044%            1 / 324
-Raster         40.778%         370 / 371
-other          0.000%            0 / 107
------------------------------------------
-total          43.242%         475 / 3169
-
-Subsystem Breakdown (Not Decomp'd, Excl Raster)
------------------------------------------------
-[subsys]       [% of text]  [TODO / total]
-sith           0.916%           40 / 1319
-stdPlatform    0.283%            6 / 43
-std            2.524%           47 / 376
-jkGui          0.000%            0 / 284
-rd             0.364%           11 / 345
-jk             0.075%            1 / 324
-other          0.000%            0 / 107
------------------------------------------
-total          4.162%          105 / 2798
-
+```powershell
+python tools/prepare_assets.py
+powershell -ExecutionPolicy Bypass -File tools/build.ps1
 ```
 
-## See Also
+`prepare_assets.py` extracts resource references and templates from the local
+`JK/Episode/JK1MP.GOB` and prepares the installation marker OpenJKDF2 requires.
+Game assets and generated levels are excluded from source control.
 
-- [OpenJones3D](https://github.com/smlu/OpenJones3D) — Sister project decompiling Indiana Jones and the Infernal Machine, which is based on the same engine and internal libraries
-- [OpenJK](https://github.com/JACoders/OpenJK) — Community-maintained open-source engine for Jedi Outcast (SP) and Jedi Academy (SP & MP), the sequels to Dark Forces II.
+The build includes the native geometry tests. To run them separately:
+
+```powershell
+cmake -S tests -B build-tests -A x64
+cmake --build build-tests --config Release
+.\build-tests\Release\editor_tests.exe
+```
+
+Tests exercise picking, cleaving, vertex/edge edits, extrusion, overlap removal,
+partial portals, repeated portal rebuilding, UV density, level headers, validation,
+and GOB output. Save/reload integration also checks title, all header settings,
+the selected colormap and intro text.
+`GEOSITH_SELFTEST=1` opts into the live rebuild integration test only when
+running the generated `sithed_smoke` episode.
+Run `powershell -ExecutionPolicy Bypass -File tools/smoke.ps1` for the geometry
+tests, live engine test, and a reload of the exported two-sector GOB. Test logs
+are written under `build/`.
+The live test also exercises queued AI sound events and surface/sector animations
+across repeated geometry replacement. Run
+`powershell -ExecutionPolicy Bypass -File tools/stress.ps1 -Render`
+to exercise 240 edits during normal rendering and
+collision updates. The test verifies that frames were rendered; logs are saved
+as `build/stress.stdout.log` and `build/stress.stderr.log`.
+
+Upstream engine: https://github.com/shinyquagsire23/OpenJKDF2
+The upstream license is in `engine/LICENSE.md`.
+
+Edit mode honors the normal screenshot binding (F12 by default), capturing the
+finished frame including editor highlights and HUD.
+
+To create optimized stairs, select two opposite vertical end walls of the same
+six-surface sector with weapon 1: select the high end first and the low end
+second. Press Enter, set **Stair steps**, and click **Create Stairs**. The floor
+and ceiling must be horizontal. The default uses approximately one grid unit of
+rise per step; the step count is no longer tied to a fixed sector/surface storage capacity.
+The tool cleaves a floor-to-ceiling diagonal ramp, retains the air wedges above
+each visible tread, and removes the volumes below the treads. The invisible ramp
+adjoins are Floor + Impassable, with visibility/sound enabled and movement through
+the ramp disabled. Walking uses the smooth ramp while the visible geometry shows
+steps. Creation is one undo step; Save Level keeps the new sectors and flags.
+
+Weapon 4 places editor point lights in growing storage (default intensity 1, range 4 JK units). Light markers and the hovered light's intensity/range appear in editor mode. Lighting updates immediately with distance falloff, surface angle and solid-wall occlusion; adjoins pass light. Sectors start at light 0.5. Aiming at a surface shows its wireframe and sector brightness; the wheel adjusts that sector in 0.05 steps from 0 to 1. Placed lights add Gouraud vertex lighting without resetting sector brightness; deleting the last light preserves the sector baseline. Lights, movement and wheel edits support undo/redo. Save Level writes a JED-style Section: Lights plus baked vertex intensities to the JKL in the GOB; ordinary play uses those baked values without editor markers. Vertex lighting interpolates between polygon corners, so add cleaves where you need finer lighting detail.
+
+The pause menu's Episode Editor edits episode name/type and up to 64 sequence rows. Click a row to set its line number, CD, level number, LEVEL/CUT type, filename, light/dark force-power grants, Goto A/B, display name and 20 loading-text lines. Add, delete and reorder rows with the sequence buttons. Goto -1 ends the episode; other targets must match a sequence line. Episode type is a numeric bitmask: 1 single player, 2 multiplayer, 8 CTF (combine flags as needed). Apply commits one undoable edit; Cancel discards the draft. Use Save Level afterward to write episode.jk and the associated strings into the GOB. The marked current row receives the edited geometry under its chosen JKL filename; other rows reference level/cutscene files already available to the game. The current level's name/loading text is shared with Level Header. Changes to the episode sequence take effect when the saved episode is loaded.
+
+Weapon 5 opens the Placed COGs editor with middle mouse. Add COG searches scripts in the mounted resources, the original game episode GOBs, and loose cog folders. Select a script on the left; click a parameter on the right. Thing, sector and surface parameters return to the level with only that target type highlighted: aim and press Fire 1 to assign it, or Esc to cancel the pick and reopen the menu. Materials can be picked from surfaces, templates from things, and vectors from aimed surface points. Numeric/resource parameters accept typed values; COG references choose another placed COG. Edit value also allows manual item numbers; Clear value unassigns a reference (-1) or zeros a numeric/vector value. Local script symbols are omitted. Apply commits the draft as one undoable edit, including all assignments. F8 starts/restarts placed scripts for playtesting; editor mode suspends them. Save Level writes the COGS section and bundles each selected script in the GOB. Up to 64 placed scripts and 128 exposed parameters per script are supported.
+
+Multiplayer editing uses the existing game connection. Everyone must use this
+updated GeoSith build with the JK game assets. Host an editor episode as a
+multiplayer game; joining players do not need the host's episode GOB. The client
+creates a private netedit episode to connect, then receives the full current level
+before the normal JK join sync begins. This includes geometry, surface attributes,
+materials by name, objects and frames, lights, level/episode headers, and placed
+COGs with their scripts and parameter assignments.
+
+The host automatically validates every submitted edit and its document revision.
+Client edits appear immediately as local previews while the host checks them.
+Accepted edits are broadcast to everyone; rejected previews revert immediately
+to the last accepted level and then synchronize with the current host version.
+Newer drag positions stay visible when an older position is approved. Continuous
+drags share one undo transaction. Ctrl+Z and
+Ctrl+Y on a client request the shared host history (30 steps); the accepted result
+is replicated to everyone. If another player changes the level before a pending
+edit can be accepted, the stale request is rejected and the current host version
+is restored. Re-grab the item to continue editing. An incoming edit also cancels
+an active grab on the host so that an old drag cannot overwrite the new change.
+
+Level transfers use bounded chunks, checksums, acknowledgments and retries;
+partial snapshots never replace the running level. Private netedit GOBs are
+connection caches and do not overwrite existing episodes. Save Level exports the
+current accepted document as a normal playable GOB; clients wait for pending
+edits to finish before saving.
+
+Multiplayer connectivity and troubleshooting: see NETWORKING.md. The new network
+protocol requires matching GeoSith releases and game Resource archives.
+
+Whole-surface movement includes shared boundary junctions omitted from the selected
+face loop. For example, raising a ceiling also raises the wall-cleave endpoints
+on its perimeter, preserving existing partitions rather than generating repair
+triangles and interior vertices.
+
+Weapon 1 has Select and Clean Up modes in its middle-mouse menu; the mouse
+wheel also switches between them. Select keeps
+the normal selection, dragging and extrusion behavior. In Clean Up, aim at a
+surface and press Fire 1 to simplify its entire sector. Connected coplanar
+patches with matching materials, UV mappings, flags and rendering settings merge
+when their union is convex and fits the 24-vertex limit. Redundant interior and
+collinear vertices disappear. Concave regions and material/settings boundaries
+remain separate. Adjoin patches merge only with matching reciprocal patches in
+the neighbor, preserving connections. Cleanup is one undoable edit and uses the
+normal multiplayer host validation and replication path.
+
+Cleanup also rebuilds dense coplanar solid meshes around preserved openings
+and other material regions into simpler convex patches. This can reduce a
+fragmented wall to a few quads even when its concave outline cannot form one
+convex polygon. Openings, volume, material/UV boundaries, flags and adjoins are
+preserved; each proposed merge must retain a closed sector boundary.
+
+Stock-level conversion
+----------------------
+Opening a level from JK1.GOB or JK1MP.GOB imports it into GeoSith for F8 editing, including multiplayer synchronization. Save Level suggests the map filename with `_edited` appended (for example, `m10_edited`). JK1 and JK1MP are protected save names. Only the current map is saved in the new episode; the original campaign/episode archive is unchanged.
+
+Conversion retains original UV coordinates, baked vertex lighting, sector flags/tint/ambient sounds, object AI settings and paths, and remaps placed COG references to the editor's object/surface order. Imported sectors allow up to 0.001 game units of rounding error; newly created sectors retain the stricter checks. Invalid or over-capacity imports fail without replacing the running geometry.
+
+The multiplayer editor protocol changed for the imported metadata: hosts and clients must use the same updated build. Undo snapshots use compressed populated records to limit memory use on large maps.

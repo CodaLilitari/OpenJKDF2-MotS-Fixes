@@ -1,4 +1,5 @@
 #include "jkHud.h"
+#include "Main/jkEditor.h"
 
 #ifdef TARGET_DREAMCAST
 #include "Platform/Dreamcast/dcDebug.h" // Added: 4th-port debug overlay (FPS + mem)
@@ -608,7 +609,7 @@ void jkHud_Draw()
     }
 
     if (
-        jkPlayer_setCrosshair 
+        jkPlayer_setCrosshair && !jkEditor_Active()
         && sithCamera_g_pCurCamera->type == 1
         && !(sithPlayer_g_pLocalPlayerThing->flags & SITH_TF_DEAD) 
         && MOTS_ONLY_COND(!(sithPlayer_g_pLocalPlayerThing->actorParams.flags & SITH_AF_SCOPEHUD))
@@ -1199,7 +1200,7 @@ void jkHud_DrawGPU()
 
     // MoTS altered: Scope hud
     if (
-        jkPlayer_setCrosshair
+        jkPlayer_setCrosshair && !jkEditor_Active()
         && sithCamera_g_pCurCamera->type == 1 
         && !(sithPlayer_g_pLocalPlayerThing->flags & SITH_TF_DEAD) 
         && MOTS_ONLY_COND(!(sithPlayer_g_pLocalPlayerThing->actorParams.flags & SITH_AF_SCOPEHUD))

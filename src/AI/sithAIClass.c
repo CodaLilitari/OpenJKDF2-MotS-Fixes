@@ -1,3 +1,4 @@
+#include "Main/jkEditor.h"
 #include "sithAIClass.h"
 
 #include "General/stdHashtbl.h"
@@ -66,6 +67,7 @@ int sithAIClass_ReadStaticAIClassesListText(SithWorld *pWorld, int bSkip)
         return 0;
     }
     sizeAIClasses = _atoi(stdConffile_g_entry.aArgs[2].value);
+    sizeAIClasses = jkEditor_ResourceCapacity(pWorld,sizeAIClasses,256);
     if (!sizeAIClasses) {
         return 1;
     }

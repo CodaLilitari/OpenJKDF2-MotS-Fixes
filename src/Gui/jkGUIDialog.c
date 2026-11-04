@@ -11,6 +11,8 @@
 #include "Gui/jkGUI.h"
 #include "Main/jkStrings.h"
 #include "Win95/stdDisplay.h"
+#include "Platform/std3D.h"
+#include <stdlib.h>
 
 jkGuiElement jkGuiDialog_Ok_buttons[4] = {
     {ELEMENT_TEXT, 0, 2, 0, 3, {0x82, 0x8C, 0x186, 0x28}, 1, 0, 0, 0, 0, 0, {0}, 0},
@@ -115,6 +117,12 @@ int jkGuiDialog_OkCancelDialog(char16_t *stringA, char16_t *stringB)
     return v5 == 1;
 }
 
+static void captureVertexLimitError(jkGuiMenu *menu){static int frames;if(++frames<3)return;frames=0;
+#ifdef SDL2_RENDER
+    std3D_ScreenshotWindow(getenv("GEOSITH_VERTEX_LIMIT_CAPTURE"));
+#endif
+    menu->lastClicked=1;stdPlatform_Printf("GEOSITH_VERTEX_LIMIT PASS: oversized operation rejected with error dialog\n");
+}
 void jkGuiDialog_ErrorDialog(char16_t *stringA, char16_t *stringB)
 {
     int v2; // edi
@@ -140,7 +148,9 @@ void jkGuiDialog_ErrorDialog(char16_t *stringA, char16_t *stringB)
     jkGuiDialog_Ok_buttons[2].wstr = jkStrings_GetUniStringWithFallback("GUI_OK");
     jkGuiRend_MenuSetReturnKeyShortcutElement(&jkGuiDialog_Ok_menu, &jkGuiDialog_Ok_buttons[2]);
     jkGuiRend_MenuSetEscapeKeyShortcutElement(&jkGuiDialog_Ok_menu, &jkGuiDialog_Ok_buttons[2]);
+    if(getenv("GEOSITH_STRESS")&&getenv("GEOSITH_VERTEX_LIMIT_CAPTURE")&&!__wcscmp(stringA,u"Surface vertex limit"))jkGuiDialog_Ok_menu.idkFunc=captureVertexLimitError;
     jkGuiRend_DisplayAndReturnClicked(&jkGuiDialog_Ok_menu);
+    if(jkGuiDialog_Ok_menu.idkFunc==captureVertexLimitError)jkGuiDialog_Ok_menu.idkFunc=NULL;
     
 #ifdef STDBITMAP_PARTIAL_LOAD
     stdDisplay_VBufferFree(jkGuiDialog_Ok_menu.pTextureOverride);

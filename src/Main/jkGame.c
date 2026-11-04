@@ -1,3 +1,4 @@
+#include "Main/jkEditor.h"
 #include "jkGame.h"
 
 #include "General/stdPalEffects.h"
@@ -268,6 +269,7 @@ int jkGame_Update()
         stdDisplay_VBufferUnlock(Video_pMenuBuffer);
     }
 #endif
+    jkEditor_DrawWorld();
     jkGame_Update_UpdateCamera = stdPlatform_GetTimeMsec();
 #ifdef RDRASTER_SOFTWARE_RENDERER
     // Added: keep acceleration off + the surface locked across DrawPov so the first-person weapon
@@ -358,6 +360,7 @@ int jkGame_Update()
 #endif
 
     // MOTS added: scope/security cam overlays
+    if (!jkEditor_MapActive()) {
     if (!Main_bMotsCompat) {
         if ( (playerThings[playerThingIdx].actorThing->actorParams.flags & SITH_AF_NOIDLECAMERA) == 0 ) {
             jkHud_Draw();
@@ -378,9 +381,13 @@ int jkGame_Update()
     }
 
     jkGame_Update_HudDrawn = stdPlatform_GetTimeMsec();
+    }
 
-    jkDev_BlitLogToScreen();
-    jkHudInv_Draw();
+    jkEditor_Draw();
+    if (!jkEditor_MapActive()) {
+        jkDev_BlitLogToScreen();
+        jkHudInv_Draw();
+    }
 #if !defined(SDL2_RENDER) && !defined(TARGET_RETRO_HOMEBREW)
     if ( Video_modeStruct.b3DAccel )
         std3D_DrawOverlay();

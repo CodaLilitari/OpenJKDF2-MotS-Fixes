@@ -1,3 +1,4 @@
+#include "Main/jkEditor.h"
 #include "sithMaterial.h"
 
 #include "stdPlatform.h" // Added: *_ALLOC/*_FREE macros
@@ -89,6 +90,7 @@ int sithMaterial_ReadMaterialsListText(SithWorld *pWorld, int bSkip)
         {
             // Added: needed for JKE?
             bSkip *= 2;
+            bSkip = jkEditor_ResourceCapacity(pWorld,bSkip,4096);
 
             sithMaterial_AllocWorldMaterials(pWorld, bSkip);
 

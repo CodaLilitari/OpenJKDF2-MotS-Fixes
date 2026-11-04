@@ -50,6 +50,16 @@ void jkControl_nullsub_37()
 {
 }
 
+int jkControl_HandleChat(void)
+{
+    if (!jkHud_bChatOpen) {
+        int presses=0;
+        sithControl_GetKey(INPUT_FUNC_TALK, &presses);
+        if (presses && sithThing_MotsTick(0xe,0,1.0))jkHud_Chat();
+    }
+    return jkHud_bChatOpen;
+}
+
 // MOTS altered done
 int jkControl_HandleHudKeys(SithThing *player, flex_t b)
 {
@@ -62,12 +72,7 @@ int jkControl_HandleHudKeys(SithThing *player, flex_t b)
     // Added: dedicated
     if ((sithNet_isServer && jkGuiNetHost_bIsDedicated) || (player->actorParams.flags & SITH_TF_RENDERWEAPON) == 0 )
     {
-        if ( !jkHud_bChatOpen )
-        {
-            sithControl_GetKey(INPUT_FUNC_TALK, &v15);
-            if (v15 && sithThing_MotsTick(0xe,0,1.0))
-                jkHud_Chat();
-        }
+        jkControl_HandleChat();
 
         if ( (g_submodeFlags & 1) == 0 )
         {
@@ -133,20 +138,24 @@ int jkControl_HandleHudKeys(SithThing *player, flex_t b)
             i = v15 == 0;
         }
 
-        sithControl_GetKey(INPUT_FUNC_SCREENSHOT, &v15);
-        if (v15 && sithThing_MotsTick(0xe,0,6.0))
-        {
-            jkGame_Screenshot();
-#ifdef SDL2_RENDER // Added: jkGame_ScreenshotFlush prints it after the capture, so it isn't in the shot
-            jkGame_bScreenshotMessage = 1;
-#else
-            jkDev_PrintUniString(jkStrings_GetUniStringWithFallback("GAME_SCREENSHOT"));
-#endif
-        }
+        jkControl_HandleScreenshot();
 
         sithControl_GetKey(INPUT_FUNC_TALLY, &v15);
         if (v15 && sithThing_MotsTick(0xe,0,5.0))
             jkHud_Tally();
     }
     return 0;
+}
+
+void jkControl_HandleScreenshot(void) {
+    int presses=0;
+    sithControl_GetKey(INPUT_FUNC_SCREENSHOT, &presses);
+    if (presses && sithThing_MotsTick(0xe,0,6.0)) {
+        jkGame_Screenshot();
+#ifdef SDL2_RENDER // Report only after capturing the completed frame.
+        jkGame_bScreenshotMessage = 1;
+#else
+        jkDev_PrintUniString(jkStrings_GetUniStringWithFallback("GAME_SCREENSHOT"));
+#endif
+    }
 }

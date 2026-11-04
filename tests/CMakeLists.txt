@@ -1,0 +1,27 @@
+cmake_minimum_required(VERSION 3.20)
+project(GeoSithGeometry C CXX)
+enable_testing()
+add_executable(editor_tests geometry_test.c ../src/Main/edGeometry.c ../src/Main/edLevelIO.c)
+target_include_directories(editor_tests PRIVATE ../src/Main ../src)
+if(MSVC)
+  target_link_options(editor_tests PRIVATE /STACK:8388608)
+endif()
+if(NOT MSVC)
+  target_link_libraries(editor_tests PRIVATE m)
+endif()
+add_test(NAME geometry COMMAND editor_tests)
+
+add_executable(network_unit_tests network_test.cpp)
+target_compile_features(network_unit_tests PRIVATE cxx_std_17)
+add_test(NAME network_unit COMMAND network_unit_tests)
+
+set_source_files_properties(geometry_test.c ../src/Main/edGeometry.c ../src/Main/edLevelIO.c PROPERTIES LANGUAGE CXX)
+target_compile_features(editor_tests PRIVATE cxx_std_20)
+
+option(GEOSITH_ASAN "Instrument editor memory access" OFF)
+if(MSVC AND GEOSITH_ASAN)
+  target_compile_options(editor_tests PRIVATE /fsanitize=address /Zi)
+  target_link_options(editor_tests PRIVATE /DEBUG /INCREMENTAL:NO)
+endif()
+
+add_test(NAME growing_storage COMMAND editor_tests --storage-only)

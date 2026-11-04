@@ -1,0 +1,12 @@
+name: GeoSith editor tests
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  geometry:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S tests -B build-tests -A x64
+      - run: cmake --build build-tests --config Release
+      - run: ctest --test-dir build-tests -C Release --output-on-failure

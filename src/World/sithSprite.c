@@ -1,3 +1,4 @@
+#include "Main/jkEditor.h"
 #include "sithSprite.h"
 
 #include "Primitives/rdSprite.h"
@@ -37,6 +38,7 @@ int sithSprite_ReadStaticSpritesListText(SithWorld *pWorld, int bSkip)
     if ( _memcmp(stdConffile_g_entry.aArgs[0].value, "world", 6u) || _memcmp(stdConffile_g_entry.aArgs[1].value, "sprites", 8u) )
         return 0;
     sprites_amt = _atoi(stdConffile_g_entry.aArgs[2].value);
+    sprites_amt = jkEditor_ResourceCapacity(pWorld,sprites_amt,256);
     if ( !sprites_amt )
         return 1;
 

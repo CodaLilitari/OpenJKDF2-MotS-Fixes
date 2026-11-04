@@ -1,3 +1,4 @@
+#include "Main/jkEditor.h"
 #include "sithControl.h"
 
 #include "General/sithStrTable.h"
@@ -397,6 +398,7 @@ void sithControl_Update(flex_t secDeltaTime, int msecDeltaTime)
 #ifndef FIXED_TIMESTEP_PHYS
         sithControl_ReadControls();
 #endif
+        if (!jkEditor_Control(sithWorld_g_pCurrentWorld->pLocalPlayer, secDeltaTime))
         for (int i = 0; i < sithControl_numHandlers; i++)
         {
             if (sithControl_aHandlers[i] && sithControl_aHandlers[i](sithWorld_g_pCurrentWorld->pLocalPlayer, secDeltaTime) )

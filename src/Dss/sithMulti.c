@@ -1,4 +1,5 @@
 #include "sithMulti.h"
+#include "Main/jkEditor.h"
 
 #include "Win95/stdComm.h"
 #include "Gameplay/sithEvent.h"
@@ -69,8 +70,7 @@ int sithMulti_ProcessChat(SithMessage *pMsg)
     int arg1 = NETMSG_POPS32();
     int arg2 = NETMSG_POPS32();
 
-    if ( arg2 >= 0x80 )
-        arg2 = 128;
+    if(arg2<1||arg2>128||arg1>=JKPLAYER_NUM_INFOS)return 0;
     NETMSG_POPSTR(v5, arg2);
     v5[arg2 + 1] = 0;
 
@@ -85,6 +85,7 @@ int sithMulti_ProcessChat(SithMessage *pMsg)
 
 HRESULT sithMulti_CreatePlayer(const char16_t *a1, const char16_t *a2, const char *a3, const char *a4, int maxPlayers, int sessionFlags, int multiModeFlags, int rate, int maxRank)
 {
+    if(jkEditor_NetEpisode(a3))multiModeFlags|=JKEDITOR_NET_FLAG;
     HRESULT result; // eax
     jkMultiEntry multiEntry; // [esp+Ch] [ebp-F0h] BYREF
 
@@ -175,6 +176,7 @@ int sithMulti_StartupClient()
 
 void sithMulti_RemoveAllActorsFromWorld(SithWorld *pWorld)
 {
+    if(jkEditor_IsLevel())return;
     // Added: nullptr check
     if (!pWorld) {
         return;
@@ -951,6 +953,7 @@ int sithMulti_ProcessSyncPlayers(SithMessage *pMsg)
 
 void sithMulti_ProcessPlayerLost(int idPlayer)
 {
+    jkEditor_NetPlayerLeft(idPlayer);
     uint32_t v1; // eax
     SithPlayer* v2; // ecx
     int v3; // edi
@@ -1058,6 +1061,7 @@ int sithMulti_ProcessJoinRequest(SithMessage *pMsg)
 
     if ( stdComm_bIsServer && v1 )
     {
+        if(jkEditor_NetJoinRequest(v1))return 1;
         NETMSG_POPSTR(v11, 32);
 
         sithMulti_verbosePrintf("sithMulti_ProcessJoinRequest, id %x map %s\n", v1, v11);
@@ -1388,7 +1392,13 @@ void sithMulti_Update(int msecDeltaTime)
                             {
                                 if ( v14->type != SITH_THING_WEAPON && v14->type != SITH_THING_EXPLOSION )
                                 {
-                                    if ( (v14->guid & 0xFFFF0000) != 0 )
+                                    /* Custom-level snapshots already bind every player body
+                                       to its host GUID. FullDescription is deliberately
+                                       ignored for those bodies to preserve player pointers.
+                                       Send their live state instead, including visibility;
+                                       position packets alone leave bootstrap players hidden. */
+                                    if ( (v14->guid & 0xFFFF0000) != 0
+                                         && !(v14->type == SITH_THING_PLAYER && jkEditor_IsLevel()) )
                                         sithDSSThing_FullDescription(v14, sithMulti_newPlayerId, 1);
                                     else
                                         sithDSSThing_UpdateState(v14, sithMulti_newPlayerId, 1);

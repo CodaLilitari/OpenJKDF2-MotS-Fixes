@@ -9,6 +9,7 @@
 #include "Main/jkRes.h"
 #include "Main/jkHud.h"
 #include "Main/jkMain.h"
+#include "Main/jkEditor.h"
 #include "Main/jkStrings.h"
 #include "jk.h"
 #include "General/stdString.h"
@@ -181,6 +182,7 @@ int Windows_GdiHandler(HWND a1, UINT msg, WPARAM wParam, HWND a4, LRESULT *a5)
         case WM_KEYFIRST:
             if ( wParam == VK_ESCAPE )               // ESC
             {
+                if(!jkHud_bChatOpen&&jkEditor_HandleEscape()){*a5=0;return 1;}
                 if (Main_bMotsCompat)
                 {
                     if (!jkGuiMultiplayer_mpcInfo.pCutsceneCog) {

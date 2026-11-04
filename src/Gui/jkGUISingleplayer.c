@@ -1,3 +1,4 @@
+#include "Main/jkEditor.h"
 #include "jkGUISingleplayer.h"
 
 #include "General/Darray.h"
@@ -24,19 +25,20 @@
 
 static int32_t jkGuiSingleplayer_unk_52B170[2] = {0xd, 0xe};
 
-static jkGuiElement jkGuiSingleplayer_buttons1[7] = {
+static jkGuiElement jkGuiSingleplayer_buttons1[8] = {
     { ELEMENT_TEXT,        0,               0,  NULL,              3, {0,  410,  640, 20},  1,  0,  0,  0,  0,  0, {0},  0},
     { ELEMENT_TEXT,        0,               6, "GUI_SINGLEPLAYER", 3, {190, 40,  440, 40},  1,  0,  0,  0,  0,  0, {0},  0},
     { ELEMENT_TEXTBUTTON,  JKGUI_NEWGAME,   2, "GUI_NEWGAME",      3, {190, 90,  210, 40},  1,  0,  0,  0,  0,  0, {0},  0},
     { ELEMENT_TEXTBUTTON,  JKGUI_LOAD,      2, "GUI_LOAD",         3, {430, 90,  200, 40},  1,  0,  0,  0,  0,  0, {0},  0},
     { ELEMENT_TEXTBUTTON,  JKGUI_DEBUGPLAY, 2, "GUI_DEBUG_PLAY",    3, {8,   90,  180, 40},  1,  0,  0,  0,  0,  0, {0},  0},
     { ELEMENT_TEXTBUTTON, -1,               2, "GUI_CANCEL",       3, {200, 430, 200, 40},  1,  0,  0,  0,  0,  0, {0},  0},
+    { ELEMENT_TEXTBUTTON, JKEDITOR_CREATE, 2, NULL, 3, {20, 250, 220, 40}, 1, 0, 0, 0, 0, 0, {0}, 0},
     { ELEMENT_END,         0,               0,  NULL,              0, {0},                  0,  0,  0,  0,  0,  0, {0},  0}
 };
 
 static jkGuiMenu jkGuiSingleplayer_menu1 = {jkGuiSingleplayer_buttons1, 0, 0xFFFF, 0xFFFF, 0xF, 0, 0, jkGui_stdBitmaps, jkGui_stdFonts, 0, 0, "thermloop01.wav", "thrmlpu2.wav", 0, 0, 0, 0, 0, 0};
 
-static jkGuiElement jkGuiSingleplayer_buttons2[10] = {
+static jkGuiElement jkGuiSingleplayer_buttons2[11] = {
     { ELEMENT_TEXT,        0,               0,  NULL,               3, {0,  410,  640, 20},  1,  0,  0,  0,  0,  0, {0},  0},
     { ELEMENT_TEXT,        0,               6, "GUI_SINGLEPLAYER",  3, {190, 40,  440, 40},  1,  0,  0,  0,  0,  0, {0},  0},
     { ELEMENT_TEXTBUTTON,  JKGUI_NEWGAME,   2, "GUI_NEWGAME",       3, {190, 90,  210, 40},  1,  0,  0,  0,  0,  0, {0},  0},
@@ -46,12 +48,13 @@ static jkGuiElement jkGuiSingleplayer_buttons2[10] = {
     { ELEMENT_LISTBOX,     1,               0,  NULL,               0, {250, 210, 320, 170}, 1,  0,  0, 0,  0, jkGuiSingleplayer_unk_52B170, {0},  0},
     { ELEMENT_TEXTBUTTON,  1,               2, "GUI_OK",            3, {400, 430, 200, 40},  1,  0,  0,  0,  0,  0, {0},  0},
     { ELEMENT_TEXTBUTTON, -1,               2, "GUI_CANCEL",        3, {200, 430, 200, 40},  1,  0,  0,  0,  0,  0, {0},  0},
+    { ELEMENT_TEXTBUTTON, JKEDITOR_CREATE, 2, NULL, 3, {20, 250, 220, 40}, 1, 0, 0, 0, 0, 0, {0}, 0},
     { ELEMENT_END,         0,               0,  NULL,               0, {0},                  0,  0,  0,  0,  0,  0, {0},  0}
 };
 
 static jkGuiMenu jkGuiSingleplayer_menu2 = {jkGuiSingleplayer_buttons2, 0, 0xFFFF, 0xFFFF, 0xF, 0, 0, jkGui_stdBitmaps, jkGui_stdFonts, 0, 0, "thermloop01.wav", "thrmlpu2.wav", 0, 0, 0, 0, 0, 0};
 
-static jkGuiElement jkGuiSingleplayer_buttons3[10] = {
+static jkGuiElement jkGuiSingleplayer_buttons3[11] = {
     { ELEMENT_TEXT,        0,               0,  NULL,               3, {0,  410,  640, 20},  1,  0,  0,  0,  0,  0, {0},  0},
     { ELEMENT_TEXT,        0,               6, "GUI_SINGLEPLAYER",  3, {190, 40,  440, 40},  1,  0,  0,  0,  0,  0, {0},  0},
     { ELEMENT_TEXTBUTTON,  JKGUI_NEWGAME,   2, "GUI_NEWGAME",       3, {190, 90,  210, 40},  1,  0,  0,  0,  0,  0, {0},  0},
@@ -61,6 +64,7 @@ static jkGuiElement jkGuiSingleplayer_buttons3[10] = {
     { ELEMENT_LISTBOX,     1,               0,  NULL,               0, {250, 210, 320, 170}, 1,  0,  0, 0,  0, jkGuiSingleplayer_unk_52B170, {0},  0},
     { ELEMENT_TEXTBUTTON,  1,               2, "GUI_OK",            3, {400, 430, 200, 40},  1,  0,  0,  0,  0,  0, {0},  0},
     { ELEMENT_TEXTBUTTON, -1,               2, "GUI_CANCEL",        3, {200, 430, 200, 40},  1,  0,  0,  0,  0,  0, {0},  0},
+    { ELEMENT_TEXTBUTTON, JKEDITOR_CREATE, 2, NULL, 3, {20, 250, 220, 40}, 1, 0, 0, 0, 0, 0, {0}, 0},
     { ELEMENT_END,         0,               0,  NULL,               0, {0},                  0,  0,  0,  0,  0,  0, {0},  0}
 };
 
@@ -71,6 +75,10 @@ void jkGuiSingleplayer_Startup()
     jkGui_InitMenu(&jkGuiSingleplayer_menu1, jkGui_stdBitmaps[JKGUI_BM_BK_SINGLE]);
     jkGui_InitMenu(&jkGuiSingleplayer_menu2, jkGui_stdBitmaps[JKGUI_BM_BK_SINGLE]);
     jkGui_InitMenu(&jkGuiSingleplayer_menu3, jkGui_stdBitmaps[JKGUI_BM_BK_SINGLE]);
+
+    jkGuiSingleplayer_buttons1[6].wstr = u"Create New Level";
+    jkGuiSingleplayer_buttons2[9].wstr = u"Create New Level";
+    jkGuiSingleplayer_buttons3[9].wstr = u"Create New Level";
 
     int old_Main_bDevMode = Main_bDevMode;
     Main_bDevMode = 1;
@@ -118,6 +126,7 @@ int jkGuiSingleplayer_Show()
 
     while ( 1 )
     {
+        if (clicked == JKEDITOR_CREATE) return jkEditor_Create(0) ? jkMain_LoadFile(jkRes_episodeGobName) : -1;
         while ( clicked >= JKGUI_NEWGAME )
         {
             if ( clicked > JKGUI_DEBUGPLAY )
@@ -160,6 +169,7 @@ int jkGuiSingleplayer_Show()
                         jkGuiRend_MenuSetEscapeKeyShortcutElement(&jkGuiSingleplayer_menu2, &jkGuiSingleplayer_buttons2[8]);
                         clicked = jkGuiRend_DisplayAndReturnClicked(&jkGuiSingleplayer_menu2);
                     }
+                    if (clicked == JKEDITOR_CREATE) { jkGuiRend_DarrayFree(&darray); return jkEditor_Create(0) ? jkMain_LoadFile(jkRes_episodeGobName) : -1; }
                     if ( clicked == 1 )
                     {
                         v18 = (const char *)jkGuiRend_GetId(&darray, jkGuiSingleplayer_buttons2[6].selectedTextEntry);
@@ -190,6 +200,7 @@ int jkGuiSingleplayer_Show()
                         jkGuiRend_MenuSetEscapeKeyShortcutElement(&jkGuiSingleplayer_menu2, &jkGuiSingleplayer_buttons2[8]);
                         clicked = jkGuiRend_DisplayAndReturnClicked(&jkGuiSingleplayer_menu2);
                     }
+                    if (clicked == JKEDITOR_CREATE) { jkGuiRend_DarrayFree(&array); return jkEditor_Create(0) ? jkMain_LoadFile(jkRes_episodeGobName) : -1; }
                     if ( clicked == 1 )
                     {
                         v4 = (const char *)jkGuiRend_GetId(&array, jkGuiSingleplayer_buttons2[6].selectedTextEntry);
@@ -218,6 +229,10 @@ int jkGuiSingleplayer_Show()
                             jkGuiRend_MenuSetEscapeKeyShortcutElement(&jkGuiSingleplayer_menu3, &jkGuiSingleplayer_buttons3[8]);
                             clicked = jkGuiRend_DisplayAndReturnClicked(&jkGuiSingleplayer_menu3);
 
+                            if (clicked == JKEDITOR_CREATE) {
+                                for (i=0;i<(int)array2.total;i++) { v11=jkGuiRend_GetStringEntry(&array2,i); if(v11->id) { JK_FREE((void*)v11->id); v11->id=0; } }
+                                jkGuiRend_DarrayFree(&array2); return jkEditor_Create(0) ? jkMain_LoadFile(jkRes_episodeGobName) : -1;
+                            }
                             debug_episode_idx = 0;
                             if ( clicked == 1 )
                             {

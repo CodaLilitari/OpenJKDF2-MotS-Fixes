@@ -57,6 +57,7 @@ uniform int tex_mode;
 uniform int blend_mode;
 uniform vec3 colorEffects_tint;
 uniform vec3 colorEffects_filter;
+uniform int editorModelBlue;
 uniform float colorEffects_fade;
 uniform vec3 colorEffects_add;
 uniform vec3 emissiveFactor;
@@ -473,6 +474,11 @@ if (saberRgbEnabled != 0)
 }
 
 fragColorEmiss = finalEmiss;
+    if (editorModelBlue != 0) {
+        float brightness = dot(fragColor.rgb, vec3(0.299, 0.587, 0.114));
+        fragColor.rgb = mix(fragColor.rgb * vec3(0.15, 0.35, 0.85), brightness * vec3(0.12, 0.4, 1.0), 0.65);
+        fragColorEmiss.rgb *= vec3(0.12, 0.35, 1.0);
+    }
 
     //fragColor = vec4(face_normals_parallax.x, face_normals_parallax.y, face_normals_parallax.z, 1.0);
     //fragColor = vec4(face_normals*0.5 + 0.5,1.0);

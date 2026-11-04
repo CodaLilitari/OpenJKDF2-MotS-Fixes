@@ -22,6 +22,7 @@
 #include "General/stdMath.h"
 #include "Dss/sithDSSThing.h"
 #include "jk.h"
+#include "Main/jkEditor.h"
 
 // Added: noclip
 int sithPlayer_bNoClippingRend = 0;
@@ -62,6 +63,7 @@ void sithPlayer_Close()
 
 void sithPlayer_PlacePlayers(SithWorld *pWorld)
 {
+    jkEditor_NetPreparePlayers(pWorld);
     SithThing *v1; // eax
     int v2; // ecx
     uint32_t v3; // ebx

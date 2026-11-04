@@ -147,6 +147,8 @@ const char* sithThing_aParams[NUM_THING_PARAMS] = {
     "fleshhit",
 };
 
+const char *sithThing_TemplateParameter(int index){return index>=0&&index<NUM_THING_PARAMS?sithThing_aParams[index]:NULL;}
+
 int sithThing_Startup()
 {
     int v1; // edi
@@ -427,7 +429,7 @@ SithThing* sithThing_GetGuidThing(int guid)
     if ( (guid & 0xFFFF0000) == 0 && guid < sithWorld_g_pCurrentWorld->numThingsLoaded )
     {
         result = &sithWorld_g_pCurrentWorld->aThings[guid];
-        if ( result->type )
+        if ( result->type && result->guid == guid )
             return result;
     }
 
@@ -1534,8 +1536,13 @@ int sithThing_ReadStaticThingsListText(SithWorld *pWorld, int bSkip)
     if ( _strcmp(stdConffile_g_entry.aArgs[1].value, "things") )
         return 0;
     v10 = _atoi(stdConffile_g_entry.aArgs[2].value);
+    v10 = jkEditor_ResourceCapacity(pWorld,v10,2048);
+    if (v10 < 0 || v10 > SITH_MAX_THINGS) return 0;
+    // Editor worlds reserve stable addresses, but initialize only active slots.
+    // Growing numThingsLoaded later never relocates live thing pointers.
+    int editorThingCapacity = jkEditor_ResourceCapacity(pWorld,v10,SITH_MAX_THINGS);
     { TWL_EXTRAM_SUGGEST(pSithHS); // Added: word-safe struct (audited); slow-but-loads on NDS
-    paThings = (SithThing *)SITH_ALLOC(sizeof(SithThing) * v10);
+    paThings = (SithThing *)SITH_ALLOC(sizeof(SithThing) * editorThingCapacity);
     TWL_EXTRAM_RESTORE(pSithHS); }
 
     sithWorld_g_pCurrentWorld->aThings = paThings;
@@ -1755,11 +1762,13 @@ int sithThing_ParseThingArg(StdConffileArg *arg, SithThing* pThing, int param)
         case THINGPARAM_MOVE:
             if ( !_strcmp(arg->value, "physics") )
             {
+                if(pThing->moveType==SITH_MT_PATH){if(pThing->trackParams.aFrames)SITH_FREE(pThing->trackParams.aFrames);memset(&pThing->physicsParams,0,sizeof(pThing->physicsParams));}
                 pThing->moveType = SITH_MT_PHYSICS;
                 result = 1;
             }
             else if ( !_strcmp(arg->value, "path") )
             {
+                if(pThing->moveType!=SITH_MT_PATH)memset(&pThing->trackParams,0,sizeof(pThing->trackParams));
                 pThing->moveType = SITH_MT_PATH;
                 result = 1;
             }
@@ -1767,6 +1776,7 @@ int sithThing_ParseThingArg(StdConffileArg *arg, SithThing* pThing, int param)
             {
                 if ( _strcmp(arg->value, "none") )
                     goto LABEL_59;
+                if(pThing->moveType==SITH_MT_PATH){if(pThing->trackParams.aFrames)SITH_FREE(pThing->trackParams.aFrames);memset(&pThing->trackParams,0,sizeof(pThing->trackParams));}
                 pThing->moveType = SITH_MT_NONE;
                 result = 1;
             }
@@ -1949,7 +1959,7 @@ int sithThing_ValidateThingPointer(SithThing* pThing)
     if ( pThing )
     {
         v1 = pThing->idx;
-        if ( v1 == pThing - sithWorld_g_pCurrentWorld->aThings && v1 < (SITH_MAX_THINGS-1) )
+        if ( v1 == pThing - sithWorld_g_pCurrentWorld->aThings && v1 < SITH_MAX_THINGS && v1 < sithWorld_g_pCurrentWorld->numThingsLoaded )
             result = 1;
     }
     return result;

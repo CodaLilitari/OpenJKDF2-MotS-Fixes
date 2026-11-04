@@ -1,4 +1,5 @@
 #include "jkGUIRend.h"
+#include "Main/jkMain.h"
 
 #include "General/Darray.h"
 #include "General/stdBitmap.h"
@@ -326,6 +327,8 @@ void jkGuiRend_MenuSetEscapeKeyShortcutElement(jkGuiMenu *menu, jkGuiElement *el
     menu->pEscapeKeyShortcutElement = element;
 }
 
+void jkGuiRend_CancelActiveMenu(void){if(jkGuiRend_activeMenu)jkGuiRend_activeMenu->lastClicked=-1;}
+
 int32_t jkGuiRend_DisplayAndReturnClicked(jkGuiMenu *menu)
 {
     int32_t msgret; // eax
@@ -345,6 +348,7 @@ int32_t jkGuiRend_DisplayAndReturnClicked(jkGuiMenu *menu)
 #endif
     while ( !menu->lastClicked )
     {
+        jkMain_NetworkTick();
         msgret = Window_MessageLoop();
 
         // Added: hoisted out of the else below. A quit request has to be honored

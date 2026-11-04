@@ -82,30 +82,33 @@ extern "C" {
                           };
 #define NETMSG_LEN_2(msgid) ((intptr_t)craftingPacket - (intptr_t)&stdComm_cogMsgTmp.pktData[0])
 
-#define NETMSG_IN_START(x) intptr_t _readingPacket = (intptr_t)&x->pktData[0]; uint8_t _readingOutU8; \
-uint16_t _readingOutU16; int16_t _readingOutS16; uint32_t _readingOutU32; \
-int32_t _readingOutS32; flex32_t _readingOutFloat; rdVector2 _readingOutV2; \
-rdVector3 _readingOutV3; rdVector3i _readingOutV3i; rdMatrix34 _readingOutM34;
-
-// TODO: Just rewrite all of this with memcpys
-#ifdef TARGET_RETRO_HOMEBREW // Prevent unaligned stores and loads
-#define CHECK_ALIGN(t) ((((intptr_t)_readingPacket) & (sizeof(t)-1)) ? _readingPacket += (sizeof(t) - (((intptr_t)_readingPacket) & (sizeof(t)-1))), 1 : 1)
+#include "General/stdNetReader.h"
+#define NETMSG_IN_START(x) \
+    intptr_t _readingPacket=(intptr_t)&(x)->pktData[0]; \
+    if((x)->netMsg.msg_size>sizeof((x)->pktData))return 0; \
+    intptr_t _readingEnd=_readingPacket+(x)->netMsg.msg_size; \
+    jmp_buf _readingAbort;if(setjmp(_readingAbort))return 0; \
+    uint8_t _readingOutU8;uint16_t _readingOutU16;int16_t _readingOutS16; \
+    uint32_t _readingOutU32;int32_t _readingOutS32;flex32_t _readingOutFloat; \
+    rdVector2 _readingOutV2;rdVector3 _readingOutV3;rdVector3i _readingOutV3i;rdMatrix34 _readingOutM34;
+#ifdef TARGET_RETRO_HOMEBREW
+#define NETMSG_ALIGN(t) sizeof(t)
 #else
-#define CHECK_ALIGN(t) (1)
+#define NETMSG_ALIGN(t) 1
 #endif
-
-#define NETMSG_POPU8() (_readingOutU8 = *(uint8_t*)_readingPacket, _readingPacket += sizeof(uint8_t), _readingOutU8)
-#define NETMSG_POPU16() (CHECK_ALIGN(uint16_t), _readingOutU16 = *(uint16_t*)_readingPacket, _readingPacket += sizeof(uint16_t), _readingOutU16)
-#define NETMSG_POPS16() (CHECK_ALIGN(int16_t), _readingOutS16 = *(int16_t*)_readingPacket, _readingPacket += sizeof(int16_t), _readingOutS16)
-#define NETMSG_POPU32() (CHECK_ALIGN(uint32_t), _readingOutU32 = *(uint32_t*)_readingPacket, _readingPacket += sizeof(uint32_t), _readingOutU32)
-#define NETMSG_POPS32() (CHECK_ALIGN(int32_t), _readingOutS32 = *(int32_t*)_readingPacket, _readingPacket += sizeof(int32_t), _readingOutS32)
-#define NETMSG_POPF32() (CHECK_ALIGN(flex32_t), _readingOutFloat = *(flex32_t*)_readingPacket, _readingPacket += sizeof(flex32_t), _readingOutFloat)
-#define NETMSG_POPVEC2() (CHECK_ALIGN(uint32_t), _readingOutV2 = *(rdVector2*)_readingPacket, _readingPacket += sizeof(rdVector2), _readingOutV2)
-#define NETMSG_POPVEC3() (CHECK_ALIGN(uint32_t), _readingOutV3 = *(rdVector3*)_readingPacket, _readingPacket += sizeof(rdVector3), _readingOutV3)
-#define NETMSG_POPVEC3I() (CHECK_ALIGN(uint32_t), _readingOutV3i = *(rdVector3i*)_readingPacket, _readingPacket += sizeof(rdVector3i), _readingOutV3i)
-#define NETMSG_POPMAT34() (CHECK_ALIGN(uint32_t), _readingOutM34 = *(rdMatrix34*)_readingPacket, _readingPacket += sizeof(rdMatrix34), _readingOutM34)
-#define NETMSG_POPSTR(x,l) { _strncpy((x), (char*)_readingPacket, (l)-1); (x)[(l)-1] = 0; _readingPacket += (l); }
-#define NETMSG_POPWSTR(x,l) { CHECK_ALIGN(uint16_t), _wcsncpy((x), (char16_t*)_readingPacket, (l)-1); (x)[(l)-1] = 0; _readingPacket += (l*sizeof(char16_t)); }
+#define NETMSG_READ(out,align) (stdNetRead(&_readingPacket,_readingEnd,&(out),sizeof(out),align,_readingAbort),(out))
+#define NETMSG_POPU8() NETMSG_READ(_readingOutU8,1)
+#define NETMSG_POPU16() NETMSG_READ(_readingOutU16,NETMSG_ALIGN(uint16_t))
+#define NETMSG_POPS16() NETMSG_READ(_readingOutS16,NETMSG_ALIGN(int16_t))
+#define NETMSG_POPU32() NETMSG_READ(_readingOutU32,NETMSG_ALIGN(uint32_t))
+#define NETMSG_POPS32() NETMSG_READ(_readingOutS32,NETMSG_ALIGN(int32_t))
+#define NETMSG_POPF32() NETMSG_READ(_readingOutFloat,NETMSG_ALIGN(flex32_t))
+#define NETMSG_POPVEC2() NETMSG_READ(_readingOutV2,NETMSG_ALIGN(uint32_t))
+#define NETMSG_POPVEC3() NETMSG_READ(_readingOutV3,NETMSG_ALIGN(uint32_t))
+#define NETMSG_POPVEC3I() NETMSG_READ(_readingOutV3i,NETMSG_ALIGN(uint32_t))
+#define NETMSG_POPMAT34() NETMSG_READ(_readingOutM34,NETMSG_ALIGN(uint32_t))
+#define NETMSG_POPSTR(x,l) {if((l)<=0||(size_t)(l)>sizeof(x))return 0;stdNetRead(&_readingPacket,_readingEnd,(x),(l),1,_readingAbort);(x)[(l)-1]=0;}
+#define NETMSG_POPWSTR(x,l) {if((l)<=0||(size_t)(l)>sizeof(x)/sizeof(char16_t))return 0;stdNetRead(&_readingPacket,_readingEnd,(x),(l)*sizeof(char16_t),NETMSG_ALIGN(uint16_t),_readingAbort);(x)[(l)-1]=0;}
 #define NETMSG_IN_END {}
 
 extern int jkGuiNetHost_bIsDedicated;

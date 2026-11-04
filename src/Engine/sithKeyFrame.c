@@ -1,3 +1,4 @@
+#include "Main/jkEditor.h"
 #include "sithKeyFrame.h"
 
 #include "Win95/std.h"
@@ -23,6 +24,7 @@ int sithKeyFrame_Load(SithWorld *pWorld, int bSkip)
         return 0;
 
     int sizeKeyframes = _atoi(stdConffile_g_entry.aArgs[2].value);
+    sizeKeyframes = jkEditor_ResourceCapacity(pWorld,sizeKeyframes,4096);
     if ( !sizeKeyframes )
         return 1;
 

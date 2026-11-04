@@ -1,3 +1,4 @@
+#include "Main/jkEditor.h"
 #include "sithWorld.h"
 
 #include "General/stdConffile.h"
@@ -362,6 +363,7 @@ void sithWorld_FreeEntry(SithWorld *pWorld)
     int v2; // ebx
 
     SITH_ASSERTREL(pWorld); // Added: J3D assert
+    if (pWorld == sithWorld_g_pCurrentWorld) jkEditor_Close();
 
 #ifdef DW_LASERS
     dwLaser_Free(pWorld); // Added: DroidWorks laser pool

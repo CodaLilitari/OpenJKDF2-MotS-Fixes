@@ -1,3 +1,4 @@
+#include "Main/jkEditor.h"
 #include "sithCog.h"
 
 #include "jk.h"
@@ -556,6 +557,7 @@ int sithCog_ReadCogsListText(SithWorld *pWorld, int bSkip)
     if ( _strcmp(stdConffile_g_entry.aArgs[0].value, "world") || _strcmp(stdConffile_g_entry.aArgs[1].value, "cogs") )
         return 0;
     num_cogs = _atoi(stdConffile_g_entry.aArgs[2].value);
+    num_cogs = jkEditor_ResourceCapacity(pWorld,num_cogs,32768);
     if ( !num_cogs )
         return 1;
     { TWL_EXTRAM_SUGGEST(pSithHS); // Added: word-width fields (fpath is debug-only)
@@ -628,6 +630,15 @@ sithCog* sithCog_Load(const char *pName)
 
     SITH_ASSERTREL(pName != NULL); // Added: from OpenJones3D
 
+    /* Editor catalogs contain many variants with the same class script.
+       A class COG is already shared by every thing based on its template. */
+#ifdef SITH_DEBUG_STRUCT_NAMES
+    if(jkEditor_ResourceCapacity(sithWorld_g_pLastLoadedWorld,0,1))for(int i=0;i<sithWorld_g_pLastLoadedWorld->numCogs;i++){
+        sithCog *existing=&sithWorld_g_pLastLoadedWorld->aCogs[i];if(!(existing->flags&SITH_COG_CLASS))continue;
+        const char *name=strrchr(existing->aName,'\\');name=name?name+1:existing->aName;
+        if(!__strcmpi(name,pName))return existing;
+    }
+#endif
     idx = sithWorld_g_pLastLoadedWorld->numCogs;
     if ( idx >= sithWorld_g_pLastLoadedWorld->sizeCogs )
         return 0;
@@ -649,7 +660,11 @@ sithCog* sithCog_Load(const char *pName)
         v9 = sithWorld_g_pLastLoadedWorld->numCogScripts;
         if ( v9 < sithWorld_g_pLastLoadedWorld->sizeCogScripts && (v8 = &sithWorld_g_pLastLoadedWorld->aCogScripts[v9], sithCogParse_Load(aName, v8, 0)) )
         {
-            stdHashtbl_Add(sithCog_g_pHashtable, aName, v8); // Added: v8 -> no v8 for aName
+#ifdef SITH_DEBUG_STRUCT_NAMES
+            stdHashtbl_Add(sithCog_g_pHashtable, v8->aName, v8);
+#else
+            stdHashtbl_Add(sithCog_g_pHashtable, pName, v8);
+#endif
             ++sithWorld_g_pLastLoadedWorld->numCogScripts;
         }
         else
@@ -1576,6 +1591,7 @@ int sithCog_ReadCogScriptsListText(SithWorld *pWorld, int bSkip)
     if ( _strcmp(stdConffile_g_entry.aArgs[0].value, "world") || _strcmp(stdConffile_g_entry.aArgs[1].value, "scripts") )
         return 0;
     sizeCogScripts = _atoi(stdConffile_g_entry.aArgs[2].value);
+    sizeCogScripts = jkEditor_ResourceCapacity(pWorld,sizeCogScripts,32768);
     if ( !sizeCogScripts )
         return 1;
     aCogScripts = (SithCogScript *)SITH_ALLOC(sizeof(SithCogScript) * sizeCogScripts);
@@ -1923,6 +1939,7 @@ int sithCog_LinkCogToThing(sithCog *pCog, SithThing *pThing, int linkId, int mas
         return 0;
     if ( linkId >= 0 )
     {
+        if(sithCog_numThingLinks>=SITHCOG_MAX_LINKS)return 0;
         pThing->flags |= SITH_TF_CAPTURED;
         sithCog_aThingLinks[sithCog_numThingLinks].thing = pThing;
         sithCog_aThingLinks[sithCog_numThingLinks].cog = pCog;
@@ -1942,6 +1959,7 @@ int sithCog_LinkCogToSurface(sithCog *pCog, SithSurface *pSurface, int linkId, i
         return 0;
     if ( linkId >= 0 )
     {
+        if(sithCog_numSurfaceLinks>=SITHCOG_MAX_LINKS)return 0;
         pSurface->flags |= SITH_SURFACE_COG_LINKED;
         sithCog_aSurfaceLinks[sithCog_numSurfaceLinks].surface = pSurface;
         sithCog_aSurfaceLinks[sithCog_numSurfaceLinks].cog = pCog;
@@ -1960,6 +1978,7 @@ int sithCog_LinkCogToSector(sithCog *pCog, SithSector *pSector, int linkId, int 
         return 0;
     if ( linkId >= 0 )
     {
+        if(sithCog_numSectorLinks>=SITHCOG_MAX_LINKS)return 0;
         pSector->flags |= SITH_SECTOR_COGLINKED;
         sithCog_aSectorLinks[sithCog_numSectorLinks].sector = pSector;
         sithCog_aSectorLinks[sithCog_numSectorLinks].cog = pCog;

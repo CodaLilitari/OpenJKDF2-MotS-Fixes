@@ -92,6 +92,7 @@ void jkGuiRend_Paint(jkGuiMenu *menu);
 void jkGuiRend_ElementSetClickShortcutScancode(jkGuiElement *element, int32_t idk);
 void jkGuiRend_MenuSetReturnKeyShortcutElement(jkGuiMenu *menu, jkGuiElement *element);
 void jkGuiRend_MenuSetEscapeKeyShortcutElement(jkGuiMenu *menu, jkGuiElement *element);
+void jkGuiRend_CancelActiveMenu(void);
 int32_t jkGuiRend_DisplayAndReturnClicked(jkGuiMenu *menu);
 void jkGuiRend_sub_50FAD0(jkGuiMenu *menu);
 void jkGuiRend_gui_sets_handler_framebufs(jkGuiMenu *menu);

@@ -1906,7 +1906,9 @@ void sithRender_RenderSectors()
             }
 
             // Render with N-Gons instead of triangle strips if flag 0x8 is unset, or if it's sky aVertices
-            if (LIKELY((sithRender_renderflags & 8) == 0 || v65->surfaceInfo.face.numVertices <= 3 || bIsSkySurface || !v65->surfaceInfo.face.lightingMode))
+            /* Large editor polygons must use the triangle path: the legacy
+               clipper has 32 slots and clipping can add vertices. */
+            if (LIKELY(v65->surfaceInfo.face.numVertices<=24 && ((sithRender_renderflags & 8) == 0 || v65->surfaceInfo.face.numVertices <= 3 || bIsSkySurface || !v65->surfaceInfo.face.lightingMode)))
             {
                 procEntry = rdCache_GetProcEntry();
                 if ( !procEntry )
