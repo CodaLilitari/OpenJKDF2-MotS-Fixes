@@ -6,6 +6,7 @@ static void freeEditorText(void){
     if(editorTextAtlas)stdDisplay_VBufferFree(editorTextAtlas);
     editorTextAtlas=editorTextSource=NULL;
 }
+// Added: accept immutable text and cast only at the legacy drawing API
 static uint32_t editorDrawText(tVBuffer *buffer,stdFont *font,unsigned int x,int y,int width,const char *text,int alpha){
     if(!buffer||!font||!font->pBitmap||!font->pBitmap->mipSurfaces)return 0;
     tVBuffer *source=font->pBitmap->mipSurfaces[0];

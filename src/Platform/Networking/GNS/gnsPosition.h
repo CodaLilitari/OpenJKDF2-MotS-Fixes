@@ -11,6 +11,7 @@ static bool gnsAcceptPosition(std::map<uint64_t,int64_t> &numbers,uint32_t sende
     uint64_t key=(uint64_t)sender<<32|guid;
     auto previous=numbers.find(key);
     if(previous!=numbers.end()){if(number<=previous->second)return false;previous->second=number;return true;}
+    // Added: evict old sequence history so new things are not rejected at capacity
     if(numbers.size()>=4096)numbers.clear();
     numbers.emplace(key,number);return true;
 }

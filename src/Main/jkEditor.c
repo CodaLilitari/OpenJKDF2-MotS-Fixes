@@ -391,6 +391,7 @@ static void drawMaterialPreview(tVBuffer *buffer,int material,int x,int y,int wi
     rdColor24 *colors=mat->palette_alloc?mat->palette_alloc:colormapColors(materialColormap[material]);
     int lut[256];for(int i=0;i<256;i++)lut[i]=palettePixel(buffer,colors[i].r,colors[i].g,colors[i].b);
     int checker[2]={palettePixel(buffer,30,30,30),palettePixel(buffer,70,70,70)};
+    // Added: unlock the preview source only after a successful lock
     if(source){int locked=stdDisplay_VBufferLock(source);if(!locked||!source->surface_lock_alloc){if(locked)stdDisplay_VBufferUnlock(source);source=NULL;}}
     if(!stdDisplay_VBufferLock(buffer)||!buffer->surface_lock_alloc){if(source)stdDisplay_VBufferUnlock(source);return;}
     int fitWidth=width,fitHeight=height;
@@ -808,6 +809,7 @@ static void syncEditorObjects(const EdModel *source) {
     }
 }
 static int apply(const EdModel *m) {
+    // Added: reject invalid or non-reciprocal portals before indexing adjoins
     for(int s=0;s<m->count;s++)for(int f=0;f<m->c[s].count;f++){const EdFace *p=&m->c[s].f[f];if(p->neighbor<0)continue;
         if(p->neighbor>=m->count||p->mirror<0||p->mirror>=m->c[p->neighbor].count||m->c[p->neighbor].f[p->mirror].neighbor!=s||m->c[p->neighbor].f[p->mirror].mirror!=f)return 0;}
     if(!syncCustomTemplates(m)){if(m!=model)syncCustomTemplates(model);return 0;}
@@ -1070,6 +1072,7 @@ static int commit(void) {
     if(edModelsEqual(candidate,model)){edClearGeometryError();return 1;}
     if(netClient()&&!netApplying)return netPropose(candidate);
     if(!edValidate(candidate)){say("Edit rejected: geometry must remain closed, planar and convex.");return 0;}
+    // Added: heap-allocate the large published model instead of using the stack
     std::unique_ptr<EdModel> published(new EdModel());edCopyModel(published.get(),candidate);
     EditorHistoryEntry entry={0};
     if(pendingUndo){entry=historyEntry(undoModel,&undoPicks);if(!entry.data){say("Edit rejected: could not allocate undo history.");return 0;}}
@@ -1089,6 +1092,7 @@ static void leaveEditor(SithThing *p) {
     active=0;p->physicsParams.flags=savedPhysics;g_debugmodeFlags=savedDebug;p->flags=savedThingFlags;grabbing=groupGrab=cleaving=objectGrabbing=objectRotating=lightGrabbing=0;objectHandleHovered=-10000;
     edResetDoubleTap(&jumpTap,0);
     int sector=-1;for(int s=0;s<model->count;s++)if(edContains(&model->c[s],vec(p->position))){sector=s;break;}
+    // Added: avoid dividing by zero when the fallback sector has no vertices
     if(sector<0) {EdVec center=edV(0,0,0);int count=0;for(int f=0;f<model->c[0].count;f++)for(int v=0;v<model->c[0].f[f].count;v++){center=edAdd(center,model->c[0].f[f].v[v].p);count++;}if(count)p->position=rdvec(edScale(center,1.0/count));sector=0;}
     sithThing_SetSector(p,&sithWorld_g_pCurrentWorld->aSectors[sector],0);
     syncEditorObjects(model);

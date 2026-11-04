@@ -19,6 +19,7 @@ static int cogToken(const char **cursor,char *out,size_t size){const char *p=*cu
 }
 int edCogParseScript(EdPlacedCog *out,const char *filename,const char *text){EdPlacedCog draft={0};int symbols=0,ended=0;snprintf(draft.file,sizeof(draft.file),"%s",filename);if(strlen(filename)>=sizeof(draft.file))return 0;
     for(const char *p=text;*p;){const char *end=strchr(p,'\n');size_t n=end?(size_t)(end-p):strlen(p);char line[2048];if(n>=sizeof(line))return 0;edCopy(line,p,n);line[n]=0;p=end?end+1:p+n;
+        // Added: ignore overlong header tokens before the symbols section
         const char *cursor=line;char type[32],name[32],token[256];int result=cogToken(&cursor,type,sizeof(type));if(result<0){if(!symbols)continue;return 0;}if(!result)continue;for(char *q=type;*q;q++)*q=(char)tolower((unsigned char)*q);
         if(!symbols){if(!strcmp(type,"symbols"))symbols=1;continue;}if(!strcmp(type,"end")){ended=1;break;}
         int kind=0;for(int i=2;i<=14;i++)if(!strcmp(type,edCogTypeName(i)))kind=i;if(!strcmp(type,"float"))kind=ED_COG_FLEX;if(!kind)continue;
@@ -36,6 +37,7 @@ int edCogParamValue(const EdModel *m,const EdCogParam *p,char value[32]){
     snprintf(value,32,"%s",p->value);return 1;
 }
 int edCogSetValue(const EdModel *m,EdCogParam *p,const char *value){EdCogParam draft=*p;draft.cell=draft.face=-1;if(!value[0]||strlen(value)>=32)return 0;
+    // Added: require a complete vector with no trailing content
     if(p->type==ED_COG_VECTOR){double x,y,z;int used=-1;if(sscanf(value," ( %lf / %lf / %lf )%n",&x,&y,&z,&used)!=3||used<0||value[used+strspn(value+used," \t")]||!isfinite(x)||!isfinite(y)||!isfinite(z))return 0;if(snprintf(draft.value,32,"(%.6g/%.6g/%.6g)",x,y,z)>=32)return 0;}
     else if(p->type==ED_COG_FLEX){char *end;double v=strtod(value,&end);if(end==value||*end||!isfinite(v)||fabs(v)>1e9)return 0;snprintf(draft.value,32,"%.9g",v);}
     else if(p->type==ED_COG_INT||p->type==ED_COG_THING||p->type==ED_COG_SURFACE||p->type==ED_COG_SECTOR||p->type==ED_COG_COG){char *end;long id=strtol(value,&end,0);if(end==value||*end||id< -2147483647L||id>2147483647L)return 0;
@@ -114,6 +116,7 @@ int edGobAddFile(const char *path,const char *name,const void *data,unsigned int
     ok=ok&&!fseek(f,directory,SEEK_SET)&&fread(countData,1,4,f)==4;uint32_t count=ok?readU32(countData):0;if(count>4096)ok=0;unsigned char *entries=ok?(unsigned char*)edCalloc(count+1,136):NULL;ok=ok&&entries&&fread(entries,136,count,f)==count;
     if(ok){int index=(int)count;for(uint32_t i=0;i<count;i++)if(equalText((char*)entries+i*136+8,name)){index=(int)i;break;}if(index==(int)count)count++;
         ok=!fseek(f,directory,SEEK_SET)&&fwrite(data,1,size,f)==size;uint32_t next=(uint32_t)ftell(f);unsigned char *entry=entries+index*136;edZero(entry,0,136);
+        // Added: commit directory metadata only after payload and entry writes succeed
         for(int i=0;i<4;i++){entry[i]=(unsigned char)(directory>>(i*8));entry[4+i]=(unsigned char)(size>>(i*8));}strcpy((char*)entry+8,name);if(ok){u32(f,count);ok=fwrite(entries,136,count,f)==count&&!ferror(f)&&!fseek(f,8,SEEK_SET);if(ok)u32(f,next);}
     }edFree(entries);ok=ok&&!ferror(f);if(fclose(f))ok=0;return ok;
 }
@@ -164,6 +167,7 @@ static int jkl(FILE *f,const EdModel *m,const char *resources) {
         if(cell->tolerance)fprintf(f,"# GeoSith tolerance %d %.9f\n",s,cell->tolerance);
         fprintf(f,"Sector %d\nFlags 0x%x\nAmbient light %.9f\nExtra light %.9f\nColormap 0\nTint %.9f %.9f %.9f\nBoundbox %.9f %.9f %.9f %.9f %.9f %.9f\n",s,cell->flags,cell->ambientLight,cell->extraLight,cell->tint.x,cell->tint.y,cell->tint.z,lo.x,lo.y,lo.z,hi.x,hi.y,hi.z);
         if(cell->sound[0])fprintf(f,"Sound %s %.9f\n",cell->sound,cell->soundVolume);
+        // Added: export the bounding-sphere radius, not the squared diagonal
         fprintf(f,"Center %.9f %.9f %.9f\nRadius %.9f\nVertices %d\n",center.x,center.y,center.z,0.5*sqrt(d.x*d.x+d.y*d.y+d.z*d.z),count);
         for(int v=0;v<count;v++) fprintf(f,"%d: %d\n",v,positionIndices[k++]);
         fprintf(f,"Surfaces %d %d\n",first[s],m->c[s].count);

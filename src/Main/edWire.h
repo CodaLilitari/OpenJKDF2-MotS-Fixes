@@ -8,6 +8,7 @@
 #define ED_WIRE_VERSION 9u
 typedef struct {unsigned char *bytes;size_t size,at;int read,ok;} EdWire;
 static void edWireBytes(EdWire *w,void *value,size_t size){if(!w->ok||w->at>w->size||size>w->size-w->at){w->ok=0;return;}if(w->read)edCopy(value,w->bytes+w->at,size);else if(w->bytes)edCopy(w->bytes+w->at,value,size);w->at+=size;}
+// Added: terminate decoded fixed-width strings, including individual intro rows
 static void edWireText(EdWire *w,void *value,size_t size,size_t stride=0){edWireBytes(w,value,size);if(!stride)stride=size;if(w->read&&w->ok&&stride)for(size_t i=stride;i<=size;i+=stride)((char*)value)[i-1]=0;}
 static void edWireNumber(EdWire *w,void *value,int size){unsigned char bytes[8];uint64_t number=0;if(!w->read){if(size==4){uint32_t n;edCopy(&n,value,4);number=n;}else edCopy(&number,value,size);}for(int i=0;i<size;i++)bytes[i]=(unsigned char)(number>>(i*8));edWireBytes(w,bytes,size);if(w->read&&w->ok){number=0;for(int i=0;i<size;i++)number|=(uint64_t)bytes[i]<<(i*8);if(size==4){uint32_t n=(uint32_t)number;edCopy(value,&n,4);}else edCopy(value,&number,size);}}
 static void edWireCount(EdWire *w,int *value,int limit){edWireNumber(w,value,4);if(*value<0||*value>limit)w->ok=0;}

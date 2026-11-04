@@ -1,7 +1,7 @@
 #ifndef _DEVICES_SITHCOMM_H
 #define _DEVICES_SITHCOMM_H
 
-// sithMessage_aTypeFuncs has 65 entries (symbols.syms), one fewer than DSS_MAX
+// Added: sithMessage_aTypeFuncs has 65 entries (symbols.syms), one fewer than DSS_MAX
 #define SITH_NUM_DSS_HANDLERS (65)
 
 #define sithComm_Startup_ADDR (0x004E1700)

@@ -286,6 +286,7 @@ LABEL_14:
                 else
                 {
 LABEL_22:
+                    // Added: dispatch only through the 65-entry DSS handler table
                     if ( v2 < (unsigned int)SITH_NUM_DSS_HANDLERS )
                     {
                         if ( sithMessage_aTypeFuncs[v2] && !jkEditor_NetIgnoreMessage(&sithComm_netMsgTmp) )
@@ -326,6 +327,7 @@ int sithMessage_Process(SithMessage *pMessage)
 
     int msgId = pMessage->netMsg.cogMsgId;
 
+    // Added: reject message IDs outside the 65-entry DSS handler table
     if (pMessage->netMsg.msg_size<=sizeof(pMessage->pktData) && msgId>=0 && msgId<SITH_NUM_DSS_HANDLERS && sithMessage_aTypeFuncs[msgId] && !jkEditor_NetIgnoreMessage(pMessage))
         result = sithMessage_aTypeFuncs[msgId](pMessage);
     else
