@@ -6,7 +6,62 @@ contents before admitting a player. Older GeoSith/OpenJKDF2 releases cannot join
 this protocol. The editor sends the level and placed COG sources automatically;
 Jedi Knight textures, models, sounds and other game assets are not transferred.
 
-## Joining
+## Choose a connection
+
+- **Valve GNS (LAN / direct IP / VPN)** keeps the existing direct networking,
+  IPv4/IPv6 discovery, UPnP mapping and VPN support.
+- **Imperial Relay (no port forwarding)** uses the GPL relay implementation from
+  [mrself-de-struct/OpenJKDF2](https://github.com/mrself-de-struct/OpenJKDF2).
+  Both host and clients connect outward to the same relay. Only the relay server
+  needs a reachable UDP port. Choose this mode, enter the relay address, then host
+  or join normally. The default is `master.jkjunkie.com:27900`; availability of
+  this third-party service is outside GeoSith's control. You may run your own.
+
+The relay settings dialog lets you enable direct links with automatic relay
+fallback, or uncheck it to keep all traffic on the relay. Use a trusted relay:
+this imported UDP protocol does not provide GNS's transport encryption.
+
+GeoSith games use their own relay application identifier. The relay carries the
+packets, but stock OpenJKDF2 / Imperial clients cannot join GeoSith editor sessions.
+All participants must run matching GeoSith builds and game assets. Host edit
+permissions, full level transfer, optimistic editing and shared undo work through
+both modes. The relay does not receive the original Jedi Knight resources.
+
+## Dedicated hosting through a relay
+
+The existing dedicated-server mode can use either transport. For a server without
+player-side port forwarding, run from your prepared JK game directory:
+
+```text
+..\build\Release\openjkdf2-64.exe -dedicatedServer -headless -episode JK1MP -map m2.jkl -relayServer your-relay.example:27900
+```
+
+For an exported runtime, use the supplied launcher with the same arguments.
+`-relayOnly` disables direct links. Without `-relayServer`, the existing GNS
+hosting behavior is retained. Hosting settings continue to come from the normal
+GeoSith host configuration; this integration does not import the fork's rcon,
+voting, server.json or map-rotation system.
+
+For unattended launches/tests, `GEOSITH_RELAY=host:port` also selects relay mode;
+`GEOSITH_RELAY_ONLY=1` forces relay-only traffic. These apply to the process and
+its children. Unset them to return unattended launches to GNS.
+
+## Run your own relay
+
+The imported source and upstream operating instructions are in
+`tools/jkrelay/`. The standalone test build also builds
+`build-tests/Release/jkrelay_server.exe` on Windows:
+
+```text
+jkrelay_server.exe -p 27900 -v
+```
+
+Run that server on a publicly reachable machine and allow UDP 27900 there.
+Players then enter its address in GeoSith. A relay running behind the same
+inaccessible home router still needs forwarding on that router; an external
+reachable relay is what removes this requirement for players.
+
+## Joining with Valve GNS
 
 In Join Game, type `LAN` to search the local network, or enter the host address:
 `203.0.113.10`, `host.example:27020`, `[IPv6-address]:27020`, or a VPN address.
@@ -37,11 +92,7 @@ Do not share 127.0.0.1 or a private LAN address with someone outside that networ
 LAN discovery uses UDP 27019; do not forward that discovery port to the internet.
 
 Carrier-grade NAT, double NAT and restricted networks may still prevent direct
-hosting. This build does not include a public matchmaking/relay service. Use an
-existing shared VPN and connect to the host's VPN address, or use a host with a
-publicly reachable address. A relay cannot be provided just by shipping the GNS
-DLL; it needs a deployed service. No account or external service is configured
-by GeoSith automatically.
+hosting. Use Imperial Relay instead, or a shared VPN and the host's VPN IP.
 
 ## Synchronization and recovery
 

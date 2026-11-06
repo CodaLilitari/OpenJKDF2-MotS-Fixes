@@ -709,6 +709,12 @@ void Main_ParseCmdLine(char *cmdline)
             //Main_cogLogFp = fopen("cog.log", "wc");
         }
 #ifdef QOL_IMPROVEMENTS
+#ifdef PLATFORM_GNS
+        else if (!__strcmpi(pArgTok,"-relayServer")) {
+            char* address=_strtok(0," \t");if(address&&*address)stdComm_GNS_SetRelay(address,1);
+        }
+        else if (!__strcmpi(pArgTok,"-relayOnly")) {stdComm_GNS_SetRelay(NULL,0);}
+#endif
         else if (!__strcmpi(pArgTok, "-dedicatedServer") || !__strcmpi(pArgTok, "/dedicatedServer") )
         {
             Main_bDedicatedServer = 1;

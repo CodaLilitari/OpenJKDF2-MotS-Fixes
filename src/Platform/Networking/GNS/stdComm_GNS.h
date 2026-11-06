@@ -7,6 +7,10 @@ extern "C" {
 
 #ifdef PLATFORM_GNS
 
+int stdComm_GNS_IsRelay(void);
+const char* stdComm_GNS_RelayAddress(void);
+int stdComm_GNS_RelayDirect(void);
+void stdComm_GNS_SetRelay(const char* address,int direct);
 void stdComm_GNS_Startup();
 void stdComm_GNS_Shutdown();
 void stdComm_GNS_GetStatus(char *text,int size);

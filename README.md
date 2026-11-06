@@ -107,4 +107,4 @@ For standalone tests and live-engine checks, see [testing](docs/EDITOR-GUIDE.md#
 
 ## Project and license
 
-GeoSith retains OpenJKDF2's history, license, and third-party notices. See [LICENSE.md](LICENSE.md) and the [upstream documentation](README-OpenJKDF2.md). GeoSith-specific behavior on platforms other than Windows x64 has not been verified.
+GeoSith's combined build, including the Imperial Relay networking integration, is distributed under **GPL-2.0-or-later**. See [LICENSE.md](LICENSE.md) and [COPYING](COPYING). The original OpenJKDF2 code and third-party components retain their respective notices; see the [upstream documentation](README-OpenJKDF2.md). GeoSith-specific behavior on platforms other than Windows x64 has not been verified.

@@ -84,6 +84,31 @@ static jkGuiMenu jkGuiMultiplayer_menu4 = {jkGuiMultiplayer_aElements4, -1, 0xFF
 
 char16_t jkGuiMultiplayer_ipText[256];
 
+// GeoSith relay settings are independent of the direct-IP address and port.
+static int configureRelay(void) {
+#ifdef PLATFORM_GNS
+    char16_t address[256];char narrow[256];
+    wuRegistry_GetWString("geosithRelay",address,256,u"master.jkjunkie.com:27900");
+    jkGuiElement e[8]={0};
+    e[0]=(jkGuiElement){ELEMENT_TEXT,0,2,u"Imperial Relay",3,{20,30,600,40},1};
+    e[1]=(jkGuiElement){ELEMENT_TEXT,0,0,u"Relay address (host:port)",3,{20,110,600,25},1};
+    e[2]=(jkGuiElement){ELEMENT_TEXTBOX,0,0,address,255,{50,150,540,30},1};
+    e[3]=(jkGuiElement){ELEMENT_CHECKBOX,0,0,u"Try direct links, with relay fallback",0,{50,210,540,30},1};
+    e[3].selectedTextEntry=wuRegistry_GetInt("geosithRelayDirect",1);
+    e[4]=(jkGuiElement){ELEMENT_TEXT,0,0,u"Everyone uses this relay. No player port forwarding.",3,{20,270,600,25},1};
+    e[5]=(jkGuiElement){ELEMENT_TEXTBUTTON,1,2,u"Continue",3,{340,400,280,40},1};
+    e[6]=(jkGuiElement){ELEMENT_TEXTBUTTON,-1,2,u"Cancel",3,{20,400,280,40},1};e[7].type=ELEMENT_END;
+    jkGuiMenu menu={e,-1,0xffff,0xffff,15,0,0,jkGui_stdBitmaps,jkGui_stdFonts};
+    jkGui_InitMenu(&menu,jkGui_stdBitmaps[JKGUI_BM_BK_MULTI]);jkGuiRend_MenuSetEscapeKeyShortcutElement(&menu,&e[6]);jkGuiRend_MenuSetReturnKeyShortcutElement(&menu,&e[5]);
+    if(jkGuiRend_DisplayAndReturnClicked(&menu)!=1)return 0;
+    stdString_WcharToChar(narrow,address,255);narrow[255]=0;if(!narrow[0])return 0;
+    wuRegistry_SetWString("geosithRelay",address);wuRegistry_SaveInt("geosithRelayDirect",e[3].selectedTextEntry);
+    stdComm_GNS_SetRelay(narrow,e[3].selectedTextEntry);return 1;
+#else
+    return 0;
+#endif
+}
+
 void jkGuiMultiplayer_Startup()
 {
     stdPlatform_Printf("OpenJKDF2: %s\n", __func__); // Added
@@ -181,7 +206,12 @@ LABEL_1:
                     if ( v3 > 0 )
                     {
                         // TODO if this is a ptr, fix it
+                        if(jkGuiMultiplayer_aElements2[3].selectedTextEntry==1&&!configureRelay()){v3=-1;break;}
                         v4 = stdComm_OpenConnection((void*)(intptr_t)jkGuiMultiplayer_aElements2[3].selectedTextEntry);
+#ifdef PLATFORM_GNS
+                        if(!stdComm_GNS_IsRelay())wuRegistry_GetWString("lastConnectedHost",jkGuiMultiplayer_ipText,256,u"LAN");
+                        jkGuiMultiplayer_aElements3[12].wstr=stdComm_GNS_IsRelay()?u"Relay address (same relay as the host)":u"LAN, public IP, or hostname:port (default UDP 27020)";
+#endif
                         if ( v4 == 0x887700FA )
                         {
                             v24 = jkStrings_GetUniStringWithFallback("GUINET_NOTAVAIL");
@@ -243,7 +273,12 @@ LABEL_1:
                     if ( v16 > 0 )
                     {
                         // TODO if this is a ptr, fix it
+                        if(jkGuiMultiplayer_aElements2[3].selectedTextEntry==1&&!configureRelay()){v3=-1;break;}
                         v17 = stdComm_OpenConnection((void*)(intptr_t)jkGuiMultiplayer_aElements2[3].selectedTextEntry);
+#ifdef PLATFORM_GNS
+                        if(!stdComm_GNS_IsRelay())wuRegistry_GetWString("lastConnectedHost",jkGuiMultiplayer_ipText,256,u"LAN");
+                        jkGuiMultiplayer_aElements3[12].wstr=stdComm_GNS_IsRelay()?u"Relay address (same relay as the host)":u"LAN, public IP, or hostname:port (default UDP 27020)";
+#endif
                         if ( v17 == 0x887700FA )
                         {
                             v28 = jkStrings_GetUniStringWithFallback("GUINET_NOTAVAIL");
@@ -357,7 +392,11 @@ LABEL_29:
 #ifndef PLATFORM_GNS
         if(__wcscmp(jkGuiMultiplayer_aEntries[jkGuiMultiplayer_aElements3[3].selectedTextEntry].wPassword,(const char16_t*)jkGuiMultiplayer_stru_556168.field_300))goto LABEL_28;
 #endif
+#ifdef PLATFORM_GNS
+        wuRegistry_SetWString(stdComm_GNS_IsRelay()?"geosithRelay":"lastConnectedHost", jkGuiMultiplayer_ipText);
+#else
         wuRegistry_SetWString("lastConnectedHost", jkGuiMultiplayer_ipText);
+#endif
 #endif
         v10 = stdComm_Open(v7,(char16_t*)jkGuiMultiplayer_stru_556168.field_300);
         if ( v10 )

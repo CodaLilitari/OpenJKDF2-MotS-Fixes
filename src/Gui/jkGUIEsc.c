@@ -110,6 +110,7 @@ static void networkDetails(void){int previousNetSafe=jkEditor_NetSafeDialog(1);j
     elements[5]=(jkGuiElement){ELEMENT_TEXT,0,0,u"Internet: share the host's public IP and hosting UDP port.",3,{20,230,600,24},1};
     elements[6]=(jkGuiElement){ELEMENT_TEXT,0,0,u"LAN: type LAN in Join Game. VPN: enter the host's VPN IP.",3,{20,260,600,24},1};
     elements[7]=(jkGuiElement){ELEMENT_TEXTBUTTON,2,2,u"Retry Router Mapping",3,{20,330,280,40},sithNet_isServer};
+    if(stdComm_GNS_IsRelay()){elements[5].wstr=u"Internet: choose the same relay address as the host.";elements[6].wstr=u"Relay connections do not need player port forwarding.";elements[7].bIsVisible=0;}
     elements[8]=(jkGuiElement){ELEMENT_TEXTBUTTON,-1,2,u"Close",3,{340,400,280,40},1};elements[9].type=ELEMENT_END;
     jkGuiMenu menu={elements,-1,0xffff,0xffff,15,0,0,jkGui_stdBitmaps,jkGui_stdFonts};menu.idkFunc=networkDetailsTick;jkGui_InitMenu(&menu,jkGui_stdBitmaps[JKGUI_BM_BK_ESC]);jkGuiRend_MenuSetEscapeKeyShortcutElement(&menu,&elements[8]);
     for(;;){int result=jkGuiRend_DisplayAndReturnClicked(&menu);if(sithNet_isServer)stdComm_GNS_AllowEdits(elements[4].selectedTextEntry);if(result==2){stdComm_GNS_RetryRouter();continue;}break;}jkEditor_NetSafeDialog(previousNetSafe);

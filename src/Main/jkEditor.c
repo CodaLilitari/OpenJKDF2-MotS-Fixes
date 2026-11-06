@@ -40,6 +40,7 @@ int sithMulti_StartupClient(void);
 #include "Main/jkRes.h"
 #include "Engine/rdCamera.h"
 #include "Engine/sithCamera.h"
+#include "Engine/sithIntersect.h"
 #include "Engine/rdThing.h"
 #include "Primitives/rdPolyline.h"
 #include "Raster/rdCache.h"
@@ -806,6 +807,31 @@ static void syncEditorObjects(const EdModel *source) {
         netSyncObjectGuid(thing,i);
     }
 }
+/* Rebuilds replace surface allocations, not physical contact. Keep an existing
+   contact only when its plane and supporting polygon survive the edit. This
+   also handles cleaved/renumbered floors without replaying landing effects. */
+static SithSurface *rebuiltSupport(SithThing *thing,SithWorld *oldWorld,SithWorld *geometry,const EdModel *m) {
+    SithSurface *old=thing->attachedSurface;
+    if(!old||old->surfaceInfo.face.numVertices<3||old->flags&SITH_SURFACE_SCROLLING)return NULL;
+    EdVec normal=vec(old->surfaceInfo.face.normal);
+    EdVec point=vec(oldWorld->aVertices[old->surfaceInfo.face.vertexPosIdx[0]]);
+    double plane=edDot(normal,point);
+    EdVec projected=edSub(vec(thing->position),edScale(normal,edDot(normal,vec(thing->position))-plane));
+    rdVector3 contact=rdvec(projected);
+    for(int s=0;s<m->count;s++) {
+        if(!edContains(&m->c[s],vec(thing->position)))continue;
+        SithSector *sector=&geometry->aSectors[s];
+        for(int f=0;f<sector->numSurfaces;f++) {
+            SithSurface *surface=&sector->surfaces[f];rdFace *face=&surface->surfaceInfo.face;
+            if(!(surface->flags&SITH_SURFACE_HAS_COLLISION)||surface->flags&SITH_SURFACE_SCROLLING)continue;
+            EdVec difference=edSub(vec(face->normal),normal);
+            if(edDot(difference,difference)>ED_EPS*ED_EPS)continue;
+            if(fabs(edDot(normal,vec(geometry->aVertices[face->vertexPosIdx[0]]))-plane)>ED_EPS)continue;
+            if(sithIntersect_TestSphereFaceHit(&contact,0,face,geometry->aVertices,NULL))return surface;
+        }
+    }
+    return NULL;
+}
 static int apply(const EdModel *m) {
     if(!syncCustomTemplates(m)){if(m!=model)syncCustomTemplates(model);return 0;}
     SithWorld *w=sithWorld_g_pCurrentWorld,geo={0}; EdBuffer<int> starts;EdBuffer<EdBuffer<int>> fi,ai;
@@ -869,7 +895,13 @@ static int apply(const EdModel *m) {
     }
     for(int i=0;i<w->numThingsLoaded;i++) {
         SithThing *t=&w->aThings[i];
-        if(t->attach_flags&SITH_ATTACH_SURFACE)sithThing_DetachThing(t);
+        if(t->attach_flags&SITH_ATTACH_SURFACE) {
+            SithSurface *support=rebuiltSupport(t,w,&geo,m);
+            if(support) {
+                t->attachedSurface=support;t->attachedSufaceInfo=&support->surfaceInfo;
+                t->field_38=geo.aVertices[support->surfaceInfo.face.vertexPosIdx[0]];
+            }else sithThing_DetachThing(t);
+        }
         t->sector=NULL;t->pNextThingInSector=t->pPrevThingInSector=NULL;
     }
     sithSoundMixer_pCurSector=NULL;
@@ -1649,7 +1681,13 @@ static int stressWalkingDrag(SithThing *p) {
     EdVec origin,direction;ray(&origin,&direction);
     delta=edAdd(delta,edDragTraceStep(&trace,origin,direction));
     EdVec movement=edSurfaceDragDelta(delta,edNormal(&snapshot->c[cap.cell].f[cap.face]));
+    int wasGrounded=(p->attach_flags&SITH_ATTACH_SURFACE)!=0;
+    rdVector3 velocity=p->physicsParams.vel;
     if(!trace.valid||fabs(delta.y-(origin.y-start.y))>.00001||!edMove(candidate,snapshot,cap,movement)||!commit())exit(2);
+    if(wasGrounded&&(!(p->attach_flags&SITH_ATTACH_SURFACE)||p->attachedSurface->pSector!=p->sector||
+       p->physicsParams.vel.x!=velocity.x||p->physicsParams.vel.y!=velocity.y||p->physicsParams.vel.z!=velocity.z)) {
+        printf("GEOSITH_WALK_DRAG FAIL: rebuild interrupted floor contact\n");fflush(stdout);exit(2);
+    }
     rdVector_Zero3(&p->physicsParams.acceleration);p->physicsParams.vel.x=0;p->physicsParams.vel.y=1;
     if(frame++>=180) {
         int ok=grounded>10&&origin.y>1.5&&!(p->physicsParams.flags&SITH_PF_FLY)&&!(g_debugmodeFlags&DEBUGFLAG_NOCLIP);

@@ -25,3 +25,12 @@ if(MSVC AND GEOSITH_ASAN)
 endif()
 
 add_test(NAME growing_storage COMMAND editor_tests --storage-only)
+
+add_executable(relay_channel_tests relay_channel_test.cpp)
+target_compile_features(relay_channel_tests PRIVATE cxx_std_17)
+add_test(NAME relay_channel COMMAND relay_channel_tests)
+
+add_executable(jkrelay_server ../tools/jkrelay/jkrelay_server.c)
+if(WIN32)
+  target_link_libraries(jkrelay_server PRIVATE ws2_32)
+endif()

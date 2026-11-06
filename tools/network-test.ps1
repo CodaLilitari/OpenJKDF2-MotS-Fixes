@@ -35,6 +35,7 @@ try {
         $env:GEOSITH_NET_ROLE = "$role"
         $episode = if ($role -eq 1) { if($Level){$Level}else{'sithed_smoke'} } else { $bootstrap }
         $process = Start-Process $exe -ArgumentList '-headless','-autostart','-sp','-episode',$episode,'-map',$Map -WorkingDirectory $env:OPENJKDF2_ROOT -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $testRoot "$role.stdout.log") -RedirectStandardError (Join-Path $testRoot "$role.stderr.log")
+        $null = $process.Handle # Keep the Windows process handle so ExitCode remains available after exit.
         $processes += $process
         if ($role -eq 1) {
             $deadline = [datetime]::UtcNow.AddSeconds(30)
