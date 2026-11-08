@@ -3,8 +3,54 @@
 Use the same GeoSith release and matching Jedi Knight Resource archives and loose asset overrides on every
 computer. GeoSith checks the network protocol, JK/MOTS mode and resource archive/asset
 contents before admitting a player. Older GeoSith/OpenJKDF2 releases cannot join
-this protocol. The editor sends the level and placed COG sources automatically;
-Jedi Knight textures, models, sounds and other game assets are not transferred.
+this protocol. The editor sends the level, placed COG sources, and its custom
+resource bundle automatically. Original Jedi Knight Resource archives are not
+transferred and must still match.
+
+## Custom resources
+
+Place resource mods in the `mods` directory inside the selected JK game folder.
+For this development workspace that is `JK/mods`. Use either a GOB or a folder
+containing the usual Jedi Knight resource paths, for example:
+
+```text
+JK/mods/MyTextures/mat/mywall.mat
+JK/mods/MyModels/3do/mylift.3do
+JK/mods/MyScripts/cog/mylift.cog
+JK/mods/MyResourcePack.gob
+```
+
+Load or create a level after adding a mod. Materials appear in the **Custom**
+section; COGs and 3DO models appear in their existing browsers. Models may also
+need materials, keyframes, puppets, sound classes and sounds: retain their normal
+resource folders and include those dependencies in the mod. Use unique filenames
+for new resources to avoid collisions with cached game assets.
+
+PNG images in a mod's `mat` folder (for example
+`JK/mods/MyTextures/mat/mywall.png`) are automatically converted to 16-bit RGB565
+MAT textures when loading the mod. Alpha exactly zero becomes transparent;
+all nonzero alpha values become opaque. RGB, grayscale, palette PNGs and 8/16-bit
+PNG channels are supported. Dimensions are preserved, up to 4096 per side and
+the existing 32 MiB MAT limit. An explicit MAT in the same package takes priority
+over a PNG with the same name. Conversion leaves the original PNG unchanged.
+Only the converted MAT is saved in the GOB or sent to multiplayer clients.
+
+The host's complete resource bundle is sent before a joining editor player is
+welcomed, so clients do not need to install the mod. Normal edits use the existing
+delta transfer and do not resend unchanged resource contents. Client edits cannot
+replace the host's bundle. Both GNS and Imperial Relay use this synchronization.
+
+Save Level embeds the bundle in the level GOB, including unused resources in the
+loaded mods so that dependencies remain available. Reopening that GOB does not
+require the original mod folder. Alphabetically later mod packages override earlier
+ones; embedded level resources take precedence over mods.
+
+Supported data: MAT, 3DO, COG, SPR, CMP, WAV, SND, AI, KEY, PUP and PAR files.
+Resource paths and sizes are validated. The bundle is limited to 128 MiB and 8192
+files, with a 32 MiB limit per file. Received resources are mounted read-only in
+memory; they are not extracted over installed game files. Executables, DLLs and
+other non-resource files are not imported. Only distribute resources you have
+permission to share.
 
 ## Choose a connection
 
@@ -49,7 +95,7 @@ its children. Unset them to return unattended launches to GNS.
 ## Run your own relay
 
 The imported source and upstream operating instructions are in
-`tools/jkrelay/`. The standalone test build also builds
+`engine/tools/jkrelay/`. The standalone test build also builds
 `build-tests/Release/jkrelay_server.exe` on Windows:
 
 ```text
@@ -110,6 +156,14 @@ when smaller. Unchanged catalogs and COG text therefore compress away. Editor
 bulk transfers use a lower-priority transport lane, while control messages have
 priority and position updates use sequenced unreliable delivery to avoid stale queues
 without accepting old positions after newer ones.
+
+## Remote sound effects
+
+Weapon-fire and general sound packets include the sound filename so receivers
+resolve their own copy rather than trusting the sender's load-order index.
+Missing named resources stay silent instead of playing an unrelated sound.
+Older packets and saved-game messages still use the original numeric format.
+Both players should run the updated build to benefit in both directions.
 
 ## Diagnostics and tests
 

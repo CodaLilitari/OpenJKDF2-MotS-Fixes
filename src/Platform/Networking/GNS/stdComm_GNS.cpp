@@ -72,7 +72,7 @@ extern "C"
 void Hack_ResetClients();
 
 static uint32_t GNSLayout(){return (uint32_t)(sizeof(jkMultiEntry)^sizeof(rdVector3)*17u^sizeof(flex_t)*31u);}
-enum { GNS_MAGIC=0x47534954, GNS_VERSION=8, GNS_INFO=1, GNS_AUTH=2, GNS_ACCEPT=3 };
+enum { GNS_MAGIC=0x47534954, GNS_VERSION=17, GNS_INFO=1, GNS_AUTH=2, GNS_ACCEPT=3 };
 #pragma pack(push, 4)
 struct GNSInfoPacket { uint32_t magic,version,kind,id,mode,layout; uint64_t assets; jkMultiEntry entry; };
 struct GNSAuthPacket { uint32_t magic,version,kind,mode,layout; uint64_t assets; char16_t password[32]; };
@@ -323,7 +323,7 @@ static bool HashAssets() {
     if(ec||files.empty()){NetworkStatus("Cannot fingerprint Resource archives. Check your Jedi Knight installation.");return false;}
     /* Include loose asset overrides, but not episodes or shared COG sources.
        Levels/COGs are synchronized separately and may differ before joining. */
-    for(const char *base:{"mods","mat","3do","sprite","spr","sound","sfx","misc",folder}){
+    for(const char *base:{"mat","3do","sprite","spr","sound","sfx","misc",folder}){
         ec.clear();if(!std::filesystem::is_directory(base,ec))continue;ec.clear();
         for(const auto &f:std::filesystem::recursive_directory_iterator(base,std::filesystem::directory_options::skip_permission_denied,ec)){
             if(!f.is_regular_file(ec))continue;

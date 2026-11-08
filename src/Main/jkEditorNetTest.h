@@ -3,8 +3,39 @@
 extern "C" {
 #include "Gui/jkGUIMultiplayer.h"
 #include "Dss/sithDSSThing.h"
+#include "Devices/sithSoundMixer.h"
 extern char jkGuiMultiplayer_ipText_conv[256];
 extern int jkGuiNetHost_portNum;
+}
+#include "Dss/sithDSSSoundIdentity.h"
+static unsigned netTestSoundMask;
+static int netTestSoundMessage(SithMessage *message){
+    unsigned flags=0,ref=0;memcpy(&flags,message->pktData,4);
+    unsigned size=18+((flags&SITHSOUNDFLAG_FOLLOWSTHING)?4:((flags&SITHSOUNDFLAG_ABSOLUTE)?12:0));
+    if(message->netMsg.msg_size==size+32){
+        memcpy(&ref,(const unsigned char*)message->pktData+size-4,4);
+        if(ref>=0x67891230u&&ref<=0x67891232u){
+            unsigned short index;memcpy(&index,(const unsigned char*)message->pktData+12,2);
+            sithSound *sound=sithDSSSound_Resolve(message,size,index);
+            if(!sound||strcmp(sound->sound_fname,"walkmetaldry02.wav")||sound==sithSound_GetFromIdx(index))exit(2);
+            if(!sithDSSThing_ProcessPlaySound(message))exit(2);
+            sithPlayingSound *channel=sithSoundMixer_GetChannelHandle(ref);
+            if(channel&&channel->sound!=sound)exit(2);
+            netTestSoundMask|=1u<<(ref-0x67891230u);printf("SOUND TEST play mask=%u\n",netTestSoundMask);fflush(stdout);return 1;
+        }
+    }
+    return sithDSSThing_ProcessPlaySound(message);
+}
+static int netTestFireSoundMessage(SithMessage *message){
+    unsigned ref=0;if(message->netMsg.msg_size==80)memcpy(&ref,(const unsigned char*)message->pktData+44,4);
+    if(ref==0x67891233u){
+        unsigned short index;memcpy(&index,(const unsigned char*)message->pktData+8,2);
+        sithSound *sound=sithDSSSound_Resolve(message,48,index);
+        if(!sound||strcmp(sound->sound_fname,"walkmetaldry02.wav")||sound==sithSound_GetFromIdx(index))exit(2);
+        if(!sithDSSThing_ProcessFire(message))exit(2);
+        netTestSoundMask|=8;printf("SOUND TEST fire mask=%u\n",netTestSoundMask);fflush(stdout);return 1;
+    }
+    return sithDSSThing_ProcessFire(message);
 }
 static uint32_t netTestModelHash(void){uint32_t size=0;unsigned char *bytes=edWireEncode(model,&size);uint32_t hash=bytes?edNetHash(bytes,size):0;edFree(bytes);return hash;}
 static int netTestRole,netTestStage,netTestPackets;
@@ -40,7 +71,7 @@ static int netTestTransmit(int player,const SithMessage *m){
 static int stressNetwork(SithThing *player){
     if(!getenv("GEOSITH_NET_DIR"))exit(2);
     sithNet_isMulti=1;sithMessage_g_outputstream|=1;sithMessage_g_inputstream|=1;
-    if(!netTestRole){Main_bVerboseNetworking=1;netTestRole=atoi(getenv("GEOSITH_NET_ROLE"));netTestStart=stdPlatform_GetTimeMsec();active=1;tool=1;savedPhysics=player->physicsParams.flags;savedDebug=g_debugmodeFlags;savedThingFlags=player->flags;
+    if(!netTestRole){sithMessage_RegisterFunction(DSS_PLAYSOUND,netTestSoundMessage);sithMessage_RegisterFunction(DSS_FIREPROJECTILE,netTestFireSoundMessage);Main_bVerboseNetworking=1;netTestRole=atoi(getenv("GEOSITH_NET_ROLE"));netTestStart=stdPlatform_GetTimeMsec();active=1;tool=1;savedPhysics=player->physicsParams.flags;savedDebug=g_debugmodeFlags;savedThingFlags=player->flags;
         jkEditor_NetPreparePlayers(sithWorld_g_pCurrentWorld);sithPlayer_PlacePlayers(sithWorld_g_pCurrentWorld);
         for(int i=0;i<jkPlayer_maxPlayers;i++){jkPlayer_playerInfos[i].playerNetId=0;jkPlayer_playerInfos[i].flags=2;}player=sithWorld_g_pCurrentWorld->pLocalPlayer;
         sithNet_isServer=stdComm_bIsServer=netTestRole==1;sithNet_serverNetId=1;netTestSend=netTestTransmit;sithMessage_aTypeFuncs[JKEDITOR_NET_MESSAGE]=netTestMessage;
@@ -51,10 +82,11 @@ static int stressNetwork(SithThing *player){
             addThingFrame(&candidate->objects[0].attributes,EdFrame{candidate->objects[0].position,edV(0,0,0)});addThingFrame(&candidate->objects[0].attributes,EdFrame{0});candidate->lightCount=1;candidate->lights[0]=EdLight{0,{0,0,.5},1,2};
             candidate->assetCount=1;strcpy(candidate->assets[0].name,"network_model");candidate->assets[0].origin=edV(0,0,.5);candidate->assets[0].saved=1;if(!edMeshPrimitive(candidate,0,0,edV(0,0,.5),0))exit(2);
             candidate->templateCount=1;EdTemplate *created=&candidate->templates[0];strcpy(created->name,"network_template");strcpy(created->parent,"_decor");created->count=1;strcpy(created->params[0].key,"model3d");strcpy(created->params[0].value,"network_model.3do");
-            candidate->c[1].extraLight=.35;candidate->c[1].ambientLight=.1;
+            strcpy(candidate->c[1].colormap,"01narsh.cmp");strcpy(candidate->c[1].layer,"Network sector");candidate->c[1].extraLight=.35;candidate->c[1].ambientLight=.1;
             for(int f=0;f<candidate->c[1].count;f++)if(edNormal(&candidate->c[1].f[f]).z>.99){EdFace floor=candidate->c[1].f[f];if(!edCleave(candidate,1,f,floor.v[0].p,floor.v[2].p))exit(2);break;}
             if(!loadPlacedCog("01_cargoelev1.cog",&candidate->cogs[0]))exit(2);candidate->cogCount=1;candidate->cogs[0].params[0].cell=0;candidate->cogs[0].params[0].face=4;snprintf(candidate->cogs[0].params[1].value,32,"1");remember();if(!commit())exit(2);
             remember();edCopyModel(candidate,model);if(!edCleaveShape(candidate,0,2,edV(0,-1,0),.25,32)||!commit())exit(2);
+            remember();edCopyModel(candidate,model);edRotateFaceTexture(&candidate->c[0].f[0],37,edV(0,0,0));edRotateFaceTexture(&candidate->meshes[0].geometry.f[0],23,edV(0,0,.5));if(!commit())exit(2);
             /* Static GUIDs need not equal local allocation slots after a join. */
             jkPlayer_playerInfos[0].pLocalPlayer->guid=100001;jkPlayer_playerInfos[1].pLocalPlayer->guid=100000;sithWorld_g_pCurrentWorld->aThings[objectThings[0]].guid=1;
             }grabbing=objectGrabbing=1;char bootstrap[32]="";if(!jkEditor_NetPrepareJoin(bootstrap,sithWorld_g_pCurrentWorld->map_jkl_fname,JKEDITOR_NET_FLAG))exit(2);char path[512];netTestPath(path,"bootstrap.name");FILE *f=fopen(path,"wb");if(!f)exit(2);fprintf(f,"%s",bootstrap);fclose(f);netTestMark("host.ready",netRevision);
@@ -76,8 +108,22 @@ static int stressNetwork(SithThing *player){
                 if(now-netTestJoinTime>500){netTestJoinTime=now;if(!sithMulti_SendJoinRequest(sithNet_serverNetId))exit(2);}
                 sithMessage_ProcessMessages();
             }
+            if(!getenv("GEOSITH_NET_LEVEL")){if(fabs(model->c[0].f[0].uvRotation-37)>.001||fabs(model->meshes[0].geometry.f[0].uvRotation-23)>.001)exit(2);printf("GEOSITH_NET_TEXTURE_ROTATION PASS: world and model texture rotation synchronized\n");}
             if(!netReady||!sithWorld_g_pCurrentWorld->pLocalPlayer||sithMulti_quitGameState==2)exit(2);
             SithThing *custom=sithTemplate_GetTemplate("network_template");if(!getenv("GEOSITH_NET_LEVEL")&&(model->templateCount!=1||!custom||custom->renderData.type!=RD_THING_MODEL3||!custom->renderData.model3||objectThings[0]<0))exit(2);
+            if(getenv("GEOSITH_CUSTOM_RESOURCES_TEST")){
+                if(customResources.files.size()!=3||!customMaterial("zz_net_custom.mat"))exit(2);
+                int material=addMaterialName("zz_net_custom.mat");if(material<0||!editorMaterial(material))exit(2);
+                materialMetadata();if(materialSection[material]!=103)exit(2);
+                if(!sithModel_Load("zz_net_model.3do",1))exit(2);
+                discoverCogs();int script=0;for(int i=0;i<cogSourceCount;i++)script|=!strcmp(cogSources[i].file,"zz_net_script.cog");if(!script)exit(2);
+                char *text=cogSourceText("zz_net_script.cog");if(!text||!strstr(text,"GeoSith resource fixture"))exit(2);edFree(text);
+                char path[512],name[32];snprintf(name,sizeof(name),"assets-%d.gob",netTestRole);netTestPath(path,name);
+                if(!writeEditorGob(model,path,"Resources",1))exit(2);
+                EdResources reloaded;reloaded.archive(path);for(auto &f:customResources.files){auto it=reloaded.files.find(f.first);if(it==reloaded.files.end()||*it->second!=*f.second)exit(2);}
+                puts("GEOSITH_NET_RESOURCES PASS: host-only MAT/3DO/COG received, loaded, browsed and saved in GOB");fflush(stdout);
+            }
+            if(!getenv("GEOSITH_NET_LEVEL")&&(strcmp(model->c[1].colormap,"01narsh.cmp")||strcmp(model->c[1].layer,"Network sector")||sithWorld_g_pCurrentWorld->numColormaps!=2||sithWorld_g_pCurrentWorld->aSectors[1].colormap!=&sithWorld_g_pCurrentWorld->colormaps[1]))exit(2);
             printf("GEOSITH_NET_TEMPLATE PASS: custom model/template and placed instance replicated on join\n");fflush(stdout);
             printf("GEOSITH_NET_JOIN PASS: role %d synchronized before welcome and assigned local player %d\n",netTestRole,playerThingIdx);fflush(stdout);
             SithThing *hostBody=jkPlayer_playerInfos[0].pLocalPlayer;
@@ -113,6 +159,7 @@ static int stressNetwork(SithThing *player){
         if(stdPlatform_GetTimeMsec()-netTestStart>(getenv("GEOSITH_NET_EXPECT_SECTORS")?180000u:90000u))exit(2);return 1;
     }
     jkEditor_NetTick();
+    sithMessage_RegisterFunction(DSS_PLAYSOUND,netTestSoundMessage);sithMessage_RegisterFunction(DSS_FIREPROJECTILE,netTestFireSoundMessage);
     if(netTestRole==1){
         EditorNetPeer *first=netPeer(2,0),*second=netPeer(3,0);uint32_t now=stdPlatform_GetTimeMsec();
         if(first&&first->tx.bytes&&(int)sithPlayer_GetPlayerNum(2)<0&&now-netTestPulseTime>100&&netTestJoinPulses<40){netTestPulseTime=now;remember();edCopyModel(candidate,model);candidate->lights[0].range=2+(++netTestJoinPulses%2)*ED_GRID;if(!commit())exit(2);}
@@ -246,9 +293,21 @@ static int stressNetwork(SithThing *player){
         printf("GEOSITH_NET_ENEMY_RESET PASS: role %d survived kill, host reset, client reset and host resuming fire\n",netTestRole);fflush(stdout);
     }
     final=enemyPresent&&netTestMarker("enemy.cycle2.ok")&&netTestMarker("enemy.cycle3.ok");
+    if(final&&netTestRole==1){
+        static uint32_t lastSound;uint32_t now=stdPlatform_GetTimeMsec();
+        if(now-lastSound>250){lastSound=now;sithSound *loaded=sithSound_Load("walkmetaldry02.wav",0);if(!loaded)exit(2);
+            sithSound mismatched=*loaded;mismatched.id=0;SithThing *body=jkPlayer_playerInfos[0].pLocalPlayer;rdVector3 direction={0,1,0};
+            for(int peer=2;peer<=3;peer++){
+                sithDSSThing_PlaySound(body,&body->position,&mismatched,1,0,0,0x67891230,peer,1);
+                sithDSSThing_PlaySound(body,&body->position,&mismatched,1,4,SITHSOUNDFLAG_ABSOLUTE,0x67891231,peer,1);
+                sithDSSThing_PlaySound(body,&body->position,&mismatched,1,4,SITHSOUNDFLAG_FOLLOWSTHING,0x67891232,peer,1);
+                sithDSSThing_Fire(body,NULL,&direction,&body->position,&mismatched,-1,1,0,0,0x67891233,peer,1,0);
+            }
+        }
+    }
     if(final&&netTestRole==1&&stdPlatform_GetTimeMsec()-netTestPositionTime>100){netTestPositionTime=stdPlatform_GetTimeMsec();SithThing *body=jkPlayer_playerInfos[0].pLocalPlayer;body->position.x=.75;body->physicsParams.vel.x=0;sithDSSThing_Pos(body,2,0);sithDSSThing_Pos(body,3,0);}
     if(final&&netTestRole==1){EditorNetPeer *a=netPeer(2,0),*b=netPeer(3,0);if(a&&b&&a->ready==(int)netRevision&&b->ready==(int)netRevision)netTestMark("host.hash",netTestModelHash());}
-    if(final&&netTestRole!=1&&netTestMarker("host.hash")&&jkPlayer_playerInfos[0].pLocalPlayer&&fabs(jkPlayer_playerInfos[0].pLocalPlayer->position.x-.75)<.001){printf("GEOSITH_NET_POSITION PASS: remote host movement replicated over sequenced unreliable packets\n");char path[512];netTestPath(path,"host.hash");FILE *f=fopen(path,"rb");unsigned int hash=0;if(!f||fscanf(f,"%u",&hash)!=1)exit(2);fclose(f);if(hash!=netTestModelHash()){printf("GEOSITH_NET FAIL: hash mismatch role=%d revision=%u host=%u local=%u\n",netTestRole,netRevision,hash,netTestModelHash());fflush(stdout);exit(2);}char name[32];snprintf(name,32,"client%d.ok",netTestRole);netTestMark(name,netRevision);printf("GEOSITH_NET_CLIENT PASS: role %d, full level, edits, undo/redo, stale rejection and matching document\n",netTestRole);fflush(stdout);exit(0);}
+    if(final&&netTestRole!=1&&netTestSoundMask==15&&netTestMarker("host.hash")&&jkPlayer_playerInfos[0].pLocalPlayer&&fabs(jkPlayer_playerInfos[0].pLocalPlayer->position.x-.75)<.001){printf("GEOSITH_NET_SOUND PASS: weapon/global/attached/positional sounds resolved by filename despite conflicting indices\n");printf("GEOSITH_NET_POSITION PASS: remote host movement replicated over sequenced unreliable packets\n");char path[512];netTestPath(path,"host.hash");FILE *f=fopen(path,"rb");unsigned int hash=0;if(!f||fscanf(f,"%u",&hash)!=1)exit(2);fclose(f);if(hash!=netTestModelHash()){printf("GEOSITH_NET FAIL: hash mismatch role=%d revision=%u host=%u local=%u\n",netTestRole,netRevision,hash,netTestModelHash());fflush(stdout);exit(2);}char name[32];snprintf(name,32,"client%d.ok",netTestRole);netTestMark(name,netRevision);printf("GEOSITH_NET_CLIENT PASS: role %d, full level, edits, undo/redo, stale rejection and matching document\n",netTestRole);fflush(stdout);exit(0);}
     if(netTestRole==1&&netTestMarker("client2.ok")&&netTestMarker("client3.ok")){if(netDeltaTransfers<2)exit(2);printf("GEOSITH_NET_MODAL PASS: discovery, join and edits while host modal; %u delta transfers, %llu / %llu bytes\n",netDeltaTransfers,(unsigned long long)netPackedBytes,(unsigned long long)netRawBytes);printf("GEOSITH_NET_HOST PASS: two clients, authoritative join/edit/undo, dropped and duplicated packets, revision %u\n",netRevision);fflush(stdout);exit(0);}
     if(stdPlatform_GetTimeMsec()-netTestStart>90000){printf("GEOSITH_NET FAIL: timeout role=%d stage=%d ready=%d busy=%d revision=%u peers=%d,%d self=%d\n",netTestRole,netTestStage,netReady,netBusy,netRevision,netPeers[0].player,netPeers[1].player,stdComm_dplayIdSelf);fflush(stdout);exit(2);}
     sithNet_isMulti=0;sithMessage_g_outputstream&=~1;sithMessage_g_inputstream&=~1;return 1;

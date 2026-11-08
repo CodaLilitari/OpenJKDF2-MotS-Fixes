@@ -19,6 +19,7 @@ static void scanCogArchive(const char *path){FILE *f=fopen(path,"rb");if(!f)retu
 }
 static void discoverCogs(void){
     if(cogSourceCount)return;
+    for(auto &f:customResources.files)if(f.first.starts_with("cog/"))addCogSource(f.first.c_str(),NULL,0,0);
     for(int d=0;d<5;d++){jkResGobDirectory *dir=&jkRes_gCtx.aGobDirectories[d];for(int g=0;g<dir->numGobs;g++){
 #ifndef STDGOB_COMPACT_ENTRIES
         Gob *gob=dir->gobs[g];if(gob)for(unsigned int i=0;i<gob->numFiles;i++)if(!__strnicmp(gob->entries[i].fname,"cog\\",4))addCogSource(gob->entries[i].fname,gob->fpath,gob->entries[i].fileOffset,gob->entries[i].fileSize);

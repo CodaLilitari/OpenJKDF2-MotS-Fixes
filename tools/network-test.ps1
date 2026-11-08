@@ -1,4 +1,5 @@
-param([string]$Executable = '', [int]$Port = 27029, [int]$LagMs = 25, [int]$LossPercent = 2, [string]$Level = '', [string]$Map = 'sithed.jkl', [switch]$SkipNative, [int]$TimeoutSeconds = 100, [switch]$SequentialJoin)
+param([string]$Executable = '', [int]$Port = 27029, [int]$LagMs = 25, [int]$LossPercent = 2, [string]$Level = '', [string]$Map = 'sithed.jkl', [switch]$SkipNative, [int]$TimeoutSeconds = 100, [switch]$SequentialJoin, [switch]$CustomResources, [switch]$PngMaterials, [string]$Python="python")
+if($PngMaterials){$CustomResources=$true}
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $testRoot = Join-Path $projectRoot ('build/network-' + [guid]::NewGuid().ToString('N'))
@@ -13,6 +14,8 @@ $previousLevel = $env:GEOSITH_NET_LEVEL
 $previousPort=$env:GEOSITH_NET_PORT
 $previousLag=$env:GEOSITH_NET_LAG_MS
 $previousLoss=$env:GEOSITH_NET_LOSS_PERCENT
+$previousMods=$env:GEOSITH_MODS_DIR
+$previousResourcesTest=$env:GEOSITH_CUSTOM_RESOURCES_TEST
 $processes = @()
 $bootstrap = $null
 Push-Location $projectRoot
@@ -31,7 +34,16 @@ try {
     $env:GEOSITH_NET_LAG_MS="$LagMs"
     $env:GEOSITH_NET_LOSS_PERCENT="$LossPercent"
     $exe = if($Executable){$Executable}else{Join-Path $projectRoot 'build/Release/openjkdf2-64.exe'}
+    if($CustomResources){
+        $fixtureArgs=@($env:OPENJKDF2_ROOT,(Join-Path $testRoot 'host-mods'))
+        if($PngMaterials){$fixtureArgs+='--png'}
+        & $Python "$PSScriptRoot/resource-fixture.py" @fixtureArgs
+        if($LASTEXITCODE){throw 'Could not create resource fixtures'}
+        $env:GEOSITH_CUSTOM_RESOURCES_TEST='1'
+    }
     foreach ($role in 1..3) {
+        if($CustomResources){$env:GEOSITH_MODS_DIR=Join-Path $testRoot $(if($role -eq 1){'host-mods'}else{'empty-mods'})}
+
         $env:GEOSITH_NET_ROLE = "$role"
         $episode = if ($role -eq 1) { if($Level){$Level}else{'sithed_smoke'} } else { $bootstrap }
         $process = Start-Process $exe -ArgumentList '-headless','-autostart','-sp','-episode',$episode,'-map',$Map -WorkingDirectory $env:OPENJKDF2_ROOT -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $testRoot "$role.stdout.log") -RedirectStandardError (Join-Path $testRoot "$role.stderr.log")
@@ -73,10 +85,13 @@ try {
     foreach($role in 2..3){if(-not (Select-String -LiteralPath (Join-Path $testRoot "$role.stdout.log") -Pattern 'GEOSITH_NET_ENEMY PASS' -SimpleMatch -Quiet)){throw 'Host enemy death with editing and playing clients was not verified.'}}
     foreach($role in 2..3){if(-not (Select-String -LiteralPath (Join-Path $testRoot "$role.stdout.log") -Pattern 'GEOSITH_NET_ENEMY_RESET PASS' -SimpleMatch -Quiet)){throw 'Enemy kill/reset/resume with editing clients was not verified.'}}
     if(-not (Select-String -LiteralPath (Join-Path $testRoot '2.stdout.log'),(Join-Path $testRoot '3.stdout.log') -Pattern 'GEOSITH_NET_ACK_LOSS PASS' -SimpleMatch -Quiet)){throw 'Lost-final-ACK reconciliation was not verified.'}
+    if($CustomResources){foreach($role in 2..3){if(!(Select-String -LiteralPath (Join-Path $testRoot "$role.stdout.log") -Pattern 'GEOSITH_NET_RESOURCES PASS' -Quiet)){throw 'Custom resource transfer not verified'}}}
     Write-Host "PASS: real host + two clients, join/welcome, immediate previews, drag reconciliation, rejection rollback, undo/redo, packet loss/duplicates. Logs: $testRoot"
 } finally {
     foreach ($process in $processes) { if (-not $process.HasExited) { Stop-Process -Id $process.Id } }
     if ($bootstrap -match '^netedit[0-9]{4}$') { Remove-Item -LiteralPath (Join-Path $projectRoot "JK/Episode/$bootstrap.gob") -ErrorAction SilentlyContinue }
+    $env:GEOSITH_MODS_DIR=$previousMods
+    $env:GEOSITH_CUSTOM_RESOURCES_TEST=$previousResourcesTest
     $env:PATH = $previousPath
     $env:OPENJKDF2_ROOT = $previousRoot
     $env:GEOSITH_NET_ROLE = $previousRole

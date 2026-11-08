@@ -4,13 +4,13 @@
 /* Editor messages have their own bounded, cumulative-ACK stream. This avoids
  * exhausting JK's 32-entry reliable gameplay-message retry queue. */
 #define EN_MAGIC 0x45444e32u
-#define EN_VERSION 2u
+#define EN_VERSION 5u
 #define EN_CHUNK 1400u
 enum {EN_STATE=1,EN_EDIT,EN_HELLO,EN_ACK,EN_UNDO,EN_REDO,EN_REJECT};
 typedef struct {uint32_t magic,version,kind,id,revision,gesture,origin,total,raw,hash,offset,length,base;} EditorNetHeader;
 typedef struct {unsigned char *bytes;EditorNetHeader h;uint32_t at,sent,time;unsigned char *rawBytes;} EditorNetStream;
 typedef struct {int player,ready,dirty,dirtyOrigin;uint32_t gesture,lastCommand,dirtyGesture;EditorNetStream tx,rx;unsigned char *outBase,*inBase;uint32_t outSize,inSize;} EditorNetPeer;
-typedef struct {uint32_t layout,modelBytes,materials,resources,cogs,editing,objects;int32_t players[ED_SPAWNS];} EditorNetDocument;
+typedef struct {uint32_t layout,modelBytes,materials,resources,cogs,editing,objects,assets;int32_t players[ED_SPAWNS];} EditorNetDocument;
 static EditorNetPeer netPeers[32];
 static uint32_t netRevision,netGesture=1,netSequence=1,netLastHello,netCommand;
 static unsigned int netRejections,netDeltaTransfers;
@@ -80,17 +80,18 @@ static int netValidModel(const EdModel *m,int materials){
     }}if(!edMeshValidate(m))return netInvalid(__LINE__);for(int i=0;i<m->meshCount;i++)for(int f=0;f<m->meshes[i].geometry.count;f++)if(m->meshes[i].geometry.f[f].material>=materials)return netInvalid(__LINE__);return edValidate(m);
 }
 static unsigned char *netDocument(const EdModel *source,uint32_t *length){
+    if(!customResourceError.empty())return NULL;
     uint32_t modelBytes=0,resourceBytes=resources?(uint32_t)strlen(resources)+1:1;
     unsigned char *encoded=edWireEncode(source,&modelBytes);if(!encoded)return NULL;
-    char *scripts[ED_COGS]={0};size_t size=sizeof(EditorNetDocument)+(size_t)source->objectCount*4+modelBytes+paletteCount*128u+resourceBytes;
+    char *scripts[ED_COGS]={0};size_t size=sizeof(EditorNetDocument)+(size_t)source->objectCount*4+modelBytes+paletteCount*128u+resourceBytes+customResourceBytes.size();
     for(int i=0;i<source->cogCount;i++){scripts[i]=cogSourceText(source->cogs[i].file);if(!scripts[i])goto fail;size+=4+strlen(scripts[i])+1;}
-    if(size>ED_NET_LIMIT/2)goto fail;{unsigned char *data=edCalloc(1,size);if(!data)goto fail;EditorNetDocument h={0};h.layout=netLayout();h.modelBytes=modelBytes;h.materials=paletteCount;h.resources=resourceBytes;h.cogs=source->cogCount;h.editing=active;h.objects=source->objectCount;
+    if(size>ED_NET_LIMIT/2)goto fail;{unsigned char *data=edCalloc(1,size);if(!data)goto fail;EditorNetDocument h={0};h.layout=netLayout();h.modelBytes=modelBytes;h.materials=paletteCount;h.resources=resourceBytes;h.cogs=source->cogCount;h.editing=active;h.objects=source->objectCount;h.assets=(uint32_t)customResourceBytes.size();
     for(int i=0;i<ED_SPAWNS;i++){SithThing *t=jkPlayer_playerInfos[i].pLocalPlayer;h.players[i]=t?t->guid:-1;}
 
     unsigned char *p=data;for(size_t i=0;i<sizeof(h)/4;i++){uint32_t n;edCopy(&n,(unsigned char*)&h+i*4,4);edNetStore32(p+i*4,n);}p+=sizeof(h);
     for(int i=0;i<source->objectCount;i++){int index=objectThings[i];int guid=index>=0&&index<sithWorld_g_pCurrentWorld->numThingsLoaded?sithWorld_g_pCurrentWorld->aThings[index].guid:-1;edNetStore32(p,(uint32_t)guid);p+=4;}
     for(int i=0;i<paletteCount;i++)snprintf((char*)p+i*128,128,"%s",paletteNames[i][0]?baseName(paletteNames[i]):"dflt.mat");p+=paletteCount*128u;if(resources)edCopy(p,resources,resourceBytes);p+=resourceBytes;
-    for(int i=0;i<source->cogCount;i++){uint32_t n=(uint32_t)strlen(scripts[i])+1;edNetStore32(p,n);p+=4;edCopy(p,scripts[i],n);p+=n;edFree(scripts[i]);}edCopy(p,encoded,modelBytes);edFree(encoded);encoded=NULL;*length=(uint32_t)size;return data;
+    for(int i=0;i<source->cogCount;i++){uint32_t n=(uint32_t)strlen(scripts[i])+1;edNetStore32(p,n);p+=4;edCopy(p,scripts[i],n);p+=n;edFree(scripts[i]);}edCopy(p,customResourceBytes.data(),customResourceBytes.size());p+=customResourceBytes.size();edCopy(p,encoded,modelBytes);edFree(encoded);encoded=NULL;*length=(uint32_t)size;return data;
 }
 fail:edFree(encoded);for(int i=0;i<ED_COGS;i++)edFree(scripts[i]);return NULL;
 }
@@ -134,20 +135,29 @@ static int netApplyDocument(EditorNetPeer *peer,EditorNetHeader h,const unsigned
     if(!sithNet_isServer&&netReady&&h.revision==netRevision&&h.origin!=0)return 1;
     netFailureReason[0]=0;
     if(length<sizeof(EditorNetDocument))return 0;EditorNetDocument d;for(size_t i=0;i<sizeof(d)/4;i++){uint32_t n=edNetLoad32(raw+i*4);edCopy((unsigned char*)&d+i*4,&n,4);}if(d.layout!=netLayout()||d.modelBytes<4||d.modelBytes>ED_NET_LIMIT/2||d.materials<1||d.materials>EDITOR_MATERIALS||d.resources<1||d.resources>4000001||d.cogs>ED_COGS||d.objects>ED_OBJECTS)return 0;
-    size_t prefix=sizeof(d)+(size_t)d.objects*4+(size_t)d.materials*128u+d.resources;if(d.modelBytes>length||prefix>length-d.modelBytes)return 0;size_t modelOffset=length-d.modelBytes;
+    size_t prefix=sizeof(d)+(size_t)d.objects*4+(size_t)d.materials*128u+d.resources;if(d.assets<8||d.assets>EdResources::MaxBytes+EdResources::MaxFiles*135||d.modelBytes>length||d.assets>length-d.modelBytes||prefix>length-d.modelBytes-d.assets)return 0;size_t modelOffset=length-d.modelBytes;
     EdModel *incoming=edCalloc(1,sizeof(*incoming));if(!incoming)return 0;if(!edWireDecode(incoming,raw+modelOffset,d.modelBytes)){edFree(incoming);return 0;}
-    const char (*names)[128]=(const char (*)[128])(raw+sizeof(d)+(size_t)d.objects*4);const char *manifest=(const char*)names+d.materials*128u;const unsigned char *p=raw+prefix,*end=raw+modelOffset;char *scripts[ED_COGS]={0};int ok=0;
+    const char (*names)[128]=(const char (*)[128])(raw+sizeof(d)+(size_t)d.objects*4);const char *manifest=(const char*)names+d.materials*128u;const unsigned char *p=raw+prefix,*end=raw+modelOffset-d.assets;EdResources incomingResources;
+    bool sameAssets=customResourceBytes.size()==d.assets&&!memcmp(customResourceBytes.data(),end,d.assets);
+    if(sithNet_isServer&&!sameAssets){edFree(incoming);netReject(peer);return 1;}
+    if(!sameAssets&&!EdResources::decode(end,d.assets,incomingResources)){edFree(incoming);return 0;}
+    EdResources previousResources=customResources;bool resourcesChanged=false;char *scripts[ED_COGS]={0};int ok=0;
 {
     if(incoming->count<1||incoming->count>ED_CELLS||incoming->cogCount!=(int)d.cogs||incoming->objectCount!=(int)d.objects||manifest[d.resources-1]||strlen(manifest)!=d.resources-1){netInvalid(__LINE__);goto done;}
     for(unsigned int i=0;i<d.materials;i++)if(!netFilename(names[i],128)){if(getenv("GEOSITH_NET_ROLE"))printf("NET bad material %u: %.127s\n",i,names[i]);netInvalid(__LINE__);goto done;}
-    if(!sithNet_isServer&&(!netHadState||!resources||strcmp(resources,manifest))&&!loadMissingManifestTemplates(manifest)){netInvalid(__LINE__);goto done;}
-    if(!netValidModel(incoming,d.materials)){netInvalid(__LINE__);goto done;}
     for(unsigned int i=0;i<d.cogs;i++){uint32_t n;if(end-p<4){netInvalid(__LINE__);goto done;}n=edNetLoad32(p);p+=4;if(n<1||n>2*1024*1024||(size_t)(end-p)<n||p[n-1]||strlen((const char*)p)!=n-1){netInvalid(__LINE__);goto done;}
         EdPlacedCog parsed;if(!edCogParseScript(&parsed,incoming->cogs[i].file,(const char*)p)||parsed.count!=incoming->cogs[i].count){netInvalid(__LINE__);goto done;}
         for(int j=0;j<parsed.count;j++)if(parsed.params[j].type!=incoming->cogs[i].params[j].type||strcmp(parsed.params[j].name,incoming->cogs[i].params[j].name)){netInvalid(__LINE__);goto done;}
         scripts[i]=edAlloc(n);if(!scripts[i]){netInvalid(__LINE__);goto done;}edCopy(scripts[i],p,n);p+=n;
     }if(p!=end){netInvalid(__LINE__);goto done;}
     if(sithNet_isServer&&(h.revision!=netRevision||!resources||strcmp(resources,manifest))){netReject(peer);ok=1;{netInvalid(__LINE__);goto done;}}
+    if(!sithNet_isServer&&!sameAssets){
+        setCustomResources(std::move(incomingResources));resourcesChanged=true;resourceForceMaterials=true;liveColormap[0]=0;
+        for(int i=0;i<paletteCount;i++){if(paletteOwned[i]&&palette[i])retiredResourceMaterials.push_back(palette[i]);palette[i]=NULL;paletteOwned[i]=0;}
+        cogSourceCount=0;
+    }
+    if(!sithNet_isServer&&(!netHadState||!resources||strcmp(resources,manifest))&&!loadMissingManifestTemplates(manifest)){netInvalid(__LINE__);goto done;}
+    if(!netValidModel(incoming,d.materials)){netInvalid(__LINE__);goto done;}
     int map[EDITOR_MATERIALS];for(unsigned int i=0;i<d.materials;i++){map[i]=addMaterialName(names[i]);if(map[i]<0){netInvalid(__LINE__);goto done;}}
     for(int s=0;s<incoming->count;s++)for(int f=0;f<incoming->c[s].count;f++){int id=map[incoming->c[s].f[f].material];if(!editorMaterial(id)){netInvalid(__LINE__);goto done;}incoming->c[s].f[f].material=id;}
     char *newResources=NULL;if(!sithNet_isServer){newResources=edAlloc(d.resources);if(!newResources){netInvalid(__LINE__);goto done;}edCopy(newResources,manifest,d.resources);}
@@ -183,7 +193,7 @@ static int netApplyDocument(EditorNetPeer *peer,EditorNetHeader h,const unsigned
        stale attribute draft to discard and must stay open until DSS_WELCOME. */
     if(ok&&jkMain_bInModalGui&&!(g_submodeFlags&8)&&!netSafeDialog){jkGuiRend_CancelActiveMenu();say("The level changed while this draft was open. Reopen it to edit the current level.");}
 }
-done:for(int i=0;i<ED_COGS;i++)edFree(scripts[i]);edFree(incoming);return ok;
+done:if(!ok&&resourcesChanged)setCustomResources(std::move(previousResources));if(ok)materialMetadata();for(int i=0;i<ED_COGS;i++)edFree(scripts[i]);edFree(incoming);return ok;
 }
 static char *netCogSource(const char *name){for(int i=0;i<netCogCount;i++)if(!__strcmpi(netCogNames[i],name)){size_t n=strlen(netCogTexts[i])+1;char *copy=edAlloc(n);if(copy)edCopy(copy,netCogTexts[i],n);return copy;}return NULL;}
 static void netControlReady(SithThing *player){if(!netNeedsEditorSetup||!netClient()||(g_submodeFlags&8))return;netNeedsEditorSetup=0;savedPhysics=player->physicsParams.flags;savedDebug=g_debugmodeFlags;savedThingFlags=player->flags;player->flags|=SITH_TF_INVULN;setEditorFlight(player,0);for(int i=1;i<=10;i++){sithInventory_SetInventoryAvailable(player,i,1);sithInventory_SetInventory(player,i,100);}sithWeapon_SelectWeapon(player,tool,0);sithCamera_SetCurrentCamera(&sithCamera_g_aCameras[0]);}
@@ -247,7 +257,7 @@ static int netSelfTest(void){
     uint32_t n=0;unsigned char *doc=netDocument(model,&n);ok=ok&&doc&&n>sizeof(EditorNetDocument)&&netValidModel(model,paletteCount);edFree(doc);printf("GEOSITH_NET %s: bounded codec, document serialization and validation\n",ok?"PASS":"FAIL");fflush(stdout);return ok;
 }
 
-void jkEditor_NetProgress(char *text,int size)try {if(size<=0)return;text[0]=0;if(netFatal){snprintf(text,size,"Synchronization failed: %.160s",netFailureReason);return;}if(!netClient())return;EditorNetPeer *p=netPeer(sithNet_serverNetId,0);if(p&&p->rx.bytes&&p->rx.h.total)snprintf(text,size,"Receiving level: %u%% (%u / %u KB)",(unsigned int)(100.0*p->rx.at/p->rx.h.total),(p->rx.at+1023)/1024,(p->rx.h.total+1023)/1024);} catch(const std::bad_alloc&) {say("Editor operation stopped: not enough memory.");return;}
+void jkEditor_NetProgress(char *text,int size)try {if(size<=0)return;text[0]=0;if(netFatal){snprintf(text,size,"Synchronization failed: %.160s",netFailureReason);return;}if(!netClient())return;EditorNetPeer *p=netPeer(sithNet_serverNetId,0);if(p&&p->rx.bytes&&p->rx.h.total)snprintf(text,size,"Receiving level + resources: %u%% (%u / %u KB)",(unsigned int)(100.0*p->rx.at/p->rx.h.total),(p->rx.at+1023)/1024,(p->rx.h.total+1023)/1024);} catch(const std::bad_alloc&) {say("Editor operation stopped: not enough memory.");return;}
 
 int jkEditor_NetFailed(void)try {return netFatal;} catch(const std::bad_alloc&) {say("Editor operation stopped: not enough memory.");return 0;}
 

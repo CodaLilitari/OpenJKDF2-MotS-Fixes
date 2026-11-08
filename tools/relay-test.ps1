@@ -1,4 +1,4 @@
-param([int]$RelayPort=27939,[int]$ProxyPort=27940,[double]$Loss=0.03,[string]$Python='python',[switch]$DirectLinks,[int]$TimeoutSeconds=120)
+param([int]$RelayPort=27939,[int]$ProxyPort=27940,[double]$Loss=0.03,[string]$Python='python',[switch]$DirectLinks,[switch]$CustomResources,[int]$TimeoutSeconds=120)
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 $previousRelay=$env:GEOSITH_RELAY
@@ -22,7 +22,7 @@ try {
     }
     Start-Sleep -Milliseconds 500
     if($relayProcess.HasExited -or ($proxyProcess -and $proxyProcess.HasExited)){throw "Relay/proxy startup failed. Logs: $logs"}
-    & "$PSScriptRoot/network-test.ps1" -SkipNative -TimeoutSeconds $TimeoutSeconds
+    & "$PSScriptRoot/network-test.ps1" -SkipNative -TimeoutSeconds $TimeoutSeconds -CustomResources:$CustomResources -Python $Python -SequentialJoin
     if($proxyProcess -and $Loss -gt 0 -and !(Select-String -LiteralPath (Join-Path $logs 'proxy.log') -Pattern 'dropped=[1-9][0-9]*' -Quiet)){throw 'The proxy did not verify dropped packets.'}
     Write-Host "PASS: relay integration. Relay/proxy logs: $logs"
 } finally {

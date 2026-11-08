@@ -4,6 +4,7 @@
 /* resources contains the unmodified JK resource/template sections. */
 int edWriteGob(const EdModel *model,const char *path,const char *title,int multiplayer,const char *resources);
 int edReadLights(EdModel *model,const char *jkl);
+int edReadTextureRotations(EdModel *model,const char *jkl);
 void edEpisodeDefault(EdEpisode *episode,const char *title,int multiplayer);
 int edEpisodeValidate(const EdEpisode *episode);
 int edReadEpisode(EdEpisode *episode,const char *text,const char *currentFile);

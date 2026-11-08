@@ -97,6 +97,7 @@ static void templateAddModel(char names[][128],int *count,const char *path){cons
 static int templateModelBrowser(char value[128]){
     char (*names)[128]=edCalloc(4096,128);if(!names)return 0;int count=0;
     for(int a=0;a<model->assetCount;a++)if(a!=builderAsset&&model->assets[a].saved){char file[64];snprintf(file,sizeof(file),"%s.3do",model->assets[a].name);templateAddModel(names,&count,file);}
+    for(auto &f:customResources.files)if(f.first.ends_with(".3do"))templateAddModel(names,&count,f.first.c_str());
     int custom=count;
     for(int d=0;d<5;d++){jkResGobDirectory *dir=&jkRes_gCtx.aGobDirectories[d];for(int g=0;g<dir->numGobs;g++){Gob *gob=dir->gobs[g];if(!gob)continue;
 #ifndef STDGOB_COMPACT_ENTRIES
@@ -161,13 +162,21 @@ static void templateCreatorMenu(void){
     }builderMenuEnd(state);
 }
 
+// Terrain inherits walkstruct collision flags, but uses earth footsteps.
+static void terrainTemplateFlags(EdModel *draft){
+    for(int a=0;a<draft->assetCount;a++)if(draft->assets[a].terrain){int t=edTemplateIndex(draft,draft->assets[a].name);if(t<0)continue;EdTemplate &entry=draft->templates[t];int p=0;for(;p<entry.count;p++)if(!__strcmpi(entry.params[p].key,"thingflags"))break;
+        SithThing *base=sithTemplate_GetTemplate(entry.parent);unsigned flags=base?base->flags:0x400048;
+        if(p<entry.count)flags=(unsigned)strtoul(entry.params[p].value,NULL,16);else{if(entry.count>=ED_TEMPLATE_PARAMS)continue;entry.count++;strcpy(entry.params[p].key,"thingflags");}
+        flags=(flags&~SITH_TF_METAL)|SITH_TF_EARTH;snprintf(entry.params[p].value,128,"0x%x",flags);
+    }
+}
 static int builderWalkstruct(EdModel *draft,int asset,const char *name){
     int existing=edTemplateIndex(draft,name);
     if((existing<0&&sithTemplate_GetTemplate(name))||!sithTemplate_GetTemplate("_walkstruct")||draft->objectCount>=ED_OBJECTS||(existing<0&&draft->templateCount>=ED_CUSTOM_TEMPLATES)){say("Cannot create walkstruct: name conflict, missing base, or object/template limit.");return 0;}
     EdVec position=draft->assets[asset].origin;
     if(objectSector(draft,position)<0){position=vec(sithWorld_g_pCurrentWorld->pLocalPlayer->position);if(objectSector(draft,position)<0){say("Stand inside a sector before saving a walkstruct.");return 0;}draft->assets[asset].origin=position;}
     EdTemplate *t=&draft->templates[existing>=0?existing:draft->templateCount++];edZero(t,0,sizeof(*t));snprintf(t->name,64,"%s",name);strcpy(t->parent,"_walkstruct");t->count=1;strcpy(t->params[0].key,"model3d");snprintf(t->params[0].value,128,"%s.3do",name);
-    EdObject *thing=&draft->objects[draft->objectCount++];edZero(thing,0,sizeof(*thing));snprintf(thing->templateName,64,"%s",name);thing->position=position;return 1;
+    EdObject *thing=&draft->objects[draft->objectCount++];edZero(thing,0,sizeof(*thing));snprintf(thing->templateName,64,"%s",name);thing->position=position;terrainTemplateFlags(draft);return 1;
 }
 static void stressTemplates(void){
     templateCreatorMenu();if(model->templateCount!=1)exit(2);const char *name=model->templates[0].name;SithThing *t=sithTemplate_GetTemplate(name);

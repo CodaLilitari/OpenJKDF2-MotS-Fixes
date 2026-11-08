@@ -219,9 +219,17 @@ rdModel3 *sithModel_RegisterEditor(const char *name,rdModel3 *owned){
     rdModel3 *m=&w->aModels[w->numModels];*m=*owned;memset(owned,0,sizeof(*owned));m->id=w->numModels++;snprintf(m->filename,sizeof(m->filename),"%s",name);stdHashtbl_Add(sithModel_hashtable,m->filename,m);return m;
 }
 
-/* Keep old model storage alive for existing render instances while templates
-   and things are rebound to the replacement by the editor transaction. */
+/* Sculpting changes vertex data repeatedly. Reuse stable model storage when
+   its hierarchy size is unchanged, so every brush tick does not consume a slot.
+   Existing instances keep correctly sized joint arrays; editor transactions
+   rebuild changed templates/things before rendering resumes. */
 rdModel3 *sithModel_ReplaceEditor(const char *name,rdModel3 *owned){
-    SithWorld *w=sithWorld_g_pCurrentWorld;if(!w||!w->aModels||w->numModels>=w->sizeModels||strlen(name)>=sizeof(owned->filename))return NULL;
+    SithWorld *w=sithWorld_g_pCurrentWorld;rdModel3 *existing=sithModel_Find(name);
+    if(!w||!w->aModels||strlen(name)>=sizeof(owned->filename))return NULL;
+    if(existing && existing->numHNodes==owned->numHNodes){
+        int id=existing->id;existing->sizeMaterials=0;rdModel3_FreeEntry(existing);
+        *existing=*owned;memset(owned,0,sizeof(*owned));existing->id=id;snprintf(existing->filename,sizeof(existing->filename),"%s",name);return existing;
+    }
+    if(w->numModels>=w->sizeModels)return NULL;
     stdHashtbl_Remove(sithModel_hashtable,name);return sithModel_RegisterEditor(name,owned);
 }

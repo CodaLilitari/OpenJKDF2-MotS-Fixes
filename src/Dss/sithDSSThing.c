@@ -20,6 +20,7 @@
 #include "Devices/sithComm.h"
 #include "stdPlatform.h"
 #include "jk.h"
+#include "sithDSSSoundIdentity.h"
 
 void sithDSSThing_Pos(SithThing *pThing, int toID, int dpFlags)
 {
@@ -318,6 +319,7 @@ void sithDSSThing_PlaySound(SithThing *pThing, rdVector3 *pPos, sithSound *hSnd,
     }
     NETMSG_PUSHU32(guid);
     
+    NETMSG_PUSHSTR(hSnd->sound_fname, 32);
     NETMSG_END(DSS_PLAYSOUND);
     
     sithComm_SendMsgToPlayer(&sithComm_netMsgTmp, idTo, outstream, 0);
@@ -332,8 +334,9 @@ int sithDSSThing_ProcessPlaySound(SithMessage *pMsg)
     int flags = NETMSG_POPU32();
     flex32_t volume = NETMSG_POPF32();
     flex32_t a5 = NETMSG_POPF32();
-    int16_t soundIdx = NETMSG_POPS16();
-    sithSound* sound = sithSound_GetFromIdx(soundIdx);
+    unsigned int soundIdx = NETMSG_POPU16();
+    unsigned int legacySize = 18 + ((flags & SITHSOUNDFLAG_FOLLOWSTHING) ? 4 : ((flags & SITHSOUNDFLAG_ABSOLUTE) ? 12 : 0));
+    sithSound* sound = sithDSSSound_Resolve(pMsg, legacySize, soundIdx);
 
     if (!sound)
         return 0;
@@ -625,10 +628,12 @@ void sithDSSThing_Fire(SithThing *pWeapon, SithThing *pProjectile, rdVector3 *pF
     NETMSG_PUSHS32(thingId);
 
     if (idk == 0 || !Main_bMotsCompat) {
+        NETMSG_PUSHSTR(pFireSound ? pFireSound->sound_fname : "", 32);
         NETMSG_END(DSS_FIREPROJECTILE);
     }
     else if (Main_bMotsCompat) {
         NETMSG_PUSHS32(idk);
+        NETMSG_PUSHSTR(pFireSound ? pFireSound->sound_fname : "", 32);
         NETMSG_END(DSS_MOTS_NEW_2);
     }
 
@@ -650,7 +655,8 @@ int sithDSSThing_ProcessFire(SithMessage *pMsg)
         int16_t scaleFlags = NETMSG_POPS16();
         int16_t templateIdx = NETMSG_POPS16();
         SithThing* pCreateThingTemplate = sithTemplate_GetTemplateByIndex(templateIdx);
-        sithSound* pSound = sithSound_GetFromIdx(NETMSG_POPS16());
+        unsigned int soundIdx = NETMSG_POPU16();
+        sithSound* pSound = sithDSSSound_Resolve(pMsg, 48, soundIdx);
         int anim = NETMSG_POPS16();
         rdVector3 aimError = NETMSG_POPVEC3();
         rdVector3 fireOffset = NETMSG_POPVEC3();
@@ -688,7 +694,8 @@ int sithDSSThing_ProcessMOTSNew2(SithMessage *msg)
     {
         int16_t scaleFlags = NETMSG_POPS16();
         SithThing* pCreateThingTemplate = sithTemplate_GetTemplateByIndex(NETMSG_POPS16());
-        sithSound* pSound = sithSound_GetFromIdx(NETMSG_POPS16());
+        unsigned int soundIdx = NETMSG_POPU16();
+        sithSound* pSound = sithDSSSound_Resolve(msg, 52, soundIdx);
         int anim = NETMSG_POPS16();
         rdVector3 aimError = NETMSG_POPVEC3();
         rdVector3 fireOffset = NETMSG_POPVEC3();

@@ -14,6 +14,7 @@
 #include "Dss/sithDSSThing.h"
 #include "General/stdMath.h"
 #include "jk.h"
+#include "Main/jkEditor.h"
 
 int sithSoundMixer_Startup()
 {
@@ -855,6 +856,17 @@ void sithSoundMixer_Update(flex_t deltaSecs)
         {
             //jk_printf("tick %u: %s %x, %f %f vol %f\n", i, soundIter->sound->sound_fname, soundIter->flags, soundIter->distance, soundIter->maxPosition, soundIter->vol_2);
             sithSoundMixer_TickPlayingSound(soundIter, deltaSecs);
+            // Keep the loop/channel alive so leaving the editor restores the hum.
+            // Mute only the local saber idle loop, not ambient or other players' audio.
+            if (soundIter->sound && soundIter->pSoundBuf
+                && soundIter->thing == sithWorld_g_pCurrentWorld->pLocalPlayer
+                && (soundIter->flags & SITHSOUNDFLAG_LOOP)
+                && !__strcmpi(soundIter->sound->sound_fname, "LtSaberLp01.wav"))
+            {
+                if (jkEditor_Active()) stdSound_BufferSetVolume(soundIter->pSoundBuf, 0.0);
+                else if (soundIter->flags & SITHSOUNDFLAG_NO_3D)
+                    stdSound_BufferSetVolume(soundIter->pSoundBuf, soundIter->vol_2 * (soundIter->p3DSoundObj ? 1.0 : 0.75));
+            }
         }
     }
     //printf("--- %u\n", sithSoundMixer_activeChannels);

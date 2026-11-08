@@ -23,7 +23,9 @@ New single-player levels start with one room and one walkplayer. Multiplayer lev
 | Feature | What you can do |
 | --- | --- |
 | **3D level editing** | Select and move surfaces, edges, and vertices; cleave, extrude, weld, and clean up geometry. |
-| **Overhead map** | Draw convex sectors, select and move geometry, copy/paste rooms, and cleave or delete sectors. |
+| **2D map views** | Edit from six directions, mirror geometry, draw spline corridors, and use adaptive grid snapping with blue origin axes. |
+| **Terrain sculpting** | Create terrain across angled surfaces and sectors, raise/lower it, and smooth connected seams with Ctrl + Fire1. |
+| **Custom resources** | Load mods, convert PNG textures to MAT, and synchronize resources with multiplayer clients. |
 | **Materials and lighting** | Browse texture thumbnails, adjust UVs, change sector brightness, and place lights that bake into vertex lighting. |
 | **Things and animation paths** | Place game objects, edit attributes, and move or rotate translucent path-frame previews. |
 | **3DO model builder** | Start from primitives, cleave and extrude faces, apply materials, and save reusable models or walkstructs. |

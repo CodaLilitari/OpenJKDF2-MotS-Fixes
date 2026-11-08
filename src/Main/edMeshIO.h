@@ -1,9 +1,14 @@
 /* Standard 3DO 2.1 output plus versioned editable metadata. */
 #include "edWire.h"
 int edReadMeshData(EdModel *model,const unsigned char *bytes,unsigned int size){
-    if(size<8||edCompare(bytes,"G3DO",4)||(edNetLoad32(bytes+4)<1||edNetLoad32(bytes+4)>3))return 0;
-    EdModel *draft=edCalloc(1,sizeof(*draft));if(!draft)return 0;EdWire w={(unsigned char*)bytes,size,8,1,1};if(edNetLoad32(bytes+4)>=3)edWireAssets(&w,draft);else{edWireAssetsLegacy(&w,draft);for(int a=0;w.ok&&a<draft->assetCount;a++)draft->assets[a].saved=1;}if(edNetLoad32(bytes+4)>=2)edWireTemplates(&w,draft);
-    int ok=w.ok&&w.at==size&&edMeshValidate(draft);if(ok){model->templateCount=draft->templateCount;edCopy(model->templates,draft->templates,sizeof(model->templates));model->assetCount=draft->assetCount;model->meshCount=draft->meshCount;edCopy(model->assets,draft->assets,sizeof(model->assets));edCopy(model->meshes,draft->meshes,sizeof(model->meshes));}edFree(draft);return ok;
+    if(size<8||edCompare(bytes,"G3DO",4)||edNetLoad32(bytes+4)<1||edNetLoad32(bytes+4)>6)return 0;
+    unsigned version=edNetLoad32(bytes+4);
+    for(int legacy=0;legacy<=(version<5?1:0);legacy++){
+        EdModel draft={};EdWire w={(unsigned char*)bytes,size,8,1,1,legacy};
+        if(version>=3)edWireAssets(&w,&draft);else{edWireAssetsLegacy(&w,&draft);for(int a=0;w.ok&&a<draft.assetCount;a++)draft.assets[a].saved=1;}
+        if(version>=2)edWireTemplates(&w,&draft);if(version>=4)edWireMeshRotations(&w,&draft);if(version>=5)edWireTerrain(&w,&draft);if(version>=6)edWireTerrainGroups(&w,&draft);
+        if(w.ok&&w.at==size&&edMeshValidate(&draft)){model->templateCount=draft.templateCount;model->templates=draft.templates;model->assetCount=draft.assetCount;model->meshCount=draft.meshCount;model->assets=draft.assets;model->meshes=draft.meshes;return 1;}
+    }return 0;
 }
 static int meshMaterialName(const char *resources,int id,char name[128]){
     const char *p=strstr(resources,"World materials");if(!p)p=strstr(resources,"world materials");if(!p)return 0;
@@ -34,7 +39,7 @@ static int mesh3do(FILE *out,const EdModel *m,int asset,const char *resources){
 }
 int edWrite3do(const EdModel *m,int asset,const char *path,const char *resources){FILE *f=fopen(path,"wb");if(!f)return 0;int ok=mesh3do(f,m,asset,resources);if(fclose(f))ok=0;if(!ok)remove(path);return ok;}
 static int writeMeshAssets(const EdModel *m,const char *path,const char *resources){
-    if(!m->assetCount&&!m->templateCount)return 1;EdWire measure={NULL,ED_NET_LIMIT/2,8,0,1};edWireAssets(&measure,(EdModel*)m);edWireTemplates(&measure,(EdModel*)m);if(!measure.ok)return 0;unsigned char *bytes=edAlloc(measure.at);if(!bytes)return 0;edCopy(bytes,"G3DO",4);edNetStore32(bytes+4,3);EdWire w={bytes,measure.at,8,0,1};edWireAssets(&w,(EdModel*)m);edWireTemplates(&w,(EdModel*)m);
+    if(!m->assetCount&&!m->templateCount)return 1;EdWire measure={NULL,ED_NET_LIMIT/2,8,0,1};edWireAssets(&measure,(EdModel*)m);edWireTemplates(&measure,(EdModel*)m);edWireMeshRotations(&measure,(EdModel*)m);edWireTerrain(&measure,(EdModel*)m);edWireTerrainGroups(&measure,(EdModel*)m);if(!measure.ok)return 0;unsigned char *bytes=edAlloc(measure.at);if(!bytes)return 0;edCopy(bytes,"G3DO",4);edNetStore32(bytes+4,6);EdWire w={bytes,measure.at,8,0,1};edWireAssets(&w,(EdModel*)m);edWireTemplates(&w,(EdModel*)m);edWireMeshRotations(&w,(EdModel*)m);edWireTerrain(&w,(EdModel*)m);edWireTerrainGroups(&w,(EdModel*)m);
     int ok=w.ok&&edGobAddFile(path,"misc\\geosith_models.bin",bytes,(unsigned int)w.at);edFree(bytes);
     for(int a=0;a<m->assetCount&&ok;a++){if(!m->assets[a].saved)continue;int count=0;for(int i=0;i<m->meshCount;i++)count+=m->meshes[i].asset==a;if(!count)continue;
         FILE *f=tmpfile();if(!f)return 0;ok=mesh3do(f,m,a,resources);long size=ftell(f);unsigned char *data=size>0?(unsigned char*)edAlloc(size):NULL;

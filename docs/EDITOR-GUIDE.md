@@ -367,3 +367,32 @@ powershell -ExecutionPolicy Bypass -File tools/stress.ps1 -Render
 ```
 
 The smoke test covers live edits and save/reload. The render stress test exercises repeated edits during rendering and collision updates. Logs are written under `build/`.
+
+
+## Latest editor additions
+
+### Terrain — weapon 7
+
+- Select surfaces with weapon 1, then click with weapon 7 to create terrain. Surfaces can meet at different angles and span sectors.
+- Fire1 raises terrain; Shift + Fire1 lowers it; Ctrl + Fire1 smooths neighboring vertices. The wheel changes brush radius.
+- Each sector gets a separate model and thing, while shared seams sculpt together. Creating terrain leaves the original sector geometry unchanged.
+- Middle mouse opens texture and conversion options. Delete removes the terrain group. These operations support undo.
+- Save Level preserves editable terrain metadata and includes playable walkstructs with dirt footsteps.
+
+### Selection and map editing
+
+- Ctrl + Fire1 with weapon 1 selects whole sectors. Hold Fire2 to move selected sectors together. Enter opens sector attributes; M attempts a convex merge.
+- Shift + wheel scales selected surfaces or sectors when valid.
+- In map view, keys 1–6 select top, front, left, bottom, back and right views. Blue grid axes mark the world origin.
+- The grid adapts to zoom, and movement snaps to the visible grid. Middle mouse opens X/Y/Z mirroring options.
+- S starts a spline corridor. Click to add points, drag to adjust handles, and click the first point to close a loop. Escape or right-click finishes drawing.
+- Select a spline and press Enter to set its shape, width, height, sector count and texture. Use Convert to Sectors before ordinary cleaving/extrusion. Until then, it remains editable through its spline controls.
+
+### Materials, resources and sound
+
+- Add resource folders or GOBs under mods. PNGs in a mod's mat folder convert to 16-bit MAT textures; fully transparent pixels retain one-bit transparency.
+- Custom resources are included when saving and synchronized to joining multiplayer players.
+- Weapon 2: Shift + Fire2 rotates UVs; hover an edge while rotating to align. Ctrl + Fire2 pans at half the usual texture grid size.
+- Saber idle hum is muted while editing. Remote-player sound identity synchronization fixes incorrect weapon sounds.
+
+Use the same release on all multiplayer peers (editor protocol 17).
