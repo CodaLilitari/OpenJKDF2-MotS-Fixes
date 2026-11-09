@@ -393,7 +393,8 @@ static void drawMaterialPreview(tVBuffer *buffer,int material,int x,int y,int wi
     int checker[2]={palettePixel(buffer,30,30,30),palettePixel(buffer,70,70,70)};
     // Added: unlock the preview source only after a successful lock
     if(source){int locked=stdDisplay_VBufferLock(source);if(!locked||!source->surface_lock_alloc){if(locked)stdDisplay_VBufferUnlock(source);source=NULL;}}
-    if(!stdDisplay_VBufferLock(buffer)||!buffer->surface_lock_alloc){if(source)stdDisplay_VBufferUnlock(source);return;}
+    int destinationLocked=stdDisplay_VBufferLock(buffer);
+    if(!destinationLocked||!buffer->surface_lock_alloc){if(destinationLocked)stdDisplay_VBufferUnlock(buffer);if(source)stdDisplay_VBufferUnlock(source);return;}
     int fitWidth=width,fitHeight=height;
     if(source&&source->format.width>0&&source->format.height>0) {
         double scale=fmin((double)width/source->format.width,(double)height/source->format.height);
