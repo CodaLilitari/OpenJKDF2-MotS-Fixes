@@ -88,6 +88,17 @@ int edReadEpisode(EdEpisode *out,const char *text,const char *currentFile){
         }
     }if(!ended||count!=e.count||!edEpisodeValidate(&e))return 0;*out=e;return 1;
 }
+int edReadTextureRotations(EdModel *m,const char *text){
+    for(const char *line=text;line&&*line;line=strchr(line,'\n')){if(*line=='\n')line++;
+        int sector,faceIndex;
+        if(sscanf(line,"# GeoSith custom uv %d %d",&sector,&faceIndex)==2){if(sector<0||sector>=m->count||faceIndex<0||faceIndex>=m->c[sector].count)return 0;m->c[sector].f[faceIndex].customUV=1;continue;}
+        if(strncmp(line,"# GeoSith texture rotation ",27))continue;
+        int s,f;double angle,u,v,us,vs;
+        if(sscanf(line,"# GeoSith texture rotation %d %d %lf %lf %lf %lf %lf",&s,&f,&angle,&u,&v,&us,&vs)!=7||s<0||s>=m->count||f<0||f>=m->c[s].count||!isfinite(angle)||!isfinite(u)||!isfinite(v)||!isfinite(us)||!isfinite(vs)||fabs(us)<.000001||fabs(vs)<.000001)return 0;
+        EdFace *face=&m->c[s].f[f];face->attributes=edSurfaceAttributes(face);face->hasAttributes=1;face->attributes.uScale=us;face->attributes.vScale=vs;
+        face->uvRotation=angle;face->uOffset=u;face->vOffset=v;edMapFace(face);
+    }return 1;
+}
 int edReadLights(EdModel *m,const char *jkl) {
     EdBuffer<EdLight> lights;int section=0,expected=-1,count=0,ended=0;
     for(const char *p=jkl;*p;){
@@ -113,7 +124,7 @@ static void header(FILE *f,const EdLevelHeader *h) {
 static void u32(FILE *f,uint32_t n) { unsigned char b[4]={(unsigned char)n,(unsigned char)(n>>8),(unsigned char)(n>>16),(unsigned char)(n>>24)}; fwrite(b,1,4,f); }
 static uint32_t readU32(const unsigned char *p){return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
 int edGobAddFile(const char *path,const char *name,const void *data,unsigned int size){if(strlen(name)>=128||!size)return 0;FILE *f=fopen(path,"r+b");if(!f)return 0;unsigned char header[12],countData[4];int ok=fread(header,1,12,f)==12&&!edCompare(header,"GOB ",4);uint32_t directory=ok?readU32(header+8):0;
-    ok=ok&&!fseek(f,directory,SEEK_SET)&&fread(countData,1,4,f)==4;uint32_t count=ok?readU32(countData):0;if(count>4096)ok=0;unsigned char *entries=ok?(unsigned char*)edCalloc(count+1,136):NULL;ok=ok&&entries&&fread(entries,136,count,f)==count;
+    ok=ok&&!fseek(f,directory,SEEK_SET)&&fread(countData,1,4,f)==4;uint32_t count=ok?readU32(countData):0;if(count>16384)ok=0;unsigned char *entries=ok?(unsigned char*)edCalloc(count+1,136):NULL;ok=ok&&entries&&fread(entries,136,count,f)==count;
     if(ok){int index=(int)count;for(uint32_t i=0;i<count;i++)if(equalText((char*)entries+i*136+8,name)){index=(int)i;break;}if(index==(int)count)count++;
         ok=!fseek(f,directory,SEEK_SET)&&fwrite(data,1,size,f)==size;uint32_t next=(uint32_t)ftell(f);unsigned char *entry=entries+index*136;edZero(entry,0,136);
         // Added: commit directory metadata only after payload and entry writes succeed
@@ -136,7 +147,9 @@ static int jkl(FILE *f,const EdModel *m,const char *resources) {
         EdVec point=m->c[s].f[p].v[v].p;int i=0;for(;i<unique;i++){EdVec delta=edSub(point,positions[i]);if(edDot(delta,delta)<ED_EPS*ED_EPS)break;}
         if(i==unique)positions[unique++]=point;positionIndices[k++]=i;
     }
-    fprintf(f,"\nSECTION: GEORESOURCE\nWorld colormaps 1\n0: %s\nWorld vertices %d\n",m->header.colormap,unique);
+    std::vector<const char*> maps={m->header.colormap};EdBuffer<int> sectorMaps;
+    for(int s=0;s<m->count;s++){const char *name=m->c[s].colormap[0]?m->c[s].colormap:m->header.colormap;int i=0;for(;i<(int)maps.size();i++)if(!strcmp(name,maps[i]))break;if(i==(int)maps.size())maps.push_back(name);sectorMaps[s]=i;}
+    fprintf(f,"\nSECTION: GEORESOURCE\nWorld colormaps %d\n",(int)maps.size());for(int i=0;i<(int)maps.size();i++)fprintf(f,"%d: %s\n",i,maps[i]);fprintf(f,"World vertices %d\n",unique);
     for(int i=0;i<unique;i++)fprintf(f,"%d: %.9f %.9f %.9f\n",i,positions[i].x,positions[i].y,positions[i].z);
     fprintf(f,"World texture vertices %d\n",vertices); k=0;
     for(int s=0;s<m->count;s++) for(int p=0;p<m->c[s].count;p++) for(int v=0;v<m->c[s].f[p].count;v++) {
@@ -152,6 +165,12 @@ static int jkl(FILE *f,const EdModel *m,const char *resources) {
         for(int v=0;v<face->count;v++,k++) fprintf(f," %d,%d",positionIndices[k],k);
         for(int v=0;v<face->count;v++)fprintf(f," %.9f",edVertexLight(m,s,p,v));fputc('\n',f);
     }
+    for(int s=0;s<m->count;s++)for(int p=0;p<m->c[s].count;p++){const EdFace *face=&m->c[s].f[p];if(face->uvRotation){EdSurfaceAttributes a=edSurfaceAttributes(face);fprintf(f,"# GeoSith texture rotation %d %d %.17g %.17g %.17g %.17g %.17g\n",s,p,face->uvRotation,face->uOffset,face->vOffset,a.uScale,a.vScale);}}
+    for(int s=0;s<m->count;s++)for(int face=0;face<m->c[s].count;face++)if(m->c[s].f[face].customUV)fprintf(f,"# GeoSith custom uv %d %d\n",s,face);
+    for(int i=0;i<m->splineCount;i++){const EdSpline &s=m->splines[i];fprintf(f,"# GeoSith spline %d %d %d %d %.17g %.17g\n",s.id,s.sides,s.segments,s.material,s.width,s.height);for(int p=0;p<s.count;p++){const EdSplinePoint &v=s.points[p];fprintf(f,"# GeoSith splinepoint %d %d %.17g %.17g %.17g %.17g %.17g %.17g\n",s.id,p,v.position.x,v.position.y,v.position.z,v.handle.x,v.handle.y,v.handle.z);}}
+    for(int i=0;i<m->splineCount;i++)if(m->splines[i].closed)fprintf(f,"# GeoSith splineclosed %d\n",m->splines[i].id);
+    for(int i=0;i<m->splineCount;i++)if(m->splines[i].mirrorAxes)fprintf(f,"# GeoSith splinemirror %d %d\n",m->splines[i].id,m->splines[i].mirrorAxes);
+    for(int c=0;c<m->count;c++)if(m->c[c].splineId)fprintf(f,"# GeoSith splinecell %d %d\n",c,m->c[c].splineId);
     if(m->lightCount)for(int s=0;s<m->count;s++)for(int p=0;p<m->c[s].count;p++)for(int v=0;v<m->c[s].f[p].count;v++)if(m->c[s].f[p].v[v].light)fprintf(f,"# GeoSith base light %d %d %d %.9f\n",s,p,v,m->c[s].f[p].v[v].light);
     /* JK stores one normal per surface after the indexed polygon list. */
     for(int s=0;s<m->count;s++) for(int p=0;p<m->c[s].count;p++) { EdVec n=edNormal(&m->c[s].f[p]); fprintf(f,"%d: %.9f %.9f %.9f\n",index[s][p],n.x,n.y,n.z); }
@@ -164,8 +183,9 @@ static int jkl(FILE *f,const EdModel *m,const char *resources) {
         }
         EdVec center=edScale(edAdd(lo,hi),.5),d=edSub(hi,lo);
         const EdCell *cell=&m->c[s];
+        if(cell->layer[0])fprintf(f,"# GeoSith layer %d %s\n",s,cell->layer);
         if(cell->tolerance)fprintf(f,"# GeoSith tolerance %d %.9f\n",s,cell->tolerance);
-        fprintf(f,"Sector %d\nFlags 0x%x\nAmbient light %.9f\nExtra light %.9f\nColormap 0\nTint %.9f %.9f %.9f\nBoundbox %.9f %.9f %.9f %.9f %.9f %.9f\n",s,cell->flags,cell->ambientLight,cell->extraLight,cell->tint.x,cell->tint.y,cell->tint.z,lo.x,lo.y,lo.z,hi.x,hi.y,hi.z);
+        fprintf(f,"Sector %d\nFlags 0x%x\nAmbient light %.9f\nExtra light %.9f\nColormap %d\nTint %.9f %.9f %.9f\nBoundbox %.9f %.9f %.9f %.9f %.9f %.9f\n",s,cell->flags,cell->ambientLight,cell->extraLight,sectorMaps[s],cell->tint.x,cell->tint.y,cell->tint.z,lo.x,lo.y,lo.z,hi.x,hi.y,hi.z);
         if(cell->sound[0])fprintf(f,"Sound %s %.9f\n",cell->sound,cell->soundVolume);
         // Added: export the bounding-sphere radius, not the squared diagonal
         fprintf(f,"Center %.9f %.9f %.9f\nRadius %.9f\nVertices %d\n",center.x,center.y,center.z,0.5*sqrt(d.x*d.x+d.y*d.y+d.z*d.z),count);

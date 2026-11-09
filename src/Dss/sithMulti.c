@@ -256,6 +256,11 @@ void sithMulti_Shutdown()
 
 int sithMulti_SendJoinRequest(int sendto_id)
 {
+#ifdef PLATFORM_GNS
+    // The join screen retries periodically. Wait for a transport-assigned ID
+    // instead of treating the pre-authentication interval as a failed join.
+    if(stdComm_GNS_IsConnecting())return 1;
+#endif
     NETMSG_START;
 
     NETMSG_PUSHSTR(sithWorld_g_pCurrentWorld->map_jkl_fname, 0x20);

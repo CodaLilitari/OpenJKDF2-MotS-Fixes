@@ -2,8 +2,12 @@ extern "C" {
 #include "jkEditor.h"
 }
 #include "edGeometry.h"
+#include "edResources.h"
+#include "edPngMat.h"
+#include "jkEditorResources.h"
 #include <map>
 #include <memory>
+#include <array>
 #include "edLevelIO.h"
 #include "edInput.h"
 #include "edMap.h"
@@ -41,6 +45,7 @@ int sithMulti_StartupClient(void);
 #include "Main/jkRes.h"
 #include "Engine/rdCamera.h"
 #include "Engine/sithCamera.h"
+#include "Engine/sithIntersect.h"
 #include "Engine/rdThing.h"
 #include "Primitives/rdPolyline.h"
 #include "Raster/rdCache.h"
@@ -103,10 +108,12 @@ typedef struct {unsigned char *data;uint32_t size,rawSize;EdSelection selection;
 static EditorHistoryEntry undoHistory[EDITOR_UNDOS],redoHistory[EDITOR_UNDOS];
 static int undoCount,redoCount,pendingUndo,historyDown;
 static EdSelection grabVisual;
-static int groupGrab;
+static int groupGrab,sectorGrab;
+static EdBuffer<unsigned char> grabSectors;
 static EdDoubleTap selectionTap;
-static int paletteCount,active,toggleDown,fireDown,grabDown,grabbing,uvMode,cleaving,tool=10,clipboard=-1,multi;
+static int paletteCount,active,toggleDown,fireDown,grabDown,grabbing,uvMode,uvRotating,cleaving,tool=10,clipboard=-1,multi;
 static int homeDown,tabDown,qDown,nextSpawn,deleteDown,middleDown,attributesDown;
+static int flightSpeedBoost,flightSpeedDown,oppositeAdjoinDown,uvFine;
 static int mapActive;
 static int builderAsset=-1;
 static int builderExitRequested;
@@ -117,8 +124,11 @@ static int builderCleaveSelfTest(void);
 static int builderGrabSelfTest(void);
 static void stressTemplates(void);
 static int builderWalkstruct(EdModel *draft,int asset,const char *name);
+static void terrainTemplateFlags(EdModel *draft);
 static void builderCaptureMenu(jkGuiMenu *menu);
 static void mapClose(SithThing *player);
+static int splineSelfTest(SithThing *player);
+static int terrainSelfTest(SithThing *player);
 static void mapOpen(SithThing *player);
 static void mapControl(SithThing *player);
 static void mapDraw(void);
@@ -127,8 +137,17 @@ static void mapEscape(void);
 static int mapSelfTest(SithThing *player);
 static int placedEditingSelfTest(void);
 static int stressMap(SithThing *player);
+static int mapViewsTest(SithThing *player);
+static int mapMirrorTest(SithThing *player);
+static int mapMirrorCandidate(void);
 static void screenLine(int x1,int y1,int x2,int y2,int color,int width);
 static void surfaceAttributesDialog(void);
+static void sectorAttributesDialog(void);
+static int stressSectors(SithThing *player);
+static EdBuffer<unsigned char> sectorPicks;
+static int mergeDown;
+static void mergeSelectedSectors(void);
+static int selectedSectorCount(void){int count=0;for(int s=0;s<model->count;s++)count+=sectorPicks[s]!=0;return count;}
 static void remember(void);
 static int commit(void);
 static SithThing railEffectTemplate;
@@ -173,7 +192,7 @@ static rdCanvas *highlightCanvas;
 static int edgeWidth,outlineColor;
 static int stressRunning,stressRenderFrames;
 static int highlightSelfTest(void);
-static void materialMenu(void);
+static void materialMenu(int nested=0);
 static void syncEditorObjects(const EdModel *source);
 static void recoverOutsideEditorPlayer(const EdModel *source);
 static int syncCustomTemplates(const EdModel *source);
@@ -196,6 +215,7 @@ static void updateCogPick(EdVec origin,EdVec direction);
 static void drawCogPicker(int color);
 static int readPlacedCogs(EdModel *source,const char *text);
 static int writeCogSources(const EdModel *source,const char *path);
+static char *cogSourceText(const char *name);
 static void suspendPlacedCogs(int geometry);
 static int startPlacedCogs(const EdModel *source);
 static void closeCogEditor(void);
@@ -275,6 +295,44 @@ static void drawMaterialPreview(tVBuffer *buffer,int material,int x,int y,int wi
 static EdVec vec(rdVector3 p) { return edV(p.x,p.y,p.z); }
 static rdVector3 rdvec(EdVec p) { rdVector3 q={(flex_t)p.x,(flex_t)p.y,(flex_t)p.z}; return q; }
 static void say(const char *s) { snprintf(message,sizeof(message),"%s",s); sithConsole_PrintString(message); }
+static EdResources customResources;
+static EdResources::Bytes customResourceBytes;
+static bool customResourcesReady,resourceForceMaterials;
+static std::vector<rdMaterial*> retiredResourceMaterials;
+static std::string customResourceError;
+static void setCustomResources(EdResources data){auto encoded=data.encode();customResources=std::move(data);customResourceBytes=std::move(encoded);customResourcesReady=true;customResourceError.clear();}
+void jkEditor_ResourcesLoad(void)try {
+    resourceForceMaterials=false;
+    EdResources draft;draft.pngToMat=edPngToMat;draft.discover(getenv("GEOSITH_MODS_DIR")?getenv("GEOSITH_MODS_DIR"):"mods");
+    if(!stockEpisode(jkRes_episodeGobName))for(int d=1;d<=2;d++)for(int g=0;g<jkRes_gCtx.aGobDirectories[d].numGobs;g++){
+        Gob *gob=jkRes_gCtx.aGobDirectories[d].gobs[g];if(gob)draft.archive(gob->fpath);
+    }
+    setCustomResources(std::move(draft));
+}catch(const std::exception &e){customResources.files.clear();customResourceBytes=customResources.encode();customResourcesReady=true;customResourceError=e.what();stdPlatform_Printf("GeoSith resources: %s\n",e.what());}
+void *jkEditor_ResourceOpen(const char *name,const char *mode)try {
+    if(!mode||mode[0]!='r'||strchr(mode,'+'))return NULL;
+    if(!customResourcesReady)jkEditor_ResourcesLoad();
+    auto found=customResources.files.find(EdResources::path(name));if(found==customResources.files.end())return NULL;
+    return new EdResourceFile{found->second};
+}catch(const std::exception&){return NULL;}
+void jkEditor_ResourceClose(void *f){delete (EdResourceFile*)f;}
+size_t jkEditor_ResourceRead(void *f,void *out,size_t n){return ((EdResourceFile*)f)->read(out,n);}
+const char *jkEditor_ResourceGets(void *f,char *out,size_t n){return ((EdResourceFile*)f)->gets(out,n);}
+int jkEditor_ResourceSeek(void *f,int n,int w){return ((EdResourceFile*)f)->seek(n,w);}
+int jkEditor_ResourceTell(void *f){return (int)((EdResourceFile*)f)->position;}
+int jkEditor_ResourceSize(void *f){return (int)((EdResourceFile*)f)->data->size();}
+int jkEditor_ResourceEof(void *f){return ((EdResourceFile*)f)->eof;}
+static bool customMaterial(const char *name){return customResources.files.count(std::string("mat/")+name)||customResources.files.count(std::string("3do/mat/")+name);}
+static int writeCustomResources(const EdModel *source,const char *path){
+    if(!customResourceError.empty()){say(customResourceError.c_str());return 0;}
+    for(auto &f:customResources.files){
+        // Authored models are serialized by edWriteGob and win over imports.
+        bool authored=false;for(int a=0;a<source->assetCount;a++)if(f.first==std::string("3do/")+source->assets[a].name+".3do")authored=true;
+        if(authored)continue;
+        std::string name=f.first;std::replace(name.begin(),name.end(),'/','\\');
+        if(!edGobAddFile(path,name.c_str(),f.second->data(),(unsigned)f.second->size()))return 0;
+    }return 1;
+}
 static int readResources(void) {
     if(resources) return 1;
     FILE *f=fopen("editor-resources.jkl","rb"); if(!f) { say("Run tools/prepare_assets.py before creating a level."); return 0; }
@@ -288,8 +346,13 @@ static const char *baseName(const char *name) {const char *base=name;for(const c
 static void freeEditorMaterials(void) {
     rdMaterialUnloader_t previous=rdMaterial_RegisterUnloader(NULL);
     for(int i=0;i<paletteCount;i++)if(paletteOwned[i]&&palette[i])rdMaterial_Free(palette[i]);
+    for(auto *mat:retiredResourceMaterials)rdMaterial_Free(mat);retiredResourceMaterials.clear();
     rdMaterial_RegisterUnloader(previous);
     edZero(palette,0,sizeof(palette));edZero(paletteOwned,0,sizeof(paletteOwned));paletteCount=0;
+}
+static std::vector<std::string> liveSectorColormaps;
+static int sectorColormapAvailable(const char *name){
+    char path[160];snprintf(path,sizeof(path),"misc\\cmp\\%s",name);rdColormap map={0};int ok=rdColormap_LoadEntry(path,&map);rdColormap_FreeEntry(&map);return ok;
 }
 static int addMaterialName(const char *name) {
     name=baseName(name);size_t length=strlen(name);
@@ -344,8 +407,11 @@ static void materialMetadata(void) {
             for(int i=0;i<paletteCount;i++)if(!__strcmpi(name,paletteNames[i])){materialColormap[i]=addColormap(cmp);if(!strcmp(kind,"models"))materialSection[i]=1;break;}
         fclose(file);
     }
+    for(int i=0;i<paletteCount;i++)if(customMaterial(paletteNames[i]))materialSection[i]=103;
+    for(auto &f:customResources.files)if(f.first.ends_with(".cmp"))addColormap(f.first.c_str());
 }
 static void discoverMaterials(void) {
+    for(auto &f:customResources.files)if(f.first.ends_with(".mat"))addMaterialName(f.first.c_str());
     for(int d=0;d<5;d++) {
         jkResGobDirectory *directory=&jkRes_gCtx.aGobDirectories[d];
         for(int g=0;g<directory->numGobs;g++) {
@@ -370,7 +436,7 @@ static rdMaterial *editorMaterial(int id) {
     if(id<0||id>=paletteCount)return NULL;
     if(palette[id])return palette[id];
     SithWorld *worlds[2]={sithWorld_g_pCurrentWorld,sithWorld_g_pStaticWorld};
-    for(int w=0;w<2;w++)if(worlds[w])for(int i=0;i<worlds[w]->numMaterials;i++)
+    for(int w=0;w<2;w++)if(!resourceForceMaterials&&!customMaterial(paletteNames[id])&&worlds[w])for(int i=0;i<worlds[w]->numMaterials;i++)
         if(!__strcmpi(baseName(worlds[w]->aMaterials[i].mat_fpath),paletteNames[id]))return palette[id]=&worlds[w]->aMaterials[i];
     rdMaterialLoader_t previous=rdMaterial_RegisterLoader(NULL);
     char path[256];snprintf(path,sizeof(path),"mat\\%s",paletteNames[id]);palette[id]=rdMaterial_Load(path,0,0);
@@ -416,6 +482,7 @@ static void drawMaterialPreview(tVBuffer *buffer,int material,int x,int y,int wi
                 int g=fmt->g_bits?((value>>fmt->g_shift)&((1u<<fmt->g_bits)-1))*255/((1u<<fmt->g_bits)-1):0;
                 int b=fmt->b_bits?((value>>fmt->b_shift)&((1u<<fmt->b_bits)-1))*255/((1u<<fmt->b_bits)-1):0;
                 color=palettePixel(buffer,r,g,b);
+                if(info->texture_ptr->alpha_en&&value==info->texture_ptr->color_transparent)color=checker[((col/8)+(row/8))&1];
             }
         }
         unsigned char *destination=(unsigned char*)buffer->surface_lock_alloc+dy*buffer->format.rowSize+dx*(buffer->format.format.bpp/8);
@@ -541,11 +608,11 @@ static int chooseList(const char16_t *title,char16_t names[][128],int count,int 
 }
 static void sectionName(int section,char *name,size_t size) {
     if(!section)snprintf(name,size,"All materials");else if(section==1)snprintf(name,size,"Models");
-    else if(section==2)snprintf(name,size,"Other");else snprintf(name,size,"Level %02d",section-3);
+    else if(section==2)snprintf(name,size,"Other");else if(section==103)snprintf(name,size,"Custom");else snprintf(name,size,"Level %02d",section-3);
 }
 static int chooseMaterialSection(int current) {
-    char16_t names[103][128];int ids[103],count=0,selected=0;
-    for(int s=0;s<103;s++) {
+    char16_t names[104][128];int ids[104],count=0,selected=0;
+    for(int s=0;s<104;s++) {
         int present=s==0;for(int i=0;i<paletteCount&&!present;i++)present=materialSection[i]==s;
         if(!present)continue;char text[128];sectionName(s,text,sizeof(text));stdString_CharToWchar(names[count],text,128);
         if(s==current)selected=count;ids[count++]=s;
@@ -562,7 +629,7 @@ static void captureMaterialMenu(jkGuiMenu *menu) {
 #ifdef SDL2_RENDER
     std3D_ScreenshotWindow(getenv("GEOSITH_MATERIAL_CAPTURE"));
 #endif
-    menu->lastClicked=100+currentMaterial%20;
+    menu->lastClicked=100+(currentMaterial+(getenv("GEOSITH_SPLINE_MENU_CAPTURE")?1:0))%20;
     printf("GEOSITH_MATERIAL_MENU PASS: preview and choose material\n");fflush(stdout);
 }
 static void captureObjectMenu(jkGuiMenu *menu) {
@@ -574,20 +641,25 @@ static void captureObjectMenu(jkGuiMenu *menu) {
     for(int i=8;i<28;i++)if(menu->paElements[i].bIsVisible){int id=(int)menu->paElements[i].otherDataPtr;SithThing *definition=sithTemplate_GetTemplate(templateNames[id]);if(definition&&definition->renderData.type==RD_THING_MODEL3){menu->lastClicked=menu->paElements[i].hoverId;break;}}
     printf("GEOSITH_OBJECT_MENU PASS\n");fflush(stdout);
 }
-static void materialMenu(void) {
+static void materialMenu(int nested) {
     int objects=browserObjects;char (*names)[128]=objects?templateNames:paletteNames;int total=objects?templateCount:paletteCount;
-    static int materialCategory,objectCategory;int section=objects?objectCategory:materialCategory;char16_t query[64]=u"";int page=0,ids[EDITOR_MATERIALS];
+    static int categories[2],pagesSaved[2];static char16_t queries[2][64];
+    int section=categories[objects!=0],page=pagesSaved[objects!=0],ids[EDITOR_MATERIALS],locateSelection=1;
+    char16_t query[64];stdString_SafeWStrCopy(query,queries[objects!=0],64);
     if(objects&&getenv("GEOSITH_OBJECT_CAPTURE")&&getenv("GEOSITH_STRESS"))stdString_SafeWStrCopy(query,u"crate",64);
     if(objects&&getenv("GEOSITH_OBJECT_QUERY")&&getenv("GEOSITH_STRESS"))stdString_CharToWchar(query,getenv("GEOSITH_OBJECT_QUERY"),64);
     SithThing *player=sithWorld_g_pCurrentWorld->pLocalPlayer;
     rdVector_Zero3(&player->physicsParams.vel);rdVector_Zero3(&player->physicsParams.acceleration);rdVector_Zero3(&player->physicsParams.deltaVelocity);
-    int previousNetSafe=jkEditor_NetSafeDialog(1);int previousModal=jkMain_bInModalGui;jkMain_bInModalGui=1;sithTime_Pause();stdControl_SetActivation(0);
+    int previousNetSafe=jkEditor_NetSafeDialog(1);int previousModal=jkMain_bInModalGui;jkMain_bInModalGui=1;if(!nested)sithTime_Pause();stdControl_SetActivation(0);
     if(jkGame_isDDraw){Windows_ShutdownGdi();Video_SwitchToGDI();jkPlayer_Close();jkGame_isDDraw=0;}
     stdBitmap_EnsureData(jkGui_stdBitmaps[JKGUI_BM_BK_ESC]);jkGui_SetModeMenu(jkGui_stdBitmaps[JKGUI_BM_BK_ESC]->palette);
     if(getenv("GEOSITH_SECTION_CAPTURE")&&getenv("GEOSITH_STRESS")&&!strcmp(jkRes_episodeGobName,"sithed_smoke"))section=chooseMaterialSection(section);
     if(objects&&getenv("GEOSITH_OBJECT_SECTION_CAPTURE")&&getenv("GEOSITH_STRESS")&&!strcmp(jkRes_episodeGobName,"sithed_smoke"))section=chooseObjectSection(section);
     for(;;) {
         int count=0;for(int i=0;i<total;i++)if((!section||(objects?(templateSections[i]&(1u<<section))!=0:materialSection[i]==section))&&materialMatches(names[i],query))ids[count++]=i;
+        /* Locate by filtered position, not catalog index; filters can reorder
+           the visible pages and the current item can change via the wheel. */
+        if(locateSelection){int selected=objects?currentTemplate:currentMaterial;for(int i=0;i<count;i++)if(ids[i]==selected){page=i/20;break;}locateSelection=0;}
         int pages=(count+19)/20;if(!pages)pages=1;if(page>=pages)page=pages-1;if(page<0)page=0;
         jkGuiElement elements[29]={
             {ELEMENT_TEXT,0,2,NULL,3,{20,12,600,32},1},
@@ -620,9 +692,9 @@ static void materialMenu(void) {
         if(id>=0){if(objects)currentTemplate=id;else if(editorMaterial(id))currentMaterial=id;break;}
         if(choice==2)page--;else if(choice==3)page++;else if(choice==4)page=0;else if(choice==5){section=objects?chooseObjectSection(section):chooseMaterialSection(section);page=0;}else break;
     }
-    if(objects)objectCategory=section;else materialCategory=section;
+    categories[objects!=0]=section;pagesSaved[objects!=0]=page;stdString_SafeWStrCopy(queries[objects!=0],query,64);
     if(getenv("GEOSITH_HEADER_CAPTURE")&&getenv("GEOSITH_STRESS")&&!strcmp(jkRes_episodeGobName,"sithed_smoke"))jkEditor_HeaderDialog();
-    jkGui_SetModeGame();jkMain_SetVideoMode();sithTime_Resume();jkMain_bInModalGui=previousModal;jkEditor_NetSafeDialog(previousNetSafe);stdControl_SetActivation(1);stdControl_Flush();
+    if(!nested){jkGui_SetModeGame();jkMain_SetVideoMode();sithTime_Resume();stdControl_SetActivation(1);}jkMain_bInModalGui=previousModal;jkEditor_NetSafeDialog(previousNetSafe);stdControl_Flush();
     char message[160];snprintf(message,sizeof(message),"%s: %s",objects?"Template":"Material",objects?templateNames[currentTemplate]:paletteNames[currentMaterial]);say(message);
 }
 static void shapeLabel(int sides,char *text,int size){
@@ -673,6 +745,20 @@ static void testSelectionMenu(jkGuiMenu *menu){static int frames;if(++frames<3)r
 #endif
     menu->lastClicked=2;
 }
+static int moveGrabbedSectors(EdVec delta){
+    EdBuffer<unsigned char> mapped;
+    if(!edMapTranslate(candidate,snapshot,grabSectors,delta,0,mapped)||!commit())return 0;
+    sectorPicks=mapped;return 1;
+}
+static void selectionScale(int wheel){
+    if(netEditPending())return;double factor=wheel>0?1.1:1.0/1.1;EdVec pivot;EdModel before;edCopyModel(&before,model);EdSelection selected=picks;EdBuffer<unsigned char> sectors=sectorPicks;
+    if(!edScaleSelection(candidate,model,&selected,sectors,factor,&pivot)){say("Scale rejected: select surfaces or sectors; geometry must stay planar and convex. Convert editable splines first.");return;}
+    remember();if(!commit())return;
+    if(selectedSectorCount()){sectorPicks.clear();for(int s=0;s<model->count;s++){EdVec center={};int n=0;for(int f=0;f<model->c[s].count;f++)for(int v=0;v<model->c[s].f[f].count;v++){center=edAdd(center,model->c[s].f[f].v[v].p);n++;}center=edAdd(pivot,edScale(edSub(edScale(center,1.0/n),pivot),1/factor));for(int b=0;b<before.count;b++)if(sectors[b]&&edContains(&before.c[b],center)){sectorPicks[s]=1;break;}}}
+    else {picks.count=0;for(int i=0;i<selected.count;i++){EdHit h=selected.hits[i];const EdFace &old=before.c[h.cell].f[h.face];EdVec center={};for(int v=0;v<old.count;v++)center=edAdd(center,old.v[v].p);center=edAdd(pivot,edScale(edSub(edScale(center,1.0/old.count),pivot),factor));EdVec normal=edNormal(&old);EdHit hit;
+        if(edRaySelection(model,edAdd(center,edScale(normal,.001)),edScale(normal,-1),&hit)&&hit.distance<.002){hit.edge=hit.vertex=-1;edSelectionToggle(model,&picks,hit);}}}
+    say(wheel>0?"Selection scaled up 10%. Ctrl+Z: undo.":"Selection scaled down. Ctrl+Z: undo.");
+}
 static void selectionWheel(int wheel){
     if(!wheel)return;selectionCleanup=!selectionCleanup;edResetDoubleTap(&selectionTap,1);
     say(selectionCleanup?"Clean Up: aim at a surface and press Fire 1 to simplify its sector.":"Select: Fire 1 selects; Fire 2 moves the selection.");
@@ -712,13 +798,14 @@ static int writeEditorGob(const EdModel *source,const char *path,const char *tit
         int id=mapped->meshes[s].geometry.f[f].material;if(id<0||id>=paletteCount)id=0;
         if(map[id]<0){map[id]=count;ids[count++]=id;}mapped->meshes[s].geometry.f[f].material=map[id];
     }
+    for(int i=0;i<mapped->splineCount;i++){int id=mapped->splines[i].material;if(id<0||id>=paletteCount)id=0;if(map[id]<0){map[id]=count;ids[count++]=id;}mapped->splines[i].material=map[id];}
     size_t capacity=strlen(resources)+(size_t)count*180+128;
     char *manifest=(char*)edAlloc(capacity);if(!manifest){edFree(mapped);return 0;}
     size_t used=start-resources;edCopy(manifest,resources,used);
     used+=snprintf(manifest+used,capacity-used,"World materials %d\n",count);
     for(int i=0;i<count;i++)used+=snprintf(manifest+used,capacity-used,"%d: %s 1.0 1.0\n",i,paletteNames[ids[i]]);
     snprintf(manifest+used,capacity-used,"end\n%s",tail);
-    int ok=edWriteGob(mapped,path,title,multiplayer,manifest);if(ok)ok=writeCogSources(mapped,path);edFree(manifest);edFree(mapped);return ok;
+    int ok=edWriteGob(mapped,path,title,multiplayer,manifest);if(ok)ok=writeCustomResources(mapped,path);if(ok)ok=writeCogSources(mapped,path);edFree(manifest);edFree(mapped);return ok;
 }
 int jkEditor_IsLevel(void) try { return editorWorld(sithWorld_g_pCurrentWorld); } catch(const std::bad_alloc&) {say("Editor operation stopped: not enough memory.");return 0;}
 int jkEditor_Active(void) try { return active&&jkEditor_IsLevel(); } catch(const std::bad_alloc&) {say("Editor operation stopped: not enough memory.");return 0;}
@@ -767,7 +854,7 @@ int jkEditor_Create(int multiplayer) try {
     for(int i=0;i<6;i++)fresh->c[0].f[i].material=wallMaterial;
     snprintf(fresh->header.title,sizeof(fresh->header.title),"%s",name);edEpisodeDefault(&fresh->episode,name,multiplayer);snprintf(fresh->episode.rows[0].title,sizeof(fresh->episode.rows[0].title),"%s",name);
     char path[128];snprintf(path,sizeof(path),"Episode/%s.gob",name);
-    int ok=edWriteGob(fresh,path,name,multiplayer,resources); edFree(fresh);
+    int ok=edWriteGob(fresh,path,name,multiplayer,resources);if(ok)ok=writeCustomResources(fresh,path); edFree(fresh);
     if(ok) { snprintf(jkRes_episodeGobName,32,"%s",name); multi=multiplayer; }
     else say("Could not create the episode GOB. Check the Episode folder.");
     return ok;
@@ -809,6 +896,31 @@ static void syncEditorObjects(const EdModel *source) {
         netSyncObjectGuid(thing,i);
     }
 }
+/* Rebuilds replace surface allocations, not physical contact. Keep an existing
+   contact only when its plane and supporting polygon survive the edit. This
+   also handles cleaved/renumbered floors without replaying landing effects. */
+static SithSurface *rebuiltSupport(SithThing *thing,SithWorld *oldWorld,SithWorld *geometry,const EdModel *m) {
+    SithSurface *old=thing->attachedSurface;
+    if(!old||old->surfaceInfo.face.numVertices<3||old->flags&SITH_SURFACE_SCROLLING)return NULL;
+    EdVec normal=vec(old->surfaceInfo.face.normal);
+    EdVec point=vec(oldWorld->aVertices[old->surfaceInfo.face.vertexPosIdx[0]]);
+    double plane=edDot(normal,point);
+    EdVec projected=edSub(vec(thing->position),edScale(normal,edDot(normal,vec(thing->position))-plane));
+    rdVector3 contact=rdvec(projected);
+    for(int s=0;s<m->count;s++) {
+        if(!edContains(&m->c[s],vec(thing->position)))continue;
+        SithSector *sector=&geometry->aSectors[s];
+        for(int f=0;f<sector->numSurfaces;f++) {
+            SithSurface *surface=&sector->surfaces[f];rdFace *face=&surface->surfaceInfo.face;
+            if(!(surface->flags&SITH_SURFACE_HAS_COLLISION)||surface->flags&SITH_SURFACE_SCROLLING)continue;
+            EdVec difference=edSub(vec(face->normal),normal);
+            if(edDot(difference,difference)>ED_EPS*ED_EPS)continue;
+            if(fabs(edDot(normal,vec(geometry->aVertices[face->vertexPosIdx[0]]))-plane)>ED_EPS)continue;
+            if(sithIntersect_TestSphereFaceHit(&contact,0,face,geometry->aVertices,NULL))return surface;
+        }
+    }
+    return NULL;
+}
 static int apply(const EdModel *m) {
     // Added: reject invalid or non-reciprocal portals before indexing adjoins
     for(int s=0;s<m->count;s++)for(int f=0;f<m->c[s].count;f++){const EdFace *p=&m->c[s].f[f];if(p->neighbor<0)continue;
@@ -816,8 +928,13 @@ static int apply(const EdModel *m) {
     if(!syncCustomTemplates(m)){if(m!=model)syncCustomTemplates(model);return 0;}
     SithWorld *w=sithWorld_g_pCurrentWorld,geo={0}; EdBuffer<int> starts;EdBuffer<EdBuffer<int>> fi,ai;
     sithSectorAlloc *awareness=NULL;
-    int nf=0,nv=0,na=0;rdColormap replacement={0};int replaceMap=__strcmpi(liveColormap,m->header.colormap)!=0;
-    if(replaceMap){char path[160];snprintf(path,sizeof(path),"misc\\cmp\\%s",m->header.colormap);if(!rdColormap_LoadEntry(path,&replacement))return 0;}
+    int nf=0,nv=0,na=0;rdColormap *replacementMaps=NULL;EdBuffer<int> sectorMapIndices;
+    std::vector<std::string> mapNames={m->header.colormap};
+    for(int s=0;s<m->count;s++){const char *name=m->c[s].colormap[0]?m->c[s].colormap:m->header.colormap;int i=0;for(;i<(int)mapNames.size();i++)if(mapNames[i]==name)break;if(i==(int)mapNames.size())mapNames.push_back(name);sectorMapIndices[s]=i;}
+    int replaceMap=liveSectorColormaps!=mapNames||__strcmpi(liveColormap,m->header.colormap)!=0;
+    if(replaceMap){replacementMaps=(rdColormap*)SITH_ALLOC(sizeof(rdColormap)*mapNames.size());if(!replacementMaps)return 0;memset(replacementMaps,0,sizeof(rdColormap)*mapNames.size());
+        for(size_t i=0;i<mapNames.size();i++){char path[160];snprintf(path,sizeof(path),"misc\\cmp\\%s",mapNames[i].c_str());if(!rdColormap_LoadEntry(path,&replacementMaps[i]))goto fail;}
+    }
     for(int s=0;s<m->count;s++) { starts[s]=nf; for(int f=0;f<m->c[s].count;f++) { fi[s][f]=nf++; nv+=m->c[s].f[f].count; ai[s][f]=m->c[s].f[f].neighbor>=0?na++:-1; } }
     geo.numSectors=m->count;geo.numSurfaces=nf;geo.numVertices=geo.numTexVertices=nv;geo.numAdjoins=geo.numAdjoinsLoaded=na;
 #define ALLOC(field,type,count) geo.field=(type*)SITH_ALLOC(sizeof(type)*(count)); if(!geo.field) goto fail; edZero(geo.field,0,sizeof(type)*(count))
@@ -833,7 +950,7 @@ static int apply(const EdModel *m) {
     for(int s=0;s<m->count;s++) {
         SithSector *sector=&geo.aSectors[s]; EdVec lo=edV(1e9,1e9,1e9),hi=edV(-1e9,-1e9,-1e9);
         sector->flags=m->c[s].flags;sector->tint=rdvec(m->c[s].tint);sector->thrust=rdvec(m->c[s].thrust);sector->ambientSoundVolume=m->c[s].soundVolume;sector->hAmbientSound=m->c[s].sound[0]?sithSound_Load((char*)m->c[s].sound,0):NULL;
-        sector->id=s;sector->ambientLight=m->c[s].ambientLight;sector->extraLight=m->c[s].extraLight;sector->colormap=&w->colormaps[0];sector->numSurfaces=m->c[s].count;sector->surfaces=&geo.surfaces[starts[s]];
+        sector->id=s;sector->ambientLight=m->c[s].ambientLight;sector->extraLight=m->c[s].extraLight;sector->colormap=&(replaceMap?replacementMaps:w->colormaps)[sectorMapIndices[s]];sector->numSurfaces=m->c[s].count;sector->surfaces=&geo.surfaces[starts[s]];
         int count=0;for(int f=0;f<m->c[s].count;f++)count+=m->c[s].f[f].count;
         sector->aVertIdxs=(int32_t*)SITH_ALLOC(sizeof(int32_t)*count); if(!sector->aVertIdxs)goto fail;sector->numVertices=count;int sv=0;
         for(int f=0;f<m->c[s].count;f++) {
@@ -875,7 +992,13 @@ static int apply(const EdModel *m) {
     }
     for(int i=0;i<w->numThingsLoaded;i++) {
         SithThing *t=&w->aThings[i];
-        if(t->attach_flags&SITH_ATTACH_SURFACE)sithThing_DetachThing(t);
+        if(t->attach_flags&SITH_ATTACH_SURFACE) {
+            SithSurface *support=rebuiltSupport(t,w,&geo,m);
+            if(support) {
+                t->attachedSurface=support;t->attachedSufaceInfo=&support->surfaceInfo;
+                t->field_38=geo.aVertices[support->surfaceInfo.face.vertexPosIdx[0]];
+            }else sithThing_DetachThing(t);
+        }
         t->sector=NULL;t->pNextThingInSector=t->pPrevThingInSector=NULL;
     }
     sithSoundMixer_pCurSector=NULL;
@@ -891,6 +1014,7 @@ static int apply(const EdModel *m) {
 #define SWAP(field) SITH_FREE(w->field);w->field=geo.field;geo.field=NULL
     SWAP(aVertices);SWAP(aTexVerticies);SWAP(aTransformedVertices);SWAP(aVertDynamicLights);SWAP(alloc_unk98);SWAP(alloc_unk9c);
     w->aSectors=geo.aSectors;w->surfaces=geo.surfaces;w->adjoins=geo.adjoins;w->numSectors=m->count;w->numSurfaces=nf;w->numVertices=positionCount;w->numTexVertices=nv;w->numAdjoins=w->numAdjoinsLoaded=na;
+    if(replaceMap){for(int i=0;i<w->numColormaps;i++)rdColormap_FreeEntry(&w->colormaps[i]);SITH_FREE(w->colormaps);w->colormaps=replacementMaps;replacementMaps=NULL;w->numColormaps=(int)mapNames.size();liveSectorColormaps=mapNames;}
     for(int i=0;i<w->numThingsLoaded;i++) { SithThing *t=&w->aThings[i];if(!t->type)continue;int found=0;for(int s=0;s<m->count;s++)if(edContains(&m->c[s],vec(t->position))) { found=s;break; }sithThing_EnterSector(t,&w->aSectors[found],1,1); }
     for(int i=0;i<7;i++)sithCamera_g_aCameras[i].sector=w->pLocalPlayer?w->pLocalPlayer->sector:&w->aSectors[0];
     for(unsigned int i=0;i<jkPlayer_maxPlayers&&i<JKPLAYER_NUM_INFOS;i++) {
@@ -903,7 +1027,7 @@ static int apply(const EdModel *m) {
     w->horizonSkyOffset=rdVector2{(flex_t)(h->horizonOffset[0]),(flex_t)(h->horizonOffset[1])};w->ceilingSkyOffset=rdVector2{(flex_t)(h->ceilingOffset[0]),(flex_t)(h->ceilingOffset[1])};
     w->mipmapDistance=rdVector4{(flex_t)(h->mip[0]),(flex_t)(h->mip[1]),(flex_t)(h->mip[2]),(flex_t)(h->mip[3])};w->distancesLOD=rdVector4{(flex_t)(h->lod[0]),(flex_t)(h->lod[1]),(flex_t)(h->lod[2]),(flex_t)(h->lod[3])};
     w->perspectiveDistance=h->perspective;w->gouradDistance=h->gouraud;
-    if(replaceMap){rdColormap_FreeEntry(&w->colormaps[0]);w->colormaps[0]=replacement;snprintf(liveColormap,sizeof(liveColormap),"%s",m->header.colormap);
+    if(replaceMap){snprintf(liveColormap,sizeof(liveColormap),"%s",m->header.colormap);
         rdColormap_SetCurrent(&w->colormaps[0]);rdColormap_pIdentityMap=&w->colormaps[0];
         stdPalEffects_RefreshPalette();if(jkGame_isDDraw){stdDisplay_SetMasterPalette((uint8_t*)w->colormaps[0].colors);stdPalEffects_UpdatePalette(w->colormaps[0].colors);}
         sithRender_SetPalette(w->colormaps[0].colors);std3D_PurgeEntireTextureCache();
@@ -912,7 +1036,7 @@ static int apply(const EdModel *m) {
     sithWorld_ResetRenderState(w);syncEditorObjects(m);recoverOutsideEditorPlayer(m);if(!active&&m->cogCount&&!startPlacedCogs(m))say("Could not start one or more placed COGs. Check script resources and capacity.");return 1;
 }
 fail:
-    if(replaceMap)rdColormap_FreeEntry(&replacement);
+    if(replacementMaps){for(size_t i=0;i<mapNames.size();i++)rdColormap_FreeEntry(&replacementMaps[i]);SITH_FREE(replacementMaps);}
     SITH_FREE(awareness);
     if(geo.aSectors)sithSector_FreeWorldSectors(&geo);if(geo.surfaces)sithSurface_FreeWorldSurfaces(&geo);
     SITH_FREE(geo.aVertices);SITH_FREE(geo.aTexVerticies);SITH_FREE(geo.aTransformedVertices);SITH_FREE(geo.aVertDynamicLights);SITH_FREE(geo.alloc_unk98);SITH_FREE(geo.alloc_unk9c);return 0;
@@ -982,6 +1106,7 @@ static int bindEditorWorld(void) {
     if(!sithWorld_g_pCurrentWorld||!sithWorld_g_pCurrentWorld->aSectors||sithWorld_g_pCurrentWorld->numSectors<1||!sithWorld_g_pCurrentWorld->aThings)return 0;
     if(boundWorld==sithWorld_g_pCurrentWorld&&model) return 1;
     if(failedImportWorld==sithWorld_g_pCurrentWorld)return 0;
+    if(!customResourceError.empty())return importFailure(customResourceError.c_str());
     importingStock=stockEpisode(jkRes_episodeGobName);
     if(!readStockResources())return importFailure("Could not read stock level resources.");
     if(!readResources()) return 0;
@@ -992,7 +1117,7 @@ static int bindEditorWorld(void) {
     const char *line=strstr(resources,"World materials");if(!line)line=strstr(resources,"world materials");freeEditorMaterials();
     if(line) { line=strchr(line,'\n');while(line && *++line) { int id;char name[128];if(sscanf(line," %d: %127s",&id,name)==2&&id==paletteCount&&id<EDITOR_MATERIALS){snprintf(paletteNames[id],128,"%s",name);palette[paletteCount++]=sithMaterial_Load(name,0,0);}else if(!strncmp(line,"end",3))break;line=strchr(line,'\n'); } }
     baseMaterialCount=paletteCount;discoverMaterials();builderFreeCache();resetCustomTemplates();
-    edZero(model,0,sizeof(*model));readLevelHeader(&model->header,w);snprintf(liveColormap,sizeof(liveColormap),"%s",model->header.colormap);model->count=w->numSectors;model->spawn=w->pLocalPlayer?vec(w->pLocalPlayer->position):edV(0,0,0);
+    liveSectorColormaps.clear();edZero(model,0,sizeof(*model));readLevelHeader(&model->header,w);snprintf(liveColormap,sizeof(liveColormap),"%s",model->header.colormap);model->count=w->numSectors;model->spawn=w->pLocalPlayer?vec(w->pLocalPlayer->position):edV(0,0,0);
     templateCount=0;currentTemplate=0;
     for(int i=0;i<w->numThingTemplates&&templateCount<EDITOR_TEMPLATES;i++)if(w->aThingTemplates[i].aName[0])snprintf(templateNames[templateCount++],128,"%s",w->aThingTemplates[i].aName);
     SithWorld *staticWorld=sithWorld_g_pStaticWorld;
@@ -1015,7 +1140,11 @@ static int bindEditorWorld(void) {
     }
     if(!model->spawnCount){model->spawnCount=1;model->spawns[0].position=model->spawn;}
     model->spawn=model->spawns[0].position;nextSpawn=0;int changedUV=0;
-    for(int s=0;s<w->numSectors;s++) { SithSector *sector=&w->aSectors[s];EdCell *cell=&model->c[s];if(sector->numSurfaces>ED_FACES)return importFailure("A sector exceeds the editor surface capacity.");cell->tolerance=importingStock?ED_IMPORT_EPS:0;cell->flags=sector->flags&~SITH_SECTOR_HASCOLLIDEBOX;cell->tint=vec(sector->tint);cell->thrust=vec(sector->thrust);cell->soundVolume=sector->ambientSoundVolume;if(sector->hAmbientSound)snprintf(cell->sound,32,"%s",sector->hAmbientSound->sound_fname);cell->count=sector->numSurfaces;cell->ambientLight=fmin(1,fmax(0,sector->ambientLight));cell->extraLight=fmin(1,fmax(0,sector->extraLight));
+    for(int s=0;s<w->numSectors;s++) { SithSector *sector=&w->aSectors[s];EdCell *cell=&model->c[s];if(sector->numSurfaces>ED_FACES)return importFailure("A sector exceeds the editor surface capacity.");cell->tolerance=importingStock?ED_IMPORT_EPS:0;cell->flags=sector->flags&~SITH_SECTOR_HASCOLLIDEBOX;cell->tint=vec(sector->tint);cell->thrust=vec(sector->thrust);cell->soundVolume=sector->ambientSoundVolume;if(sector->hAmbientSound)snprintf(cell->sound,32,"%s",sector->hAmbientSound->sound_fname);
+#ifdef SITH_DEBUG_STRUCT_NAMES
+        if(sector->colormap&&sector->colormap!=&w->colormaps[0])snprintf(cell->colormap,128,"%s",sector->colormap->colormap_fname);
+#endif
+        cell->count=sector->numSurfaces;cell->ambientLight=fmin(1,fmax(0,sector->ambientLight));cell->extraLight=fmin(1,fmax(0,sector->extraLight));
         for(int f=0;f<cell->count;f++) { SithSurface *surface=&sector->surfaces[f];rdFace *src=&surface->surfaceInfo.face;EdFace *dst=&cell->f[f];if(src->numVertices>ED_SURFACE_VERTS)return importFailure("A surface exceeds the 24 vertex limit.");dst->count=src->numVertices;dst->neighbor=dst->mirror=-1;dst->material=0;
             for(int i=0;i<paletteCount;i++)if(palette[i]==src->material||(src->material&&!__strcmpi(paletteNames[i],baseName(src->material->mat_fpath)))){dst->material=i;palette[i]=src->material;break;}
             if(surface->pAdjoin) { dst->neighbor=surface->pAdjoin->sector->id;dst->mirror=(int)(surface->pAdjoin->mirror->surface-surface->pAdjoin->sector->surfaces); }
@@ -1042,13 +1171,15 @@ static int bindEditorWorld(void) {
     if(meshFile){int size=jkRes_FileSize(meshFile);unsigned char *data=size>0&&size<=ED_NET_LIMIT/2?(unsigned char*)edAlloc(size):NULL;
         lightsValid=data&&jkRes_FileRead(meshFile,data,size)==size&&edReadMeshData(model,data,size);edFree(data);jkRes_FileClose(meshFile);}
     if(lightFile){int size=jkRes_FileSize(lightFile);char *text=size>0&&size<64*1024*1024?(char*)edAlloc((size_t)size+1):NULL;
-        lightsValid=lightsValid&&text&&jkRes_FileRead(lightFile,text,size)==size;if(lightsValid){text[size]=0;lightsValid=edReadLights(model,text)&&readPlacedCogs(model,text);
+        lightsValid=lightsValid&&text&&jkRes_FileRead(lightFile,text,size)==size;if(lightsValid){text[size]=0;lightsValid=edReadLights(model,text)&&readPlacedCogs(model,text)&&edReadTextureRotations(model,text);
             if(model->lightCount)for(int s=0;s<model->count;s++)for(int f=0;f<model->c[s].count;f++)for(int v=0;v<model->c[s].f[f].count;v++)model->c[s].f[f].v[v].light=0;
-            for(const char *line=text;line&&*line;line=strchr(line,'\n')){if(*line=='\n')line++;int sector,face,vertex;double value;if(sscanf(line,"# GeoSith tolerance %d %lf",&sector,&value)==2&&sector>=0&&sector<model->count&&value>=0&&value<=ED_IMPORT_EPS)model->c[sector].tolerance=value;
+            for(const char *line=text;line&&*line;line=strchr(line,'\n')){if(*line=='\n')line++;int sector,face,vertex;double value;char layer[64];if(sscanf(line,"# GeoSith layer %d %63[^\r\n]",&sector,layer)==2&&sector>=0&&sector<model->count)snprintf(model->c[sector].layer,64,"%s",layer);if(sscanf(line,"# GeoSith tolerance %d %lf",&sector,&value)==2&&sector>=0&&sector<model->count&&value>=0&&value<=ED_IMPORT_EPS)model->c[sector].tolerance=value;
                 if(sscanf(line,"# GeoSith base light %d %d %d %lf",&sector,&face,&vertex,&value)==4&&sector>=0&&sector<model->count&&face>=0&&face<model->c[sector].count&&vertex>=0&&vertex<model->c[sector].f[face].count&&isfinite(value)&&value>=0&&value<=1)model->c[sector].f[face].v[vertex].light=value;
             }
-            if(model->meshCount){int mapping[EDITOR_MATERIALS];for(int i=0;i<EDITOR_MATERIALS;i++)mapping[i]=-1;const char *p=strstr(text,"World materials");if(!p)p=strstr(text,"world materials");p=p?strchr(p,'\n'):NULL;
+            edSplineReadMetadata(model,text);
+            if(model->meshCount||model->splineCount){int mapping[EDITOR_MATERIALS];for(int i=0;i<EDITOR_MATERIALS;i++)mapping[i]=-1;const char *p=strstr(text,"World materials");if(!p)p=strstr(text,"world materials");p=p?strchr(p,'\n'):NULL;
                 while(p&&*++p&&strncmp(p,"end",3)){int id;char name[128];if(sscanf(p," %d: %127s",&id,name)==2&&id>=0&&id<EDITOR_MATERIALS)mapping[id]=addMaterialName(name);p=strchr(p,'\n');}
+                for(int i=0;i<model->splineCount;i++){int *id=&model->splines[i].material;if(*id<0||*id>=EDITOR_MATERIALS||mapping[*id]<0)lightsValid=0;else *id=mapping[*id];}
                 for(int i=0;i<model->meshCount;i++)for(int f=0;f<model->meshes[i].geometry.count;f++){int *id=&model->meshes[i].geometry.f[f].material;if(*id<0||*id>=EDITOR_MATERIALS||mapping[*id]<0)lightsValid=0;else *id=mapping[*id];}
             }
         }edFree(text);jkRes_FileClose(lightFile);}
@@ -1066,10 +1197,14 @@ static int bindEditorWorld(void) {
     }
     active=0;clearHistory();multi=sithNet_isMulti;picks.count=grabPicks.count=undoPicks.count=0;currentMaterial=model->c[0].f[0].material;lightHovered=lightGrabbed=-1;lightGrabbing=0;
     if(importingStock){char name[32];snprintf(name,sizeof(name),"%.20s",w->map_jkl_fname);char *dot=strrchr(name,'.');if(dot)*dot=0;strcat(name,"_edited");stdString_CharToWchar(levelName,name,32);}else stdString_CharToWchar(levelName,jkRes_episodeGobName,32);
+    terrainTemplateFlags(model);
     int geometryValid=edValidate(model);stdPlatform_Printf("GeoSith import checks: lights/cogs=%d episode=%d geometry=%d\n",lightsValid,episodeValid,geometryValid);int valid=lightsValid&&episodeValid&&geometryValid&&syncCustomTemplates(model);if(valid&&!importingStock&&(changedUV||model->lightCount))valid=apply(model);if(valid)boundWorld=w;else importFailure("Level conversion failed validation; original level is unchanged.");stdPlatform_Printf("GeoSith: bound %d sectors, %d materials, %d lights, geometry valid=%d\n",model->count,paletteCount,model->lightCount,valid);return valid;
 }
 static void remember(void) { edCopyModel(undoModel,model);undoPicks=picks;pendingUndo=1;netRemember(); }
 static int commit(void) {
+    if(mapActive&&!netApplying&&!mapMirrorCandidate())return 0;
+    terrainTemplateFlags(candidate);
+    edSplineReconcile(candidate);
     if(edModelsEqual(candidate,model)){edClearGeometryError();return 1;}
     if(netClient()&&!netApplying)return netPropose(candidate);
     if(!edValidate(candidate)){say("Edit rejected: geometry must remain closed, planar and convex.");return 0;}
@@ -1099,6 +1234,12 @@ static void leaveEditor(SithThing *p) {
     syncEditorObjects(model);
     if(!startPlacedCogs(model))say("Some placed COGs could not start. Save and reload to verify script resources.");
 }
+static int editorForceSpeedHeld(void) {
+    int held=0;
+    for(int i=0;i<SITHINVENTORY_NUM_POWERKEYBINDS-1;i++)
+        if(sithInventory_GetPowerKeybind(i)==SITHBIN_F_SPEED)held|=sithControl_GetKey(INPUT_FUNC_ACTIVATE0+i,NULL)!=0;
+    return held;
+}
 static void setEditorFlight(SithThing *p,int enabled) {
     /* Flying changes gravity and movement, never collision. */
     g_debugmodeFlags&=~DEBUGFLAG_NOCLIP;
@@ -1109,6 +1250,7 @@ static void setEditorFlight(SithThing *p,int enabled) {
         say("Flight on. Double-tap jump to turn flight off.");
     } else {
         p->physicsParams.flags=(p->physicsParams.flags&~SITH_PF_FLY)|SITH_PF_USEGRAVITY;
+        flightSpeedBoost=0;
         say("Flight off. Double-tap jump to fly.");
     }
 }
@@ -1119,6 +1261,7 @@ static void editorFlightMovement(SithThing *p) {
        otherwise changes the controls and bypasses jump/crouch ascent. */
     uint32_t debug=g_debugmodeFlags;g_debugmodeFlags&=~DEBUGFLAG_NOCLIP;
     sithControl_FreeCam(p);g_debugmodeFlags=debug;
+    if(flightSpeedBoost)rdVector_Scale3Acc(&p->physicsParams.acceleration,2.0);
     if(rdVector_IsZero3(&p->physicsParams.acceleration)) {
         rdVector_Zero3(&p->physicsParams.vel);
         rdVector_Zero3(&p->physicsParams.deltaVelocity);
@@ -1169,7 +1312,7 @@ static int historyStep(int redo) {
     EditorHistoryEntry restored=source[*sourceCount-1];unsigned char *wire=edNetUnpack(restored.data,restored.size,restored.rawSize);int decoded=wire&&edWireDecode(candidate,wire,restored.rawSize);edFree(wire);
     if(!decoded){edFree(current.data);say("Could not restore edit history.");return 0;}
     if(!commit()){edFree(current.data);return 0;}
-    picks=restored.selection;edFree(restored.data);source[--*sourceCount]=EditorHistoryEntry{0};pushHistory(destination,destinationCount,current);
+    sectorPicks.clear();picks=restored.selection;edFree(restored.data);source[--*sourceCount]=EditorHistoryEntry{0};pushHistory(destination,destinationCount,current);
     grabbing=groupGrab=cleaving=lightGrabbing=0;lightHovered=lightGrabbed=-1;hover.cell=-1;
     SithThing *player=sithWorld_g_pCurrentWorld->pLocalPlayer;int inside=0;
     for(int s=0;s<model->count;s++)if(edContains(&model->c[s],vec(player->position))){inside=1;break;}
@@ -1339,6 +1482,19 @@ static int extrudeGrabbedFace(EdVec movement,int horizontal) {
         return extrudeFace(target.cell,target.face,horizontal);
     say("The grabbed face cannot be extruded here.");return 0;
 }
+static void selectOppositeAdjoins(void) {
+    int changed=0;
+    for(int i=0;i<picks.count;i++){
+        EdHit *hit=&picks.hits[i];
+        if(hit->vertex>=0||hit->edge>=0||hit->cell<0||hit->cell>=model->count||hit->face<0||hit->face>=model->c[hit->cell].count)continue;
+        const EdFace *face=&model->c[hit->cell].f[hit->face];
+        if(face->neighbor<0||face->neighbor>=model->count||face->mirror<0||face->mirror>=model->c[face->neighbor].count)continue;
+        const EdFace *opposite=&model->c[face->neighbor].f[face->mirror];
+        if(opposite->neighbor!=hit->cell||opposite->mirror!=hit->face)continue;
+        hit->cell=face->neighbor;hit->face=face->mirror;changed++;
+    }
+    if(changed)say("Selected the opposite side of the adjoin. Backspace switches back.");
+}
 static int allSelectedSurfaces(const EdSelection *set) {if(!set->count)return 0;for(int i=0;i<set->count;i++)if(set->hits[i].vertex>=0||set->hits[i].edge>=0)return 0;return 1;}
 static int extrudeSelectedFaces(int horizontal) {
     if(!allSelectedSurfaces(&picks)){say("Select surfaces only for grouped extrusion.");return 0;}
@@ -1419,8 +1575,32 @@ void jkEditor_SelfTest(void) try {
         if(ok&&getenv("GEOSITH_STOCK_EXPORT")){const char *path="Episode/geosith_stock_conversion_test.gob";FILE *existing=fopen(path,"rb");if(existing){fclose(existing);ok=0;}else ok=writeEditorGob(model,path,"Stock conversion test",sithNet_isMulti);}
         printf("GEOSITH_STOCK %s: sectors=%d objects=%d cogs=%d\n",ok?"PASS":"FAIL",model?model->count:0,model?model->objectCount:0,model?model->cogCount:0);fflush(stdout);exit(ok?0:2);}
 
+    if(getenv("GEOSITH_VERIFY_TERRAIN_GROUP")){
+        int ok=bindEditorWorld()&&model->assetCount==2&&model->objectCount==2&&model->assets[0].terrainGroup>0&&model->assets[0].terrainGroup==model->assets[1].terrainGroup;
+        if(ok){edCopyModel(candidate,model);ok=edTerrainSculpt(candidate,1,edV(0,1,0),.5,.1)&&edMeshValidate(candidate);int moved[2]={};
+            for(int i=0;i<candidate->meshCount;i++)for(int f=0;f<candidate->meshes[i].geometry.count;f++)for(int v=0;v<3;v++){
+                EdVec p=candidate->meshes[i].geometry.f[f].v[v].p;if(fabs(p.x)<1e-8&&fabs(p.y-1)<1e-8&&p.z>.09)moved[candidate->meshes[i].asset]++;
+            }ok=ok&&moved[0]&&moved[1];
+        }
+        printf("GEOSITH_TERRAIN_GROUP_RELOAD %s: sector objects, group metadata and welded sculpting\n",ok?"PASS":"FAIL");fflush(stdout);exit(ok?0:2);
+    }
+    if(getenv("GEOSITH_VERIFY_TERRAIN")&&!strcmp(jkRes_episodeGobName,"sithed_terrain_test")){
+        int ok=bindEditorWorld()&&model->assetCount>0&&model->assets[0].terrain&&model->objectCount>0&&edTerrainObject(model,model->objectCount-1)==0;
+        if(ok){edCopyModel(candidate,model);ok=edTerrainSculpt(candidate,0,edSub(model->assets[0].origin,edScale(model->assets[0].terrainNormal,.05)),.75,.1)&&edMeshValidate(candidate);}
+        printf("GEOSITH_TERRAIN_RELOAD %s: playable model and editable terrain metadata\n",ok?"PASS":"FAIL");fflush(stdout);exit(ok?0:2);
+    }
+    if(getenv("GEOSITH_VERIFY_SPLINES")&&!strcmp(jkRes_episodeGobName,"sithed_spline_test")){
+        int ok=jkEditor_IsLevel()&&bindEditorWorld()&&model->splineCount==1&&model->splines[0].count==3;edSplineReconcile(model);ok=ok&&model->splineCount==1;
+        if(ok){EdSpline draft=model->splines[0];draft.points[1].position.z+=.125;ok=edSplineRebuild(candidate,model,&draft)&&edValidate(candidate);}
+        printf("GEOSITH_SPLINE_RELOAD %s: saved controls, generated sectors and editable heights\n",ok?"PASS":"FAIL");fflush(stdout);exit(ok?0:2);
+    }
     if(getenv("GEOSITH_VERIFY_PLACED")&&jkEditor_IsLevel()){
         int ok=bindEditorWorld()&&placedEditingSelfTest();printf("GEOSITH_PLACED %s: saved overlapping level, live extrusion, cleave, consecutive insertions and undo/redo\n",ok?"PASS":"FAIL");fflush(stdout);exit(ok?0:2);
+    }
+    if(getenv("GEOSITH_VERIFY_SECTORS")&&!strcmp(jkRes_episodeGobName,"sithed_sector_test")){
+        int ok=jkEditor_IsLevel()&&bindEditorWorld();SithWorld *world=sithWorld_g_pCurrentWorld;
+        ok=ok&&model->count==1&&!strcmp(model->c[0].colormap,"01narsh.cmp")&&!strcmp(model->c[0].layer,"Sector test")&&fabs(model->c[0].extraLight-.35)<.00001&&(model->c[0].flags&1)&&world->numColormaps==2&&world->aSectors[0].colormap==&world->colormaps[1];
+        printf("GEOSITH_SECTORS_RELOAD %s: flags, extra light, tint, layer and native sector colormap\n",ok?"PASS":"FAIL");fflush(stdout);exit(ok?0:2);
     }
     if(getenv("GEOSITH_VERIFY_FRAMES")&&!strcmp(jkRes_episodeGobName,"sithed_frames_test")){
         int ok=jkEditor_IsLevel()&&bindEditorWorld()&&model->objectCount==1&&model->objects[0].attributes.frameCount==ED_FRAMES;
@@ -1657,7 +1837,13 @@ static int stressWalkingDrag(SithThing *p) {
     EdVec origin,direction;ray(&origin,&direction);
     delta=edAdd(delta,edDragTraceStep(&trace,origin,direction));
     EdVec movement=edSurfaceDragDelta(delta,edNormal(&snapshot->c[cap.cell].f[cap.face]));
+    int wasGrounded=(p->attach_flags&SITH_ATTACH_SURFACE)!=0;
+    rdVector3 velocity=p->physicsParams.vel;
     if(!trace.valid||fabs(delta.y-(origin.y-start.y))>.00001||!edMove(candidate,snapshot,cap,movement)||!commit())exit(2);
+    if(wasGrounded&&(!(p->attach_flags&SITH_ATTACH_SURFACE)||p->attachedSurface->pSector!=p->sector||
+       p->physicsParams.vel.x!=velocity.x||p->physicsParams.vel.y!=velocity.y||p->physicsParams.vel.z!=velocity.z)) {
+        printf("GEOSITH_WALK_DRAG FAIL: rebuild interrupted floor contact\n");fflush(stdout);exit(2);
+    }
     rdVector_Zero3(&p->physicsParams.acceleration);p->physicsParams.vel.x=0;p->physicsParams.vel.y=1;
     if(frame++>=180) {
         int ok=grounded>10&&origin.y>1.5&&!(p->physicsParams.flags&SITH_PF_FLY)&&!(g_debugmodeFlags&DEBUGFLAG_NOCLIP);
@@ -1688,10 +1874,52 @@ static int stressShapes(SithThing *p){
 }
 static int stressEditor(SithThing *p) {
     static int step;
-    if(!getenv("GEOSITH_STRESS")||(!getenv("GEOSITH_NET_ROLE")&&strcmp(jkRes_episodeGobName,"sithed_smoke")))return 0;
+    if(!getenv("GEOSITH_STRESS")||(!getenv("GEOSITH_NET_ROLE")&&!getenv("GEOSITH_RESOURCE_RELOAD_TEST")&&strcmp(jkRes_episodeGobName,"sithed_smoke")))return 0;
+    if(getenv("GEOSITH_TERRAIN_TEST")){
+        static int frame;if(!frame){int ok=bindEditorWorld()&&terrainSelfTest(p);printf("GEOSITH_TERRAIN %s: live creation, sculpt strokes, undo, conversion and export\n",ok?"PASS":"FAIL");fflush(stdout);if(!ok||!getenv("GEOSITH_TERRAIN_CAPTURE"))exit(ok?0:2);
+            active=stressRunning=1;p->position=rdvec(edV(0,-.8,.65));rdVector3 angles={-30,0,0};rdMatrix_BuildRotate34(&p->orient,&angles);p->actorParams.headPYR=rdVector3{0,0,0};setEditorFlight(p,1);sithCamera_SetCurrentCamera(&sithCamera_g_aCameras[0]);}
+#ifdef SDL2_RENDER
+        if(frame==20)std3D_ScreenshotWindow(getenv("GEOSITH_TERRAIN_CAPTURE"));
+#endif
+        if(frame++>=30)exit(0);return 1;
+    }
+    if(getenv("GEOSITH_SPLINE_TEST")){
+        static int frame;if(!frame){if(!bindEditorWorld()||!splineSelfTest(p))exit(2);active=1;stressRunning=1;}
+#ifdef SDL2_RENDER
+        if(frame==12&&getenv("GEOSITH_SPLINE_MAP_CAPTURE"))std3D_ScreenshotWindow(getenv("GEOSITH_SPLINE_MAP_CAPTURE"));
+#endif
+        if(frame++>=40){printf("GEOSITH_SPLINE PASS: map gestures, live sectors, point movement, undo/redo and explicit conversion\n");fflush(stdout);exit(0);}return 1;
+    }
+    if(getenv("GEOSITH_SECTOR_TEST"))return stressSectors(p);
     if(getenv("GEOSITH_BUILDER_CAPTURE"))return stressBuilder(p);
+    if(getenv("GEOSITH_RESOURCE_RELOAD_TEST")){
+        int material=addMaterialName("zz_net_custom.mat");
+        char *script=cogSourceText("zz_net_script.cog");
+        int ok=material>=0&&customMaterial("zz_net_custom.mat")&&editorMaterial(material)&&sithModel_Load("zz_net_model.3do",1)&&script&&strstr(script,"GeoSith resource fixture");
+        edFree(script);materialMetadata();ok=ok&&materialSection[material]==103;
+        printf("GEOSITH_RESOURCE_RELOAD %s: embedded MAT/3DO/COG loaded without source mods\n",ok?"PASS":"FAIL");fflush(stdout);exit(ok?0:2);
+    }
     if(getenv("GEOSITH_WALK_DRAG_TEST"))return stressWalkingDrag(p);
     if(getenv("GEOSITH_SHAPES_TEST"))return stressShapes(p);
+    if(getenv("GEOSITH_SECTOR_GRAB_TEST")){
+        int ok=bindEditorWorld();if(!ok)exit(2);clearHistory();EdModel before;edCopyModel(&before,model);
+        remember();edCopyModel(snapshot,model);grabSectors.clear();grabSectors[0]=1;sectorGrab=groupGrab=grabbing=1;
+        EdVec center=edMapCenter(&before.c[0]),delta=edV(.25,.5,.125);
+        ok=moveGrabbedSectors(delta)&&sectorPicks[0];delta=edV(.5,.75,.25);
+        ok=ok&&moveGrabbedSectors(delta)&&sectorPicks[0];
+        EdVec error=edSub(edSub(edMapCenter(&model->c[0]),center),delta);
+        ok=ok&&edDot(error,error)<1e-12&&undoCount==1;grabbing=groupGrab=sectorGrab=0;
+        ok=ok&&historyStep(0)&&edModelsEqual(model,&before);
+        printf("GEOSITH_SECTOR_GRAB %s: repeated 3D translation, retained selection and single-step undo\n",ok?"PASS":"FAIL");fflush(stdout);exit(ok?0:2);
+    }
+    if(getenv("GEOSITH_SCALE_TEST")){
+        int ok=bindEditorWorld();if(!ok)exit(2);clearHistory();EdModel before;edCopyModel(&before,model);sectorPicks.clear();picks.count=1;picks.hits[0]={0,0,-1,-1};
+        selectionScale(1);ok=picks.count==1&&undoCount==1&&!edModelsEqual(model,&before);selectionScale(-1);ok=ok&&picks.count==1&&undoCount==2&&historyStep(0)&&historyStep(0)&&edModelsEqual(model,&before);
+        picks.count=0;sectorPicks[0]=1;selectionScale(1);ok=ok&&sectorPicks[0]&&undoCount==1&&historyStep(0)&&edModelsEqual(model,&before);
+        printf("GEOSITH_SCALE %s: repeated face scaling, sector scaling, retained selection and undo\n",ok?"PASS":"FAIL");fflush(stdout);exit(ok?0:2);
+    }
+    if(getenv("GEOSITH_MAP_MIRROR_TEST")){int ok=bindEditorWorld()&&mapMirrorTest(p);exit(ok?0:2);}
+    if(getenv("GEOSITH_MAP_VIEWS_TEST")){int ok=bindEditorWorld()&&mapViewsTest(p);exit(ok?0:2);}
     if(getenv("GEOSITH_MAP_CAPTURE"))return stressMap(p);
     if(getenv("GEOSITH_STAIRS_CAPTURE"))return stressStairs(p);
     if(getenv("GEOSITH_LIGHTS_CAPTURE"))return stressLights(p);
@@ -1770,7 +1998,7 @@ static int stressEditor(SithThing *p) {
 static int pickEditorObject(EdVec origin,EdVec direction,double wallDistance) {
     int found=-10000;double nearest=wallDistance;
     for(int i=0;i<model->spawnCount+model->objectCount;i++){
-        int spawn=i<model->spawnCount;EdVec position=spawn?model->spawns[i].position:model->objects[i-model->spawnCount].position;
+        int spawn=i<model->spawnCount;if(!spawn&&edTerrainObject(model,i-model->spawnCount)>=0)continue;EdVec position=spawn?model->spawns[i].position:model->objects[i-model->spawnCount].position;
         double radius=.08;if(!spawn){SithThing *definition=sithTemplate_GetTemplate(model->objects[i-model->spawnCount].templateName);if(definition)radius=fmax(.04,definition->collideSize);}
         EdVec offset=edSub(position,origin);double distance=edDot(offset,direction);if(distance<0||distance>nearest+radius)continue;
         EdVec perpendicular=edSub(offset,edScale(direction,distance));if(edDot(perpendicular,perpendicular)>radius*radius)continue;
@@ -1890,7 +2118,7 @@ static int overlayVisibilityTest(void){
 static int pickObjectFacingHandle(EdVec origin,EdVec direction,double wallDistance) {
     int found=-10000;double nearest=wallDistance;
     for(int i=0;i<model->spawnCount+model->objectCount;i++){
-        int id=i<model->spawnCount?-i-1:i-model->spawnCount;
+        int id=i<model->spawnCount?-i-1:i-model->spawnCount;if(id>=0&&edTerrainObject(model,id)>=0)continue;
         if(editorViewReady&&!thingOverlayVisible(id))continue;
         EdVec offset=edSub(objectFacingHandle(model,id),origin);double distance=edDot(offset,direction);
         double radius=fmax(.012,fmin(.06,distance*.012));if(distance<.01||distance>nearest+radius)continue;
@@ -2039,6 +2267,16 @@ static int lightControl(EdVec origin,EdVec direction,int fire,int grab,int shift
         if(shift)l->range=fmin(10000,fmax(ED_GRID,l->range+step*ED_GRID));else l->intensity=fmin(100,fmax(0,round((l->intensity+step*.1)*10)/10));
         if(!edModelsEqual(candidate,model)){remember();commit();}
     }
+    else if(wheel&&shift&&hover.cell>=0&&hover.face>=0&&!lightGrabbing){
+        edCopyModel(candidate,model);EdFace *face=&candidate->c[hover.cell].f[hover.face];
+        EdSurfaceAttributes attributes=edSurfaceAttributes(face);
+        double value=fmin(1,fmax(0,round((attributes.extraLight+(wheel>0?.05:-.05))*100)/100));
+        if(value!=attributes.extraLight){
+            face->hasAttributes=1;face->attributes=attributes;face->attributes.extraLight=value;
+            if(face->attributes.lightingMode==RD_LIGHTMODE_FULLYLIT)face->attributes.lightingMode=RD_LIGHTMODE_GOURAUD;
+            remember();if(commit()){char text[96];snprintf(text,sizeof(text),"Surface %d:%d extra light: %.2f",hover.cell,hover.face,value);say(text);}
+        }
+    }
     else if(wheel&&hover.cell>=0&&!lightGrabbing){
         edCopyModel(candidate,model);EdCell *sector=&candidate->c[hover.cell];
         sector->extraLight=fmin(1,fmax(0,round((sector->extraLight+(wheel>0?.05:-.05))*100)/100));
@@ -2098,17 +2336,36 @@ static int episodeSelfTest(void){
     ok=ok&&historyStep(0)&&!strcmp(model->episode.rows[0].file,"sithed.jkl")&&historyStep(1)&&!strcmp(model->episode.rows[0].file,"episode_test.jkl");
     edCopyModel(candidate,saved);int restored=commit();clearHistory();edFree(saved);printf("GEOSITH_EPISODE %s: sequence changes, strings, one-step undo and custom filename export\n",ok&&restored?"PASS":"FAIL");fflush(stdout);return ok&&restored;
 }
+#include "jkEditorSpline.h"
 #include "jkEditorMap.h"
 #include "jkEditorModels.h"
 #include "jkEditorTemplates.h"
+#include "jkEditorTerrain.h"
+static void mapOptionsCapture(jkGuiMenu *menu){
+#ifdef SDL2_RENDER
+    static int frame;for(int i=1;i<=3;i++)menu->paElements[i].selectedTextEntry=1;if(++frame==3){std3D_ScreenshotWindow(getenv("GEOSITH_MAP_OPTIONS_CAPTURE"));menu->lastClicked=1;}
+#endif
+}
+static void mapOptions(void){
+    BuilderMenuState state=builderMenuBegin();jkGuiElement e[8]={};e[0]={ELEMENT_TEXT,0,2,u"Map Editing Options",3,{20,30,600,30},1};
+    const char16_t *labels[]={u"Mirror X",u"Mirror Y",u"Mirror Z"};for(int i=0;i<3;i++){e[i+1]={ELEMENT_CHECKBOX,0,0,labels[i],0,{180,120+i*45,300,30},1};e[i+1].selectedTextEntry=(mapMirrorAxes>>i)&1;}
+    e[4]={ELEMENT_TEXT,0,0,u"Mirror planes: world X = 0, Y = 0, Z = 0",3,{20,280,600,30},1};e[5]={ELEMENT_TEXTBUTTON,1,2,u"Apply",3,{80,370,200,40},1};e[6]={ELEMENT_TEXTBUTTON,-1,2,u"Cancel",3,{360,370,200,40},1};e[7].type=ELEMENT_END;
+    jkGuiMenu menu={e,-1,0xffff,0xffff,15,0,0,jkGui_stdBitmaps,jkGui_stdFonts};jkGui_InitMenu(&menu,jkGui_stdBitmaps[JKGUI_BM_BK_ESC]);jkGuiRend_MenuSetEscapeKeyShortcutElement(&menu,&e[6]);if(getenv("GEOSITH_MAP_OPTIONS_CAPTURE"))menu.idkFunc=mapOptionsCapture;
+    if(jkGuiRend_DisplayAndReturnClicked(&menu)==1){mapMirrorAxes=0;for(int i=0;i<3;i++)if(e[i+1].selectedTextEntry)mapMirrorAxes|=1<<i;}
+    builderMenuEnd(state);
+}
+
 static int editorControl(SithThing *p,flex_t delta) {
     if(!jkEditor_IsLevel()||!p) return 0;
     if(!bindEditorWorld())return 0;
     netControlReady(p);
     if(stressEditor(p))return 1;
+    int speedHeld=active?editorForceSpeedHeld():0;
+    int speedPressed=speedHeld&&!flightSpeedDown;flightSpeedDown=speedHeld;
     /* Keep the normal bound chat/console key available in every editor view.
        Text entry must not also move the camera or trigger editing shortcuts. */
     if(active&&jkControl_HandleChat()){
+        splineDragging=terrainStroke=0;
         grabbing=groupGrab=cleaving=objectGrabbing=objectRotating=lightGrabbing=0;
         mapBox=mapDragging=mapGeometryDrag=mapCleaveDragged=0;
         fireDown=grabDown=middleDown=mapLeft=mapRight=1;
@@ -2127,7 +2384,7 @@ static int editorControl(SithThing *p,flex_t delta) {
             for(int i=1;i<=10;i++) { sithInventory_SetInventoryAvailable(p,i,1);sithInventory_SetInventory(p,i,100); }
             sithInventory_SetInventory(p,SITHBIN_ENERGY,500);sithInventory_SetInventory(p,SITHBIN_POWER,500);sithInventory_SetInventory(p,SITHBIN_RAILCHARGES,100);sithWeapon_SelectWeapon(p,tool,0);sithCamera_SetCurrentCamera(&sithCamera_g_aCameras[0]);
             say("Editor: double-tap jump to fly. RMB grab, LMB cleave. F8 play.");
-        } else { leaveEditor(p);say("Play mode. F8 returns to the editor."); }
+        } else { terrainStroke=splineDragging=0;leaveEditor(p);say("Play mode. F8 returns to the editor."); }
         if(sithNet_isMulti&&sithNet_isServer)netCommitted();
     }toggleDown=toggle;if(!active)return 0;
     jkControl_HandleScreenshot();
@@ -2139,12 +2396,17 @@ static int editorControl(SithThing *p,flex_t delta) {
     if(home&&!homeDown)teleportWalkplayer(p);
     if(q&&!qDown)toggleFlightCollision(p);
     homeDown=home;qDown=q;
+    if(speedPressed&&(p->physicsParams.flags&SITH_PF_FLY)){
+        flightSpeedBoost=!flightSpeedBoost;
+        rdVector_Scale3Acc(&p->physicsParams.vel,flightSpeedBoost?2.0:0.5);
+        say(flightSpeedBoost?"Flight speed: 2x. Force Speed toggles back to normal.":"Flight speed: normal. Force Speed toggles 2x.");
+    }
     sithControl_PlayerLook(p,delta);
     if(p->physicsParams.flags&SITH_PF_FLY)editorFlightMovement(p);
     else if(p->attach_flags)sithControl_PlayerMovement(p);
     else sithControl_FreeCam(p);
     if(cogPicking())return cogPickControl(p);
-    for(int i=0;i<10;i++)if(stdControl_ReadKey(i?DIK_1+i-1:DIK_0,NULL)) { int weapon=i?i:10;if(weapon!=tool){tool=weapon;grabbing=groupGrab=cleaving=lightGrabbing=objectGrabbing=objectRotating=0;edResetDoubleTap(&selectionTap,editButton(INPUT_FUNC_FIRE1));sithWeapon_SelectWeapon(p,weapon,0);} }
+    for(int i=0;i<10;i++)if(stdControl_ReadKey(i?DIK_1+i-1:DIK_0,NULL)) { int weapon=i?i:10;if(weapon!=tool){tool=weapon;terrainStroke=0;splineDragging=0;grabbing=groupGrab=cleaving=lightGrabbing=objectGrabbing=objectRotating=0;edResetDoubleTap(&selectionTap,editButton(INPUT_FUNC_FIRE1));sithWeapon_SelectWeapon(p,weapon,0);} }
     int shift=stdControl_ReadKey(DIK_LSHIFT,NULL)||stdControl_ReadKey(DIK_RSHIFT,NULL),ctrl=stdControl_ReadKey(DIK_LCONTROL,NULL)||stdControl_ReadKey(DIK_RCONTROL,NULL);
     int fire=editButton(INPUT_FUNC_FIRE1),grab=editButton(INPUT_FUNC_FIRE2),didExtrude=0;
     int middle=stdControl_ReadKey(KEY_MOUSE_B3,NULL)!=0,middlePressed=middle&&!middleDown;middleDown=middle;
@@ -2167,39 +2429,59 @@ static int editorControl(SithThing *p,flex_t delta) {
         if(wheel&&paletteCount)currentMaterial=(currentMaterial+wheel%paletteCount+paletteCount)%paletteCount;
         if(middlePressed) {grabbing=groupGrab=cleaving=0;browserObjects=0;materialMenu();middleDown=1;fireDown=grabDown=1;return 1;}
     }
-    if(tool==1&&middlePressed){grabbing=groupGrab=cleaving=0;selectionMenu();middleDown=1;fireDown=grabDown=1;edResetDoubleTap(&selectionTap,1);return 1;}
-    if(tool==1&&!grabbing&&!cleaving&&stdControl_aAxisStates[AXIS_MOUSE_Z]){selectionWheel(stdControl_aAxisStates[AXIS_MOUSE_Z]);fireDown=fire;grabDown=grab;return 1;}
+    if(tool==1&&middlePressed){splineDragging=0;grabbing=groupGrab=cleaving=0;selectionMenu();middleDown=1;fireDown=grabDown=1;edResetDoubleTap(&selectionTap,1);return 1;}
+    if(tool==1&&!grabbing&&!cleaving&&stdControl_aAxisStates[AXIS_MOUSE_Z]){if(shift&&!selectionCleanup)selectionScale(stdControl_aAxisStates[AXIS_MOUSE_Z]);else selectionWheel(stdControl_aAxisStates[AXIS_MOUSE_Z]);fireDown=fire;grabDown=grab;return 1;}
+    int opposite=stdControl_ReadKey(DIK_BACK,NULL)!=0;
+    if(opposite&&!oppositeAdjoinDown&&tool==1&&!selectionCleanup&&!grabbing&&!cleaving)selectOppositeAdjoins();
+    oppositeAdjoinDown=opposite;
     int doubleSelect=edDoubleTap(&selectionTap,tool==1&&!selectionCleanup&&fire&&!grabbing&&!ctrl,stdPlatform_GetTimeMsec(),300);
     EdVec origin,direction;ray(&origin,&direction);if(tool==1&&shift)edRaySelection(model,origin,direction,&hover);else if(tool==2)edRayMaterial(model,origin,direction,&hover);else edRay(model,origin,direction,&hover);
-    if(tool==1&&selectionCleanup)hover.vertex=hover.edge=-1;
+    if(tool==1&&(selectionCleanup||ctrl))hover.vertex=hover.edge=-1;
     int deleting=stdControl_ReadKey(DIK_DELETE,NULL)!=0,deletePressed=deleting&&!deleteDown;deleteDown=deleting;
-    if(deletePressed){if(tool==3)deleteEditorObject(pickEditorObject(origin,direction,hover.cell>=0?hover.distance:1000));else if(tool==4)deleteEditorLight(pickEditorLight(origin,direction,hover.cell>=0?hover.distance:1000));else if(tool==1&&hover.cell>=0&&(hover.vertex>=0||hover.edge>=0))deleteGeometryHandle(hover);else if(tool!=5&&hover.cell>=0)deleteSector(p,hover.cell);fireDown=fire;grabDown=grab;return 1;}
+    if(deletePressed&&tool!=3&&tool!=4&&tool!=5&&tool!=7&&hover.cell>=0&&model->c[hover.cell].splineId){say("Editable spline: use Convert to Sectors in the spline menu first.");fireDown=fire;grabDown=grab;return 1;}
+    if(deletePressed){if(tool==7)terrainDelete(terrainPick(origin,direction,&terrainHover));else if(tool==3)deleteEditorObject(pickEditorObject(origin,direction,hover.cell>=0?hover.distance:1000));else if(tool==4)deleteEditorLight(pickEditorLight(origin,direction,hover.cell>=0?hover.distance:1000));else if(tool==1&&hover.cell>=0&&(hover.vertex>=0||hover.edge>=0))deleteGeometryHandle(hover);else if(tool!=5&&tool!=7&&hover.cell>=0)deleteSector(p,hover.cell);fireDown=fire;grabDown=grab;return 1;}
     int historyKey=ctrl&&stdControl_ReadKey(DIK_Z,NULL)?(shift?2:1):ctrl&&stdControl_ReadKey(DIK_Y,NULL)?2:0;
     int historyPressed=historyKey&&!historyDown;historyDown=historyKey;
     if(historyPressed&&!grabbing&&!cleaving){historyStep(historyKey==2);fireDown=fire;grabDown=grab;return 1;}
     if(tool==5){if(middlePressed){grabbing=groupGrab=cleaving=0;placedCogsMenu(0);return 1;}fireDown=fire;grabDown=grab;return 1;}
     int enter=stdControl_ReadKey(DIK_RETURN,NULL)||stdControl_ReadKey(DIK_NUMPADENTER,NULL),openAttributes=enter&&!attributesDown;attributesDown=enter;
-    if(tool==1&&!selectionCleanup&&openAttributes&&!grabbing&&!cleaving){surfaceAttributesDialog();attributesDown=1;fireDown=grabDown=1;return 1;}
+    if(tool==1&&!selectionCleanup&&splineControl3D(origin,direction,fire,grab,openAttributes))return 1;
+    if((tool==1||tool==2||tool==10)&&(grab||(tool==10||tool==2||selectionCleanup)&&fire)){
+        int protectedGeometry=hover.cell>=0&&model->c[hover.cell].splineId;
+        if(tool==1)for(int i=0;i<picks.count;i++){int c=picks.hits[i].cell;if(c>=0&&c<model->count)protectedGeometry|=model->c[c].splineId!=0;}
+        if(protectedGeometry){say("Editable spline: use Convert to Sectors in the spline menu first.");grabbing=groupGrab=cleaving=0;fireDown=fire;grabDown=grab;return 1;}
+    }
+    if(tool==1&&!selectionCleanup&&openAttributes&&!grabbing&&!cleaving){if(selectedSectorCount())sectorAttributesDialog();else surfaceAttributesDialog();attributesDown=1;fireDown=grabDown=1;return 1;}
+    int merge=stdControl_ReadKey(DIK_M,NULL)!=0,mergePressed=merge&&!mergeDown;mergeDown=merge;
+    if(tool==1&&!selectionCleanup&&mergePressed&&!grabbing&&!cleaving){mergeSelectedSectors();fireDown=fire;grabDown=grab;return 1;}
     if(tool==3&&openAttributes&&!grabbing){int id=pickEditorObject(origin,direction,hover.cell>=0?hover.distance:1000);if(id!=-10000)thingAttributesDialog(id);attributesDown=1;fireDown=grabDown=1;return 1;}
     if(tool==3)return objectControl(p,origin,direction,fire,grab,middlePressed,shift);
+    if(tool==7)return terrainControl(origin,direction,fire,middlePressed,shift,stdControl_aAxisStates[AXIS_MOUSE_Z],delta,ctrl);
     if(tool==4)return lightControl(origin,direction,fire,grab,shift,stdControl_aAxisStates[AXIS_MOUSE_Z]);
     if(tool==1&&selectionCleanup){hover.vertex=hover.edge=-1;if(fire&&!fireDown)cleanupAimedSector();fireDown=fire;grabDown=grab;return 1;}
-    if(grab&&!grabDown&&((tool==1&&picks.count>0)||hover.cell>=0)) {
-        remember();edCopyModel(snapshot,model);grabPicks=picks;groupGrab=tool==1&&picks.count>0;selection=groupGrab?picks.hits[0]:hover;
+    if(grab&&!grabDown&&((tool==1&&(picks.count>0||selectedSectorCount()))||hover.cell>=0)) {
+        remember();edCopyModel(snapshot,model);grabPicks=picks;sectorGrab=tool==1&&selectedSectorCount();grabSectors=sectorPicks;
+        groupGrab=sectorGrab||(tool==1&&picks.count>0);selection=groupGrab&&!sectorGrab?picks.hits[0]:hover;
+        if(sectorGrab){
+            if(selection.cell<0||!grabSectors[selection.cell]){int cell=0;while(cell<snapshot->count&&!grabSectors[cell])cell++;selection={cell,0,-1,-1};selection.point=edMapCenter(&snapshot->c[cell]);}
+            selection.vertex=selection.edge=-1;
+        }
         if(tool==2)selection.vertex=selection.edge=-1;
+        uvRotating=tool==2&&shift;uvFine=tool==2&&ctrl;
+        if(uvRotating)say("Rotate texture: drag around the face center; hover an edge to align. Release RMB to finish.");
         edResetDoubleTap(&selectionTap,fire);
         EdVec anchor=edSub(selection.point,origin);grabDepth=groupGrab?fmax(.1,sqrt(edDot(anchor,anchor))):hover.distance;
-        uvMode=tool==2||(shift&&selection.vertex<0&&selection.edge<0);grabNormal=edNormal(&snapshot->c[selection.cell].f[selection.face]);
+        uvMode=!sectorGrab&&(tool==2||(shift&&selection.vertex<0&&selection.edge<0));grabNormal=edNormal(&snapshot->c[selection.cell].f[selection.face]);
         grabPlanePoint=snapshot->c[selection.cell].f[selection.face].v[0].p;grabPlaneNormal=grabNormal;
-        if(!uvMode&&(selection.vertex>=0||selection.edge>=0)){grabPlanePoint=selection.point;grabPlaneNormal=direction;}
+        if(sectorGrab||(!uvMode&&(selection.vertex>=0||selection.edge>=0))){grabPlanePoint=selection.point;grabPlaneNormal=direction;}
         grabTraceValid=edTracePlane(origin,direction,grabPlanePoint,grabPlaneNormal,&grabLastPoint);
         if(!grabTraceValid){grabPlanePoint=selection.point;grabPlaneNormal=direction;grabTraceValid=edTracePlane(origin,direction,grabPlanePoint,grabPlaneNormal,&grabLastPoint);}
         edDragTraceBegin(&geometryDragTrace,origin,direction,grabPlanePoint,grabPlaneNormal,fmax(4,grabDepth*8));
         grabLastOrigin=origin;grabDelta=edV(0,0,0);grabVisual.count=1;grabVisual.hits[0]=selection;
-        grabbing=1;uvMode=tool==2||(shift&&selection.vertex<0&&selection.edge<0);cleaving=0;
+        grabbing=1;uvMode=!sectorGrab&&(tool==2||(shift&&selection.vertex<0&&selection.edge<0));cleaving=0;
     }
     if(grabbing&&grab) {
-        int surface=groupGrab?allSelectedSurfaces(&grabPicks):selection.vertex<0&&selection.edge<0;
+        int surface=!sectorGrab&&(groupGrab?allSelectedSurfaces(&grabPicks):selection.vertex<0&&selection.edge<0);
         /* Keep a stable ray plane relative to the player, independent of live
            mesh rebuilds, ground motion and crossing the original wall. */
         grabDelta=edAdd(grabDelta,edDragTraceStep(&geometryDragTrace,origin,direction));
@@ -2209,7 +2491,9 @@ static int editorControl(SithThing *p,flex_t delta) {
             if(groupGrab)for(int i=0;i<grabPicks.count;i++){EdHit h=grabPicks.hits[i];if(h.vertex>=0){EdVec other=edVertexEdgeDelta(snapshot,h,move),difference=edSub(other,move);if(edDot(difference,difference)>ED_EPS*ED_EPS){move=edV(0,0,0);break;}}}
         }
         if(surface)move=edSurfaceDragDelta(move,grabNormal);
-        if(groupGrab) {
+        if(sectorGrab){
+            moveGrabbedSectors(move);
+        } else if(groupGrab) {
             int ok=1;
             if(uvMode&&surface) {
                 edCopyModel(candidate,snapshot);for(int i=0;i<grabPicks.count;i++){EdHit h=grabPicks.hits[i];edPanFaceTexture(&candidate->c[h.cell].f[h.face],uvMove);}
@@ -2218,7 +2502,8 @@ static int editorControl(SithThing *p,flex_t delta) {
                 EdSelection mapped;edSelectionRemap(snapshot,model,&grabPicks,uvMode&&surface?edV(0,0,0):edSelectionDelta(snapshot,&grabPicks,move),&mapped);picks=mapped;
             }
         } else if(uvMode) { edCopyModel(candidate,snapshot);EdFace *f=&candidate->c[selection.cell].f[selection.face];
-            edPanFaceTexture(f,uvMove);commit();
+            if(uvRotating){int edge=hover.cell==selection.cell&&hover.face==selection.face?hover.edge:-1;edRotateTextureDrag(f,selection.point,uvMove,edge);}
+            else edPanFaceTextureGrid(f,uvMove,uvFine?ED_GRID*.5:ED_GRID);commit();
         } else if(edDot(move,move)<=ED_EPS*ED_EPS) { edCopyModel(candidate,snapshot);commit(); }
         else if(edMove(candidate,snapshot,selection,move))commit();
         if(!groupGrab){EdSelection one={0};one.count=1;one.hits[0]=selection;edSelectionRemap(snapshot,model,&one,uvMode?edV(0,0,0):edSelectionDelta(snapshot,&one,move),&grabVisual);}
@@ -2228,11 +2513,12 @@ static int editorControl(SithThing *p,flex_t delta) {
     }
     if(!grab&&grabDown)grabbing=groupGrab=0;
     if(!grabbing&&!didExtrude&&fire&&!fireDown) {
-        if(shift&&tool!=10&&tool!=1&&hover.cell>=0) {clipboard=currentMaterial=model->c[hover.cell].f[hover.face].material;say("Material copied.");}
+        if(tool==1&&ctrl){if(hover.cell>=0){sectorPicks[hover.cell]=!sectorPicks[hover.cell];picks.count=0;say("Sector selection: RMB moves; Ctrl+click toggles; M merges; Enter edits attributes.");}}
+        else if(shift&&tool!=10&&tool!=1&&hover.cell>=0) {clipboard=currentMaterial=model->c[hover.cell].f[hover.face].material;say("Material copied.");}
         else if(ctrl&&clipboard>=0&&hover.cell>=0) {remember();edCopyModel(candidate,model);candidate->c[hover.cell].f[hover.face].material=clipboard;commit();}
         else if(tool==1&&!ctrl) {
-            if(doubleSelect){picks.count=0;say("Selection cleared.");}
-            else if(hover.cell>=0){if(!edSelectionToggle(model,&picks,hover))say("Selection limit reached.");else {char text[120];snprintf(text,sizeof(text),"%d selected. RMB move; RMB + LMB extrude; double-click LMB clear.",picks.count);say(text);}}
+            if(doubleSelect){sectorPicks.clear();picks.count=0;say("Selection cleared.");}
+            else if(hover.cell>=0){sectorPicks.clear();if(!edSelectionToggle(model,&picks,hover))say("Selection limit reached.");else {char text[120];snprintf(text,sizeof(text),"%d selected. RMB move; RMB + LMB extrude; double-click LMB clear.",picks.count);say(text);}}
         }
         else if(tool==2&&hover.cell>=0) {if(editorMaterial(currentMaterial)){remember();edCopyModel(candidate,model);candidate->c[hover.cell].f[hover.face].material=currentMaterial;commit();}}
         else if(tool==10&&hover.cell>=0&&cleaveShape){remember();edCopyModel(candidate,model);if(edCleaveShapeRotated(candidate,hover.cell,hover.face,hover.point,shapeRadius,cleaveShape,shapeRotation))commit();else say("Shape cleave cancelled: the shape must cut an area of a solid surface, with room for its new faces.");}
@@ -2272,6 +2558,7 @@ void jkEditor_DrawWorld(void) try {
     if(builderAsset>=0){edMeshRay(model,builderAsset,vec(cameraWorld.scale),vec(cameraWorld.lvec),tool==1,&builderHover);return;}
     if(cogPicking())updateCogPick(vec(cameraWorld.scale),vec(cameraWorld.lvec));
     if(tool==1&&(stdControl_ReadKey(DIK_LSHIFT,NULL)||stdControl_ReadKey(DIK_RSHIFT,NULL)))edRaySelection(model,vec(cameraWorld.scale),vec(cameraWorld.lvec),&hover);else if(tool==2)edRayMaterial(model,vec(cameraWorld.scale),vec(cameraWorld.lvec),&hover);else edRay(model,vec(cameraWorld.scale),vec(cameraWorld.lvec),&hover);
+    if(tool==7)terrainPick(vec(cameraWorld.scale),vec(cameraWorld.lvec),&terrainHover);
     if(tool==4&&!lightGrabbing)lightHovered=pickEditorLight(vec(cameraWorld.scale),vec(cameraWorld.lvec),hover.cell>=0?hover.distance:1000);
     if(!cogPicking())drawFrameGhosts();
     int shapePreview=tool==10&&cleaveShape&&!grabbing&&hover.cell>=0;
@@ -2337,6 +2624,14 @@ static void vertexCircle(EdVec vertex,int selected,int color) {
     for(int r=radius-1;r<=radius+2;r++)
         rdPrimit2_DrawClippedCircle(highlightCanvas,x,y,r,10.0,(r==radius-1||r==radius+2)?outlineColor:color,-1);
 }
+static void splineDraw3D(int selectedColor,int vertexColor){
+    if(tool!=1||selectionCleanup)return;
+    for(int i=0;i<model->splineCount;i++){const EdSpline &s=splineDragging&&model->splines[i].id==splineSelected?splineDraft:model->splines[i];int color=s.id==splineSelected?selectedColor:vertexColor;
+        EdVec a=edSplinePosition(&s,0);for(int j=1;j<=(s.closed?s.count:s.count-1)*24;j++){EdVec b=edSplinePosition(&s,j/24.0);line(a,b,color);a=b;}
+        for(int p=0;p<s.count;p++)vertexCircle(s.points[p].position,s.id==splineSelected&&p==splinePoint,color);
+    }
+}
+
 static void drawHit(const EdHit *hit,int color) {
     if(hit->cell<0||hit->cell>=model->count||hit->face<0||hit->face>=model->c[hit->cell].count)return;
     EdFace *face=&model->c[hit->cell].f[hit->face];
@@ -2396,9 +2691,10 @@ void jkEditor_Draw(void) try {
     if(builderAsset>=0&&builderAsset<model->assetCount){builderDrawOverlay(edgeColor,selectedColor);stdDisplay_VBufferUnlock(highlightCanvas->pVBuffer);
         if(tool==2){tVBuffer *buffer=highlightCanvas->pVBuffer;int x=buffer->format.width-170,y=buffer->format.height-260;if(x<8)x=8;if(y<80)y=80;drawMaterialPreview(buffer,currentMaterial,x,y,96,96);stdDisplay_VBufferLock(buffer);editorDrawText(buffer,jkGui_stdFonts[0],x,y+104,160,paletteNames[currentMaterial],1);stdDisplay_VBufferUnlock(buffer);}return;}
     if(cogPicking()){drawCogPicker(edgeColor);drawEditorCrosshair();stdDisplay_VBufferUnlock(highlightCanvas->pVBuffer);stdDisplay_VBufferLock(Video_pMenuBuffer);editorDrawText(Video_pMenuBuffer,jkGui_stdFonts[0],8,8,630,"EDITOR | Placed COG parameter picker",1);editorDrawText(Video_pMenuBuffer,jkGui_stdFonts[0],8,28,630,message,1);stdDisplay_VBufferUnlock(Video_pMenuBuffer);return;}
+    splineDraw3D(selectedColor,vertexColor);terrainDraw(vertexColor);
     if(tool==1&&selectionCleanup)hover.vertex=hover.edge=-1;
     const EdHit *h=grabbing&&!groupGrab?&selection:&hover;
-    int sectorMode=tool==10&&!cleaveShape&&(cleaving?sectorCleave:stdControl_ReadKey(DIK_LSHIFT,NULL)||stdControl_ReadKey(DIK_RSHIFT,NULL));
+    int sectorMode=(tool==1&&!selectionCleanup&&(stdControl_ReadKey(DIK_LCONTROL,NULL)||stdControl_ReadKey(DIK_RCONTROL,NULL)))||(tool==10&&!cleaveShape&&(cleaving?sectorCleave:stdControl_ReadKey(DIK_LSHIFT,NULL)||stdControl_ReadKey(DIK_RSHIFT,NULL)));
     for(int i=0;i<model->lightCount;i++){
         EdVec p=model->lights[i].position;if(!objectOverlayVisible(p))continue;int selected=tool==4&&(lightGrabbing?lightGrabbed:lightHovered)==i,color=selected?selectedColor:vertexColor;
         vertexCircle(p,selected,color);
@@ -2410,7 +2706,7 @@ void jkEditor_Draw(void) try {
         }
     }
     for(int i=0;i<model->spawnCount+model->objectCount;i++){
-        int id=i<model->spawnCount?-i-1:i-model->spawnCount;
+        int id=i<model->spawnCount?-i-1:i-model->spawnCount;if(id>=0&&edTerrainObject(model,id)>=0)continue;
         EdVec center=id<0?model->spawns[-id-1].position:model->objects[id].position,end=objectFacingHandle(model,id);if(!thingOverlayVisible(id))continue;
         int selected=tool==3&&(objectGrabbing&&objectRotating?objectGrabbed==id:objectHandleHovered==id);
         line(center,end,facingColor);vertexCircle(end,selected,selected?vertexColor:facingColor);
@@ -2428,6 +2724,7 @@ void jkEditor_Draw(void) try {
         rdVector3 screen;if(project(p,&screen)){char label[48];snprintf(label,sizeof(label),"walkplayer %d",i+1);editorDrawText(highlightCanvas->pVBuffer,jkGui_stdFonts[0],(int)screen.x+12,(int)screen.y+8,180,label,1);}
     }
     if(tool==3){int id=objectGrabbing?objectGrabbed:objectHovered;if(id>=0&&id<model->objectCount&&thingOverlayVisible(id)){EdVec p=model->objects[id].position;vertexCircle(p,1,selectedColor);line(edAdd(p,edV(0,0,-.1)),edAdd(p,edV(0,0,.1)),selectedColor);}}
+    else if(tool==7){if(terrainHover.cell<0&&hover.cell>=0){EdHit surface=hover;surface.vertex=surface.edge=-1;drawHit(&surface,edgeColor);}}
     else if(tool==4){if(hover.cell>=0){EdHit surface=hover;surface.vertex=surface.edge=-1;drawHit(&surface,edgeColor);}}
     else {
         if(sectorMode&&h->cell>=0&&h->cell<model->count){for(int f=0;f<model->c[h->cell].count;f++){EdHit face={h->cell,f,-1,-1};drawHit(&face,edgeColor);}}
@@ -2435,6 +2732,7 @@ void jkEditor_Draw(void) try {
         else drawHit(h,h->vertex>=0?vertexColor:edgeColor);
     }
     if(tool!=1||!selectionCleanup)for(int i=0;i<picks.count;i++)drawHit(&picks.hits[i],selectedColor);
+    if(tool==1&&!selectionCleanup)for(int s=0;s<model->count;s++)if(sectorPicks[s])for(int f=0;f<model->c[s].count;f++){EdHit face={s,f,-1,-1};drawHit(&face,selectedColor);}
     drawEditorCrosshair();
     stdDisplay_VBufferUnlock(highlightCanvas->pVBuffer);
     if(tool==2||tool==3) {
@@ -2444,8 +2742,9 @@ void jkEditor_Draw(void) try {
         char label[160];snprintf(label,sizeof(label),"%d/%d %s",tool==3?currentTemplate+1:currentMaterial+1,tool==3?templateCount:paletteCount,tool==3?templateNames[currentTemplate]:paletteNames[currentMaterial]);
         stdDisplay_VBufferLock(buffer);editorDrawText(buffer,jkGui_stdFonts[0],x,y+100,182,label,1);stdDisplay_VBufferUnlock(buffer);
     }
-    if(tool==1){tVBuffer *buffer=highlightCanvas->pVBuffer;int x=buffer->format.width-280,y=buffer->format.height-175;if(x<8)x=8;if(y<60)y=60;stdDisplay_VBufferLock(buffer);editorDrawText(buffer,jkGui_stdFonts[0],x,y,270,selectionCleanup?"Clean Up":"Select",1);editorDrawText(buffer,jkGui_stdFonts[0],x,y+24,270,"Middle mouse: selection tools",1);editorDrawText(buffer,jkGui_stdFonts[0],x,y+48,270,"Wheel: Select / Clean Up",1);if(selectionCleanup)editorDrawText(buffer,jkGui_stdFonts[0],x,y+72,270,"Fire 1: clean aimed sector",1);stdDisplay_VBufferUnlock(buffer);}
+    if(tool==1){tVBuffer *buffer=highlightCanvas->pVBuffer;int x=buffer->format.width-280,y=buffer->format.height-175;if(x<8)x=8;if(y<60)y=60;stdDisplay_VBufferLock(buffer);editorDrawText(buffer,jkGui_stdFonts[0],x,y,270,selectionCleanup?"Clean Up":"Select",1);editorDrawText(buffer,jkGui_stdFonts[0],x,y+24,270,"Middle mouse: selection tools",1);editorDrawText(buffer,jkGui_stdFonts[0],x,y+48,270,"Wheel: Select / Clean Up",1);if(selectionCleanup)editorDrawText(buffer,jkGui_stdFonts[0],x,y+72,270,"Fire 1: clean aimed sector",1);else {editorDrawText(buffer,jkGui_stdFonts[0],x,y+72,270,"Ctrl+click: sectors | M: merge",1);editorDrawText(buffer,jkGui_stdFonts[0],x,y+96,270,"Enter: attributes | Shift+wheel: scale",1);}stdDisplay_VBufferUnlock(buffer);}
     if(tool==10){tVBuffer *buffer=highlightCanvas->pVBuffer;char name[48],text[128];shapeLabel(cleaveShape,name,sizeof(name));snprintf(text,sizeof(text),"%s | radius %.4g",name,shapeRadius);int x=buffer->format.width-280,y=buffer->format.height-180;if(x<8)x=8;if(y<60)y=60;stdDisplay_VBufferLock(buffer);editorDrawText(buffer,jkGui_stdFonts[0],x,y,270,text,1);editorDrawText(buffer,jkGui_stdFonts[0],x,y+24,270,"Middle mouse: shapes",1);editorDrawText(buffer,jkGui_stdFonts[0],x,y+48,270,"Wheel: shape | Shift: radius",1);snprintf(text,sizeof(text),"Ctrl+wheel: rotate (%.0f deg)",shapeRotation);editorDrawText(buffer,jkGui_stdFonts[0],x,y+72,270,text,1);stdDisplay_VBufferUnlock(buffer);}
+    if(tool==7){tVBuffer *buffer=highlightCanvas->pVBuffer;int x=(std::max)(8,buffer->format.width-320),y=(std::max)(60,buffer->format.height-175);char label[128];snprintf(label,sizeof(label),"Terrain | brush radius %.3g",terrainRadius);stdDisplay_VBufferLock(buffer);editorDrawText(buffer,jkGui_stdFonts[0],x,y,310,label,1);editorDrawText(buffer,jkGui_stdFonts[0],x,y+24,310,"Fire 1: create / raise | Shift: lower",1);editorDrawText(buffer,jkGui_stdFonts[0],x,y+48,310,"Wheel: radius | Middle: terrain menu",1);stdDisplay_VBufferUnlock(buffer);}
     if(tool==4){
         tVBuffer *buffer=highlightCanvas->pVBuffer;int id=lightGrabbing?lightGrabbed:lightHovered,x=buffer->format.width-250,y=buffer->format.height-210;char text[128];
         if(x<8)x=8;if(y<60)y=60;stdDisplay_VBufferLock(buffer);
@@ -2453,10 +2752,10 @@ void jkEditor_Draw(void) try {
             snprintf(text,sizeof(text),"Intensity: %.1f",model->lights[id].intensity);editorDrawText(buffer,jkGui_stdFonts[0],x,y+22,240,text,1);
             snprintf(text,sizeof(text),"Range: %.4g",model->lights[id].range);editorDrawText(buffer,jkGui_stdFonts[0],x,y+44,240,text,1);
         }else {editorDrawText(buffer,jkGui_stdFonts[0],x,y,240,"Fire 1: place light",1);if(hover.cell>=0){snprintf(text,sizeof(text),"Sector %d light: %.2f",hover.cell,model->c[hover.cell].extraLight);editorDrawText(buffer,jkGui_stdFonts[0],x,y+22,240,text,1);}}
-        editorDrawText(buffer,jkGui_stdFonts[0],x,y+70,240,id>=0?"Wheel: intensity":"Wheel: sector light",1);editorDrawText(buffer,jkGui_stdFonts[0],x,y+92,240,id>=0?"Shift+wheel: range":"Fire 2: move lights",1);stdDisplay_VBufferUnlock(buffer);
+        editorDrawText(buffer,jkGui_stdFonts[0],x,y+70,240,id>=0?"Wheel: intensity":"Wheel: sector light",1);editorDrawText(buffer,jkGui_stdFonts[0],x,y+92,240,id>=0?"Shift+wheel: range":"Shift+wheel: surface light",1);stdDisplay_VBufferUnlock(buffer);
     }
     stdDisplay_VBufferLock(Video_pMenuBuffer);
-    char status[256];snprintf(status,sizeof(status),"EDITOR | %s | %d sectors | %d selected | %s",tool==1?"Selection":tool==2?"Materials":tool==3?"Objects":tool==4?"Lights":tool==5?"Placed COGs":tool==8?"Templates (MMB)":tool==9?"3DO Builder":tool==10?"Saber":"Reserved",model->count,picks.count,tool==5?"Middle mouse: placed COGs":tool==4?"LIGHT":h->vertex>=0?"VERTEX":h->edge>=0?"EDGE":"SURFACE");
+    char status[256];snprintf(status,sizeof(status),"EDITOR | %s | %d sectors | %d selected | %s",tool==1?"Selection":tool==2?"Materials":tool==3?"Objects":tool==4?"Lights":tool==5?"Placed COGs":tool==7?"Terrain":tool==8?"Templates (MMB)":tool==9?"3DO Builder":tool==10?"Saber":"Reserved",model->count,picks.count+selectedSectorCount(),sectorMode||selectedSectorCount()?"SECTOR":tool==5?"Middle mouse: placed COGs":tool==4?"LIGHT":h->vertex>=0?"VERTEX":h->edge>=0?"EDGE":"SURFACE");
     editorDrawText(Video_pMenuBuffer,jkGui_stdFonts[0],8,8,630,status,1);editorDrawText(Video_pMenuBuffer,jkGui_stdFonts[0],8,28,630,message,1);
     stdDisplay_VBufferUnlock(Video_pMenuBuffer);
 } catch(const std::bad_alloc&) {say("Editor operation stopped: not enough memory.");return;}
@@ -2531,6 +2830,7 @@ void jkEditor_HeaderDialog(void) try {
     }
 } catch(const std::bad_alloc&) {say("Editor operation stopped: not enough memory.");return;}
 #include "jkEditorSurface.h"
+#include "jkEditorSector.h"
 #include "jkEditorEpisode.h"
 #include "jkEditorCogs.h"
 #include "jkEditorThings.h"
@@ -2572,4 +2872,4 @@ void jkEditor_SaveDialog(void) try {
     }
     for(int i=0;elements[i].type!=ELEMENT_END;i++){if(elements[i].strAlloced)STD_FREE((void*)elements[i].strAlloced);if(elements[i].wHintTextAlloced)STD_FREE((void*)elements[i].wHintTextAlloced);}
 } catch(const std::bad_alloc&) {say("Editor operation stopped: not enough memory.");return;}
-void jkEditor_Close(void) try {failedImportWorld=NULL;importingStock=0;protectedEpisode[0]=0;edFree(resources);resources=NULL;builderAsset=-1;builderExitRequested=0;builderFreeCache();freeEditorText();if(mapActive)mapClose(boundWorld?boundWorld->pLocalPlayer:NULL);edFree(mapClipboard);mapClipboard=NULL;edFree(mapPending);mapPending=NULL;mapInvalidate();netClose();closeCogEditor();if(active)g_debugmodeFlags=savedDebug;active=0;boundWorld=NULL;grabbing=groupGrab=cleaving=objectGrabbing=objectRotating=0;objectHandleHovered=-10000;clearHistory();toggleDown=fireDown=grabDown=homeDown=tabDown=qDown=nextSpawn=deleteDown=middleDown=attributesDown=0;picks.count=grabPicks.count=undoPicks.count=0;edResetDoubleTap(&jumpTap,0);edResetDoubleTap(&selectionTap,0);hover.cell=-1;clearObjectPreviews();freeEditorMaterials();if(bladeReady){rdPolyline_FreeEntry(&cleaveBlade);edZero(&cleaveBlade,0,sizeof(cleaveBlade));bladeReady=0;}} catch(const std::bad_alloc&) {say("Editor operation stopped: not enough memory.");return;}
+void jkEditor_Close(void) try {terrainSelected=-1;terrainStroke=0;terrainHover.cell=-1;splineSelected=splineDrawing=splineDragging=splineStartDown=splineEnterDown=0;splinePoint=-1;oppositeAdjoinDown=0;flightSpeedBoost=flightSpeedDown=0;sectorPicks.clear();mergeDown=0;liveSectorColormaps.clear();failedImportWorld=NULL;importingStock=0;protectedEpisode[0]=0;edFree(resources);resources=NULL;builderAsset=-1;builderExitRequested=0;builderFreeCache();freeEditorText();if(mapActive)mapClose(boundWorld?boundWorld->pLocalPlayer:NULL);edFree(mapClipboard);mapClipboard=NULL;edFree(mapPending);mapPending=NULL;mapInvalidate();netClose();closeCogEditor();if(active)g_debugmodeFlags=savedDebug;active=0;boundWorld=NULL;grabbing=groupGrab=cleaving=objectGrabbing=objectRotating=0;objectHandleHovered=-10000;clearHistory();toggleDown=fireDown=grabDown=homeDown=tabDown=qDown=nextSpawn=deleteDown=middleDown=attributesDown=0;picks.count=grabPicks.count=undoPicks.count=0;edResetDoubleTap(&jumpTap,0);edResetDoubleTap(&selectionTap,0);hover.cell=-1;clearObjectPreviews();freeEditorMaterials();if(bladeReady){rdPolyline_FreeEntry(&cleaveBlade);edZero(&cleaveBlade,0,sizeof(cleaveBlade));bladeReady=0;}} catch(const std::bad_alloc&) {say("Editor operation stopped: not enough memory.");return;}

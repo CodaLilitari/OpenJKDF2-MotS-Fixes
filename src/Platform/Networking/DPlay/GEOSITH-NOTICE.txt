@@ -1,0 +1,8 @@
+Imported from mrself-de-struct/OpenJKDF2, new-multiplayer,
+commit d36fbc6f39cfa9148b2438973b0587b42b0fe0d5.
+Copyright (C) 2026 sithmartyr and OpenJKDF2 contributors.
+License: GPL-2.0-or-later; see ../../../../COPYING.
+The relay client reports system-player departure events to GeoSith (2026-11-05).
+Other relay client behavior and the protocol are preserved. GeoSith supplies its own adapter.
+Build uses JKRELAY_STANDALONE_CLIENT and JKRELAY_NO_RCON.
+This does not import DirectPlay, web-lobby, hit-rule or automatic mod downloads.

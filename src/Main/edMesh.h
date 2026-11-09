@@ -32,15 +32,15 @@ int edMeshValidate(const EdModel *m){
     if(!edTemplatesValidate(m))return 0;
     if(m->assetCount<0||m->assetCount>ED_ASSETS||m->meshCount<0||m->meshCount>ED_MESHES)return 0;
     for(int a=0;a<m->assetCount;a++){
-        const EdAsset *asset=&m->assets[a];if(asset->saved!=0&&asset->saved!=1)return 0;if(!memchr(asset->name,0,32)||!asset->name[0]||strlen(asset->name)>27||length(asset->origin)>1e6||!isfinite(length(asset->origin)))return 0;
+        const EdAsset *asset=&m->assets[a];if(asset->terrainGroup<0)return 0;if((asset->saved!=0&&asset->saved!=1)||(asset->terrain!=0&&asset->terrain!=1))return 0;if(asset->terrain&&(!asset->saved||!isfinite(length(asset->terrainNormal))||fabs(length(asset->terrainNormal)-1)>.0001))return 0;if(!memchr(asset->name,0,32)||!asset->name[0]||strlen(asset->name)>27||length(asset->origin)>1e6||!isfinite(length(asset->origin)))return 0;
         for(const char *p=asset->name;*p;p++)if(!((*p>='a'&&*p<='z')||(*p>='A'&&*p<='Z')||(*p>='0'&&*p<='9')||*p=='_'||*p=='-'))return 0;
         for(int b=0;b<a;b++)if(!strcmp(asset->name,m->assets[b].name))return 0;
     }
     for(int i=0;i<m->meshCount;i++){
         const EdMesh *mesh=&m->meshes[i];const EdCell *c=&mesh->geometry;int vertices=0;
         if(mesh->asset<0||mesh->asset>=m->assetCount||c->count<1||c->count>ED_FACES)return 0;
-        for(int f=0;f<c->count;f++){if(!meshFaceValid(&c->f[f])||c->f[f].material<0||c->f[f].neighbor!=-1)return 0;vertices+=c->f[f].count;}
-        if(vertices>512)return 0;
+        for(int f=0;f<c->count;f++){if(!isfinite(c->f[f].uvRotation)||!meshFaceValid(&c->f[f])||c->f[f].material<0||c->f[f].neighbor!=-1)return 0;vertices+=c->f[f].count;}
+        if(vertices>512)return 0;if(mesh->terrainNormals.size()){if(mesh->terrainNormals.size()!=(size_t)c->count*3)return 0;for(size_t j=0;j<mesh->terrainNormals.size();j++){double n=length(mesh->terrainNormals[j]);if(!isfinite(n)||fabs(n-1)>.0001)return 0;}}if(m->assets[mesh->asset].terrain){if(mesh->terrainPinned.size()!=(size_t)c->count*3)return 0;for(int f=0;f<c->count;f++){if(c->f[f].count!=3)return 0;for(int v=0;v<3;v++)if(mesh->terrainPinned[f*3+v]>1)return 0;}}
     }return 1;
 }
 static void meshPrimitiveFace(EdCell *c,EdVec *points,int count,EdVec center,int material){

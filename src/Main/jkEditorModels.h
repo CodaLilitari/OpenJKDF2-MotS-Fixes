@@ -123,7 +123,7 @@ static void builderEditAsset(int asset){
 }
 static void builderLibraryMenu(void){
     BuilderMenuState state=builderMenuBegin();char16_t names[ED_ASSETS][128];int ids[ED_ASSETS],count=0;
-    for(int a=0;a<model->assetCount;a++)if(model->assets[a].saved){ids[count]=a;stdString_CharToWchar(names[count++],model->assets[a].name,128);}
+    for(int a=0;a<model->assetCount;a++)if(model->assets[a].saved&&!model->assets[a].terrain){ids[count]=a;stdString_CharToWchar(names[count++],model->assets[a].name,128);}
     int choice=chooseList(u"Custom 3DOs",names,count,0),action=-1,asset=choice>=0?ids[choice]:-1;
     if(asset>=0){char16_t options[2][128]={u"Edit 3DO",u"Delete"};action=chooseList(names[choice],options,2,0);}
     builderMenuEnd(state);if(asset<0||action<0||netEditPending())return;
@@ -179,13 +179,13 @@ static void builderControl(int fire,int grab,int middle,int shift,int ctrl){
         say("Moving 3DO center point. Mesh geometry stays in place.");
     }else if(grab&&!grabDown&&builderHover.cell>=0&&(tool==1||tool==2||tool==10)){
         remember();edCopyModel(snapshot,model);builderGrab=builderHover;builderGrabPicks=builderPicks;if(tool!=1||!builderGrabPicks.count){builderGrabPicks.count=1;builderGrabPicks.hits[0]=builderGrab;}
-        builderDelta=edV(0,0,0);edDragTraceBegin(&builderTrace,origin,direction,builderGrab.point,direction,1000);grabbing=1;uvMode=tool==2;
+        builderDelta=edV(0,0,0);uvRotating=tool==2&&shift;uvFine=tool==2&&ctrl;edDragTraceBegin(&builderTrace,origin,direction,builderGrab.point,tool==2?edNormal(&snapshot->meshes[builderGrab.cell].geometry.f[builderGrab.face]):direction,1000);grabbing=1;uvMode=tool==2;
     }
     if(grabbing&&grab){
         if(fire&&!fireDown&&!uvMode&&!builderOriginGrabbing){edCopyModel(candidate,model);EdSelection targets;int ok=builderExtrudeTargets(&targets);for(int i=0;i<targets.count&&ok;i++)ok=edMeshExtrude(candidate,targets.hits[i]);if(ok&&commit()){grabbing=0;builderPicks.count=0;say("Mesh faces extruded one grid unit along their outward normals.");}else say("Cannot extrude this grab. Release and grab an intact face again.");}
         else {builderDelta=edAdd(builderDelta,edDragTraceStep(&builderTrace,origin,direction));int ok;
             if(builderOriginGrabbing){edCopyModel(candidate,snapshot);candidate->assets[builderAsset].origin=edSnapPoint(edAdd(snapshot->assets[builderAsset].origin,builderDelta));ok=1;}
-            else if(uvMode){edCopyModel(candidate,snapshot);edPanFaceTexture(&candidate->meshes[builderGrab.cell].geometry.f[builderGrab.face],builderDelta);ok=1;}
+            else if(uvMode){edCopyModel(candidate,snapshot);EdFace *face=&candidate->meshes[builderGrab.cell].geometry.f[builderGrab.face];if(uvRotating){int edge=builderHover.cell==builderGrab.cell&&builderHover.face==builderGrab.face?builderHover.edge:-1;edRotateTextureDrag(face,builderGrab.point,builderDelta,edge);}else edPanFaceTextureGrid(face,builderDelta,uvFine?ED_GRID*.5:ED_GRID);ok=1;}
             else ok=edMeshMoveConstrained(candidate,snapshot,&builderGrabPicks,builderDelta,shift);
             if(ok)commit();
         }

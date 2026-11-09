@@ -1,4 +1,5 @@
 #include "jkRes.h"
+#include "Main/jkEditorResources.h"
 
 #include "../jk.h"
 #include "Win95/stdGob.h"
@@ -112,6 +113,7 @@ void jkRes_LoadGob(char *a1)
         
         jkRes_NewGob(&jkRes_gCtx.aGobDirectories[2], std_g_genBuffer, v30);
     }
+    jkEditor_ResourcesLoad();
 }
 
 int jkRes_LoadCd(char *a1)
@@ -264,26 +266,6 @@ int jkRes_LoadNew(jkResGobDirectory *resGob, char *name, int a3)
         return 0;
 
     jkRes_UnhookHS();
-
-    // Added: Add a mods dir which always overrides resource/
-    if (!_strcmp(name, "resource"))
-    {
-        v15 = stdFileUtil_NewFind("mods", 3, JKRES_GOB_EXT);
-        while (stdFileUtil_FindNext(v15, &v18))
-        {
-            if ( resGob->numGobs >= STDGOB_MAX_GOBS )
-                break;
-            if ( v18.fpath[0] != '.' )
-            {
-                stdString_snprintf(jkRes_idkGobPath, 0x80u, "%s%c%s", "mods", LEC_PATH_SEPARATOR_CHR, v18.fpath);
-                resGob->gobs[resGob->numGobs] = stdGob_Load(jkRes_idkGobPath, 16, 0);
-
-                if ( resGob->gobs[resGob->numGobs] )
-                    resGob->numGobs++;
-            }
-        }
-        stdFileUtil_DisposeFind(v15);
-    }
 
     v15 = stdFileUtil_NewFind(name, 3, JKRES_GOB_EXT);
     while (stdFileUtil_FindNext(v15, &v18))
@@ -498,6 +480,14 @@ stdFile_t jkRes_FileOpen(const char *fpath, const char *mode)
     if ( resIdx >= 0x20 )
         return (stdFile_t)0;
     v6 = 0;
+    void *custom = jkEditor_ResourceOpen(fpath, mode);
+    if (custom) {
+        jkRes_aFiles[resIdx].useLowLevel = 2;
+        jkRes_aFiles[resIdx].fsHandle = (stdFile_t)custom;
+        jkRes_aFiles[resIdx].bOpened = 1;
+        stdString_SafeStrCopy(jkRes_aFiles[resIdx].fpath, fpath, 128);
+        return (stdFile_t)(resIdx + 1);
+    }
 
 #ifndef TARGET_TWL
     // Try in the EXE root (not in resource/), ex "3do\key\kysabrf2.key"
@@ -570,7 +560,9 @@ int jkRes_FileClose(stdFile_t fd)
 {
     jkResFile *resFile = &jkRes_aFiles[fd - 1];
 
-    if (resFile->useLowLevel)
+    if (resFile->useLowLevel == 2)
+        jkEditor_ResourceClose((void*)resFile->fsHandle);
+    else if (resFile->useLowLevel)
         pLowLevelHS->fileClose(resFile->fsHandle);
     else
         stdGob_FileClose(resFile->gobHandle);
@@ -582,6 +574,7 @@ int jkRes_FileClose(stdFile_t fd)
 size_t jkRes_FileRead(stdFile_t fd, void* out, size_t len)
 {
     jkResFile *resFile = &jkRes_aFiles[fd - 1];
+    if (resFile->useLowLevel == 2) return jkEditor_ResourceRead((void*)resFile->fsHandle,out,len);
 
     if ( resFile->useLowLevel )
         return pLowLevelHS->fileRead(resFile->fsHandle, out, len);
@@ -592,6 +585,7 @@ size_t jkRes_FileRead(stdFile_t fd, void* out, size_t len)
 size_t jkRes_FileWrite(stdFile_t fd, void* out, size_t len)
 {
     jkResFile *resFile = &jkRes_aFiles[fd - 1];
+    if (resFile->useLowLevel == 2) return 0;
 
     if ( resFile->useLowLevel )
         return pLowLevelHS->fileWrite(resFile->fsHandle, out, len);
@@ -602,6 +596,7 @@ size_t jkRes_FileWrite(stdFile_t fd, void* out, size_t len)
 const char* jkRes_FileGets(stdFile_t fd, char* str, size_t n)
 {
     jkResFile* resFile = &jkRes_aFiles[fd - 1];
+    if (resFile->useLowLevel == 2) return jkEditor_ResourceGets((void*)resFile->fsHandle,str,n);
     if (resFile->useLowLevel)
         return pLowLevelHS->fileGets(resFile->fsHandle, str, n);
     else
@@ -611,6 +606,7 @@ const char* jkRes_FileGets(stdFile_t fd, char* str, size_t n)
 const char16_t* jkRes_FileGetws(stdFile_t fd, char16_t* wstr, size_t n)
 {
     jkResFile* resFile = &jkRes_aFiles[fd - 1];
+    if (resFile->useLowLevel == 2) return NULL;
     if (resFile->useLowLevel)
         return pLowLevelHS->fileGetws(resFile->fsHandle, wstr, n);
     else
@@ -620,6 +616,7 @@ const char16_t* jkRes_FileGetws(stdFile_t fd, char16_t* wstr, size_t n)
 int jkRes_FEof(stdFile_t fd)
 {
     jkResFile* resFile = &jkRes_aFiles[fd - 1];
+    if (resFile->useLowLevel == 2) return jkEditor_ResourceEof((void*)resFile->fsHandle);
     if ( resFile->useLowLevel )
         return pLowLevelHS->fileEof(resFile->fsHandle);
     else
@@ -629,6 +626,7 @@ int jkRes_FEof(stdFile_t fd)
 int jkRes_FTell(stdFile_t fd)
 {
     jkResFile* resFile = &jkRes_aFiles[fd - 1];
+    if (resFile->useLowLevel == 2) return jkEditor_ResourceTell((void*)resFile->fsHandle);
     if ( resFile->useLowLevel )
         return pLowLevelHS->ftell(resFile->fsHandle);
     else
@@ -638,6 +636,7 @@ int jkRes_FTell(stdFile_t fd)
 int jkRes_FSeek(stdFile_t fd, int offs, int whence)
 {
     jkResFile* resFile = &jkRes_aFiles[fd - 1];
+    if (resFile->useLowLevel == 2) return jkEditor_ResourceSeek((void*)resFile->fsHandle,offs,whence);
     if ( resFile->useLowLevel )
         return pLowLevelHS->fseek(resFile->fsHandle, offs, whence);
     else
@@ -651,6 +650,7 @@ int jkRes_FileSize(stdFile_t fd)
     // I'm just going to fix the impl for now.
 
     jkResFile* resFile = &jkRes_aFiles[fd - 1];
+    if (resFile->useLowLevel == 2) return jkEditor_ResourceSize((void*)resFile->fsHandle);
     if ( resFile->useLowLevel )
     {
         /* SDL host services do not populate fileSize. Use the seek/tell
@@ -671,6 +671,7 @@ int jkRes_FilePrintf(stdFile_t fd, const char* fmt, ...)
     va_start(va, fmt);
     
     jkResFile* resFile = &jkRes_aFiles[fd - 1];
+    if (resFile->useLowLevel == 2) { va_end(va); return 0; }
     
     int v3 = __vsnprintf(std_g_genBuffer, 0x400u, fmt, va);
     va_end(va);

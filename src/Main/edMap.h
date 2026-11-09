@@ -3,6 +3,9 @@
 #include "edGeometry.h"
 #include <math.h>
 #include <string.h>
+/* Drawing and input share the same power-of-two grid, at least 12 pixels apart. */
+static double edMapGridSpacing(double zoom){double spacing=ED_GRID;if(!isfinite(zoom)||zoom<=0)return spacing;while(spacing*zoom<12)spacing*=2;return spacing;}
+static EdVec edMapSnapXY(EdVec p,double spacing){return edV(round(p.x/spacing)*spacing,round(p.y/spacing)*spacing,p.z);}
 /* Project every convex boundary polygon. Their union is the sector footprint,
    including sloped sectors and sectors stacked above one another. */
 static int edMapFacePoint(const EdFace *f,double x,double y) {
@@ -33,8 +36,9 @@ static int edMapInsideSelected(const EdModel *m,const EdBuffer<unsigned char>& s
 /* Work on a transaction candidate. Rebuild every portal after detaching/moving
    cells; retain surface attributes so newly solid boundaries become visible. */
 static int edMapTranslate(EdModel *out,const EdModel *source,const EdBuffer<unsigned char>& selected,EdVec delta,int copy,EdBuffer<unsigned char>& result) {
-    delta=edSnapPoint(delta);delta.z=0;int count=0;for(int s=0;s<source->count;s++)count+=selected[s]!=0;
-    if(!count||(copy&&count>ED_CELLS-source->count)||!isfinite(delta.x)||!isfinite(delta.y))return 0;
+    for(int s=0;s<source->count;s++)if(selected[s]&&source->c[s].splineId)return 0;
+    delta=edSnapPoint(delta);int count=0;for(int s=0;s<source->count;s++)count+=selected[s]!=0;
+    if(!count||(copy&&count>ED_CELLS-source->count)||!isfinite(delta.x)||!isfinite(delta.y)||!isfinite(delta.z))return 0;
     edCopyModel(out,source);
     for(int s=0;s<source->count;s++)if(selected[s]){
         int target=copy?out->count++:s;out->c[target]=source->c[s];
@@ -54,11 +58,11 @@ static int edMapTranslate(EdModel *out,const EdModel *source,const EdBuffer<unsi
 }
 static const char *edMapPlacementFailure="";
 static int edMapPaste(EdModel *out,const EdModel *source,const EdModel *clip,EdVec delta,EdBuffer<unsigned char>& result) {
-    delta=edSnapPoint(delta);delta.z=0;
+    delta=edSnapPoint(delta);
     edClearGeometryError();edMapPlacementFailure="No sectors are ready to place.";
     if(!clip->count)return 0;
     edMapPlacementFailure="Placement exceeds the engine sector index range.";if(clip->count>ED_CELLS-source->count)return 0;
-    edMapPlacementFailure="Invalid placement coordinates.";if(!isfinite(delta.x)||!isfinite(delta.y))return 0;
+    edMapPlacementFailure="Invalid placement coordinates.";if(!isfinite(delta.x)||!isfinite(delta.y)||!isfinite(delta.z))return 0;
     edCopyModel(out,source);
     for(int s=0;s<clip->count;s++){
         EdCell *cell=&out->c[out->count++];*cell=clip->c[s];
@@ -145,7 +149,8 @@ static int edMapCleave(EdModel *out,const EdModel *source,const EdBuffer<unsigne
     if(!edCleaveSectorsPlane(out,cut,edV(a.y-b.y,b.x-a.x,0),a))return 0;
     edZero(result,0,ED_CELLS);for(int s=0;s<out->count;s++)result[s]=edMapInsideSelected(source,selected,edMapCenter(&out->c[s]));return 1;
 }
-static int edMapDelete(EdModel *out,const EdModel *source,const EdBuffer<unsigned char>& selected){
+static int edMapDelete(EdModel *out,const EdModel *source,const EdBuffer<unsigned char>& selected,int allowSpline=0){
+    for(int s=0;s<source->count;s++)if(selected[s]&&source->c[s].splineId&&!allowSpline)return 0;
     int count=0;for(int s=0;s<source->count;s++)count+=selected[s]!=0;if(!count||count==source->count)return 0;
     edCopyModel(out,source);for(int s=source->count-1;s>=0;s--)if(selected[s]){int before=out->count;if(!edDeleteSector(out,s)||out->count!=before-1){edCopyModel(out,source);return 0;}}
     return edValidate(out);

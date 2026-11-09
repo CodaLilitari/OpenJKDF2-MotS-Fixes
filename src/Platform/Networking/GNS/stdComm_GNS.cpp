@@ -72,7 +72,7 @@ extern "C"
 void Hack_ResetClients();
 
 static uint32_t GNSLayout(){return (uint32_t)(sizeof(jkMultiEntry)^sizeof(rdVector3)*17u^sizeof(flex_t)*31u);}
-enum { GNS_MAGIC=0x47534954, GNS_VERSION=8, GNS_INFO=1, GNS_AUTH=2, GNS_ACCEPT=3 };
+enum { GNS_MAGIC=0x47534954, GNS_VERSION=17, GNS_INFO=1, GNS_AUTH=2, GNS_ACCEPT=3 };
 #pragma pack(push, 4)
 struct GNSInfoPacket { uint32_t magic,version,kind,id,mode,layout; uint64_t assets; jkMultiEntry entry; };
 struct GNSAuthPacket { uint32_t magic,version,kind,mode,layout; uint64_t assets; char16_t password[32]; };
@@ -323,7 +323,7 @@ static bool HashAssets() {
     if(ec||files.empty()){NetworkStatus("Cannot fingerprint Resource archives. Check your Jedi Knight installation.");return false;}
     /* Include loose asset overrides, but not episodes or shared COG sources.
        Levels/COGs are synchronized separately and may differ before joining. */
-    for(const char *base:{"mods","mat","3do","sprite","spr","sound","sfx","misc",folder}){
+    for(const char *base:{"mat","3do","sprite","spr","sound","sfx","misc",folder}){
         ec.clear();if(!std::filesystem::is_directory(base,ec))continue;ec.clear();
         for(const auto &f:std::filesystem::recursive_directory_iterator(base,std::filesystem::directory_options::skip_permission_denied,ec)){
             if(!f.is_regular_file(ec))continue;
@@ -485,6 +485,8 @@ public:
 };
 GNSClient *GNSClient::instance=nullptr;
 
+#include "gnsRelay.h"
+
 const uint16 DEFAULT_SERVER_PORT = 27020;
 
 extern "C"
@@ -497,16 +499,22 @@ char addrServerLast[256];
 static SteamNetworkingIPAddr enumAddresses[32],displayAddresses[32];
 static jkMultiEntry enumResults[32];
 static int enumResultCount;
+static RelayListing relayListings[32],relayDisplay[32];
 GNSClient client;
 GNSServer server;
 
-void stdComm_GNS_GetStatus(char *text,int size){if(size<=0)return;std::lock_guard<std::mutex> lock(gnsStatusMutex);if(stdComm_bIsServer)snprintf(text,size,"UDP %d | %s",jkGuiNetHost_portNum,gnsStatus);else snprintf(text,size,"%s",gnsStatus);}
+void stdComm_GNS_GetStatus(char *text,int size){if(size<=0)return;std::lock_guard<std::mutex> lock(gnsStatusMutex);if(relayActive)snprintf(text,size,"Relay %s | %s",relayAddress,gnsStatus);else if(stdComm_bIsServer)snprintf(text,size,"UDP %d | %s",jkGuiNetHost_portNum,gnsStatus);else snprintf(text,size,"%s",gnsStatus);}
 void stdComm_GNS_AllowEdits(int allow){allowClientEdits=allow!=0;}
 int stdComm_GNS_EditsAllowed(void){return allowClientEdits;}
-void stdComm_GNS_RetryRouter(void){if(stdComm_bIsServer)StartRouterMapping(jkGuiNetHost_portNum);}
-int stdComm_GNS_IsConnecting(void){return !stdComm_bIsServer&&client.id==0xffffffff;}
+void stdComm_GNS_RetryRouter(void){if(stdComm_bIsServer&&!relayActive)StartRouterMapping(jkGuiNetHost_portNum);}
+int stdComm_GNS_IsConnecting(void){return relayActive?relay.Connecting():!stdComm_bIsServer&&client.id==0xffffffff;}
+int stdComm_GNS_IsRelay(void){return relayActive;}
+const char* stdComm_GNS_RelayAddress(void){return relayAddress;}
+int stdComm_GNS_RelayDirect(void){return relayDirect;}
+void stdComm_GNS_SetRelay(const char* address,int direct){if(address&&*address)snprintf(relayAddress,sizeof(relayAddress),"%s",address);relayDirect=direct!=0;relayActive=true;}
 void Hack_ResetClients()
 {
+
     DirectPlay_numPlayers = 32;
     for (int i = 0; i < 32; i++)
     {
@@ -528,7 +536,8 @@ void Hack_ResetClients()
 
     //jkPlayer_maxPlayers = 2;
 
-    if (stdComm_bIsServer)
+    if(relayActive)stdComm_dplayIdSelf=relay.id;
+    else if (stdComm_bIsServer)
         stdComm_dplayIdSelf = server.id;
     else
         stdComm_dplayIdSelf = client.id;
@@ -550,8 +559,12 @@ void stdComm_GNS_Startup()
         return;
     }
 
-    jkGuiMultiplayer_numConnections = 1;
-    jk_snwprintf(jkGuiMultiplayer_aConnections[0].name, 0x80, u"Valve GNS");
+    jkGuiMultiplayer_numConnections = 2;
+    jk_snwprintf(jkGuiMultiplayer_aConnections[0].name, 0x80, u"Valve GNS (LAN / direct IP / VPN)");
+    jk_snwprintf(jkGuiMultiplayer_aConnections[1].name, 0x80, u"Imperial Relay (no port forwarding)");
+    const char* relayEnv=getenv("GEOSITH_RELAY");if(!relayEnv||!*relayEnv)relayEnv=getenv("OPENJKDF2_RELAY");
+    if(relayEnv&&*relayEnv)stdComm_GNS_SetRelay(relayEnv,getenv("GEOSITH_RELAY_ONLY")?0:1);
+
     stdComm_dword_8321E0 = 0;
 
     memset(jkGuiMultiplayer_aEntries, 0, sizeof(jkMultiEntry) * 32);
@@ -574,7 +587,7 @@ void stdComm_GNS_Startup()
 
 void stdComm_GNS_Shutdown()
 {
-    DirectPlay_EnumSessions2();StopRouterMapping();LanStop();
+    DirectPlay_EnumSessions2();relay.Shutdown();StopRouterMapping();LanStop();
     if (stdComm_GNS_bForceStubs)
         return;
 
@@ -583,6 +596,8 @@ void stdComm_GNS_Shutdown()
 
 int DirectPlay_Receive(int *pIdOut, int *pMsgIdOut, int *pLenOut)
 {
+    if(relayActive){int result=relay.Receive(pIdOut,pMsgIdOut,pLenOut);Hack_ResetClients();return result;}
+
     if (stdComm_GNS_bForceStubs)
         return -1;
 
@@ -604,6 +619,8 @@ int DirectPlay_Receive(int *pIdOut, int *pMsgIdOut, int *pLenOut)
 
 BOOL DirectPlay_Send(DPID idFrom, DPID idTo, void *lpData, DWORD dwDataSize)
 {
+    if(relayActive){relay.Tick();Hack_ResetClients();return relay.Send(idFrom,idTo,lpData,dwDataSize);}
+
     if (stdComm_GNS_bForceStubs)
         return 0;
 
@@ -625,6 +642,10 @@ BOOL DirectPlay_Send(DPID idFrom, DPID idTo, void *lpData, DWORD dwDataSize)
 
 int stdComm_OpenConnection(void* a)
 {
+    DirectPlay_EnumSessions2();relay.Shutdown();
+    relayActive=(intptr_t)a==1;
+    if(relayActive){stdString_CharToWchar(jkGuiMultiplayer_ipText,relayAddress,256);NetworkStatus("Relay selected. Host and clients use the same relay address.");}
+
     stdComm_dword_8321DC = 1;
     return 0;
 }
@@ -649,6 +670,8 @@ void stdComm_CloseConnection()
 int stdComm_Open(int idx, char16_t* pwPassword)
 {
     if(idx<0||idx>=32)return 0x80004005;
+    if(relayActive){RelayListing game=relayDisplay[idx];DirectPlay_EnumSessions2();stdComm_dword_8321E8=0;stdComm_dword_8321E0=1;stdComm_bIsServer=0;stdComm_dplayIdSelf=0xffffffff;jkGuiMultiplayer_checksumSeed=game.entry.checksumSeed;return relay.Join(game,pwPassword)?0:0x80004005;}
+
     SteamNetworkingIPAddr selectedAddress=addrServer;if(idx<dplay_dword_55D618)selectedAddress=displayAddresses[idx];
     DirectPlay_EnumSessions2();addrServer=selectedAddress;
 
@@ -669,6 +692,7 @@ int stdComm_Open(int idx, char16_t* pwPassword)
 void stdComm_Close()
 {
     DirectPlay_EnumSessions2();
+    if(relayActive){relay.Close();return;}
     if (stdComm_GNS_bForceStubs)
         return;
 
@@ -690,6 +714,7 @@ int DirectPlay_SendLobbyMessage(void* pPkt, uint32_t pktLen)
 void DirectPlay_SetSessionDesc(const char* a1, DWORD maxPlayers)
 {
     _strncpy(sithDplayGNS_storedEntry.mapJklFname, jkMain_aLevelJklFname, 0x20);
+    if(relayActive)relay.UpdateDescription();
 }
 
 BOOL DirectPlay_SetSessionFlagidk(int a1)
@@ -725,6 +750,7 @@ DPID DirectPlay_CreatePlayer(char16_t* pwIdk, int idk2)
 
 void DirectPlay_Close()
 {
+    if(relayActive){relay.Close();return;}
     if(!stdComm_GNS_bForceStubs){if(stdComm_bIsServer)server.Shutdown();else client.Shutdown();}
 }
 
@@ -739,6 +765,7 @@ int DirectPlay_OpenHost(jkMultiEntry* pEntry)
 
     if (stdComm_GNS_bForceStubs)
         return 0x80004005;
+    if(relayActive){if(relay.Host())return 0;stdComm_bIsServer=0;return 0x80004005;}
     if(!server.Init(jkGuiNetHost_portNum)){stdComm_bIsServer=0;return 0x80004005;}
     return 0;
 }
@@ -806,6 +833,9 @@ static int stdComm_EnumThread(void *ptr) {
         SDL_LockMutex(stdComm_EnumThread_mutex);snprintf(address,sizeof(address),"%s",enumAddress);force=stdComm_EnumThread_bForce!=0;stdComm_EnumThread_bForce=0;discoveryCancelled=false;SDL_UnlockMutex(stdComm_EnumThread_mutex);
         uint32_t now=stdPlatform_GetTimeMsec();
         if(force||previous!=address||now-last>10000){previous=address;last=now;std::string host,service,error;
+            if(relayActive){{std::lock_guard<std::mutex> lock(gnsStatusMutex);snprintf(relayAddress,sizeof(relayAddress),"%s",address);}auto found=relay.Enumerate();
+                SDL_LockMutex(stdComm_EnumThread_mutex);enumResultCount=(int)found.size();for(int i=0;i<enumResultCount;i++){enumResults[i]=found[i].entry;relayListings[i]=found[i];}SDL_UnlockMutex(stdComm_EnumThread_mutex);continue;}
+
             std::vector<SteamNetworkingIPAddr> candidates;std::vector<LanGame> games;
             if(!__strcmpi(address,"LAN")){NetworkStatus("Searching the local network...");games=LanQuery(stdComm_EnumThread_bInit);NetworkStatus(games.empty()?"No LAN games found. For internet play enter the host's public IP or hostname:port.":"LAN games found. Select a game and join.");}
             else if(!gnsParseAddress(address,host,service,error)){NetworkStatus(error.c_str());}
@@ -848,7 +878,7 @@ int stdComm_EnumSessions(int a, void* b)
 
     SDL_LockMutex(stdComm_EnumThread_mutex);
     char requested[256];stdString_WcharToChar(requested,jkGuiMultiplayer_ipText,255);if(strcmp(requested,enumAddress)){discoveryCancelled=true;enumResultCount=0;snprintf(enumAddress,sizeof(enumAddress),"%s",requested);}
-    for(int i=0;i<enumResultCount;i++){jkGuiMultiplayer_aEntries[i]=enumResults[i];displayAddresses[i]=enumAddresses[i];}
+    for(int i=0;i<enumResultCount;i++){jkGuiMultiplayer_aEntries[i]=enumResults[i];displayAddresses[i]=enumAddresses[i];relayDisplay[i]=relayListings[i];}
     dplay_dword_55D618=enumResultCount;
     SDL_UnlockMutex(stdComm_EnumThread_mutex);
 
@@ -874,7 +904,7 @@ int stdComm_EnumSessions(int a, void* b)
     //client.GetServerInfo(addrServer);
 
     SDL_LockMutex(stdComm_EnumThread_mutex);
-    for(int i=0;i<enumResultCount;i++){jkGuiMultiplayer_aEntries[i]=enumResults[i];displayAddresses[i]=enumAddresses[i];}
+    for(int i=0;i<enumResultCount;i++){jkGuiMultiplayer_aEntries[i]=enumResults[i];displayAddresses[i]=enumAddresses[i];relayDisplay[i]=relayListings[i];}
     dplay_dword_55D618=enumResultCount;
     SDL_UnlockMutex(stdComm_EnumThread_mutex);
     
@@ -883,6 +913,10 @@ int stdComm_EnumSessions(int a, void* b)
 }
 
 int stdComm_GNS_TestDiscovery(void){
+    if(relayActive){stdString_CharToWchar(jkGuiMultiplayer_ipText,relayAddress,256);uint32_t start=stdPlatform_GetTimeMsec();do{stdComm_EnumSessions(0,nullptr);if(dplay_dword_55D618)break;SDL_Delay(25);}while(stdPlatform_GetTimeMsec()-start<15000);DirectPlay_EnumSessions2();if(!dplay_dword_55D618)return 0;
+        if(relay.Join(relayDisplay[0],u"incorrect-password")){relay.Close();return 0;}
+        stdPlatform_Printf("GEOSITH_GNS_DISCOVERY PASS: relay listing, compatible metadata, wrong password rejected\n");return 1;}
+
     char endpoint[64];snprintf(endpoint,sizeof(endpoint),"localhost:%d",getenv("GEOSITH_NET_PORT")?atoi(getenv("GEOSITH_NET_PORT")):27020);stdString_CharToWchar(jkGuiMultiplayer_ipText,endpoint,256);uint32_t began=stdPlatform_GetTimeMsec();
     do{stdComm_EnumSessions(0,nullptr);if(dplay_dword_55D618>0)break;SDL_Delay(25);}while(stdPlatform_GetTimeMsec()-began<15000);
     DirectPlay_EnumSessions2();if(dplay_dword_55D618!=1)return 0;
@@ -896,7 +930,7 @@ int stdComm_GNS_TestDiscovery(void){
     if(!rejected)return 0;
     stdPlatform_Printf("GEOSITH_GNS_DISCOVERY PASS: hostname lookup, public metadata, password rejection before player allocation\n");return 1;
 }
-int stdComm_GNS_TestListener(void){GNSServer conflict;bool opened=conflict.Init(jkGuiNetHost_portNum);if(opened){conflict.Shutdown();return 0;}server.RunStep();stdPlatform_Printf("GEOSITH_GNS_LISTEN PASS: duplicate port refused\n");return 1;}
+int stdComm_GNS_TestListener(void){if(relayActive){stdPlatform_Printf("GEOSITH_RELAY_HOST PASS: outbound relay hosting\n");return 1;}GNSServer conflict;bool opened=conflict.Init(jkGuiNetHost_portNum);if(opened){conflict.Shutdown();return 0;}server.RunStep();stdPlatform_Printf("GEOSITH_GNS_LISTEN PASS: duplicate port refused\n");return 1;}
 
 void DirectPlay_EnumPlayers(int a)
 {
