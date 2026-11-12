@@ -26,6 +26,11 @@
 stdCaptureRequest stdCapture_request;
 static int active, renderedFrames, cameraApplied;
 static uint64_t firstMs;
+static const char* graphicsBackend = "native";
+static struct {
+    int ready;
+    char driver[32], sdlVersion[32], vendor[256], renderer[256], glVersion[256];
+} graphics;
 static int write_world_state(FILE* file);
 int stdCapture_IsRequested(void) { const char* p = getenv("OPENJKDF2_CAPTURE_REQUEST"); return p && *p; }
 static int capture_option_equals(const char* value, const char* option)
@@ -48,6 +53,53 @@ int stdCapture_PreserveConsoleStreams(int argc, char** argv)
     return 0;
 }
 int stdCapture_IsActive(void) { return active; }
+const char* stdCapture_GraphicsBackend(void) { return graphicsBackend; }
+const char* stdCapture_ExpectedVideoDriver(void)
+{
+    if (!strcmp(graphicsBackend, "sdl-offscreen")) return "offscreen";
+    if (!strcmp(graphicsBackend, "xvfb")) return "x11";
+    return NULL;
+}
+void stdCapture_ClearGraphics(void) { memset(&graphics, 0, sizeof(graphics)); }
+static int graphics_string_valid(const char* value, size_t capacity)
+{
+    if (!value || !*value) return 0;
+    for (size_t i = 0; i < capacity; ++i) {
+        unsigned char c = (unsigned char)value[i];
+        if (!c) return 1;
+        if (c < 32 || c > 126) return 0;
+    }
+    return 0;
+}
+static int sdl_version_valid(const char* value)
+{
+    if (!graphics_string_valid(value, sizeof(graphics.sdlVersion))) return 0;
+    for (int component = 0; component < 3; ++component) {
+        if (*value < '0' || *value > '9') return 0;
+        do { ++value; } while (*value >= '0' && *value <= '9');
+        if (component < 2) { if (*value++ != '.') return 0; }
+        else if (*value) return 0;
+    }
+    return 1;
+}
+int stdCapture_RecordGraphics(const char* driver, const char* sdlVersion,
+    const char* vendor, const char* renderer, const char* glVersion)
+{
+    stdCapture_ClearGraphics();
+    const char* expected = stdCapture_ExpectedVideoDriver();
+    if (!active || !graphics_string_valid(driver, sizeof(graphics.driver))
+        || (expected && strcmp(driver, expected)) || !sdl_version_valid(sdlVersion)
+        || !graphics_string_valid(vendor, sizeof(graphics.vendor))
+        || !graphics_string_valid(renderer, sizeof(graphics.renderer))
+        || !graphics_string_valid(glVersion, sizeof(graphics.glVersion))) return 0;
+    strcpy(graphics.driver, driver);
+    strcpy(graphics.sdlVersion, sdlVersion);
+    strcpy(graphics.vendor, vendor);
+    strcpy(graphics.renderer, renderer);
+    strcpy(graphics.glVersion, glVersion);
+    graphics.ready = 1;
+    return 1;
+}
 void stdCapture_Trace(const char* message) { if (active) { fprintf(stderr, "capture startup: %s\n", message); fflush(stderr); } }
 static int absolute_path(const char* p) {
 #ifdef _WIN32
@@ -81,9 +133,22 @@ int stdCapture_Parse(const char* text, stdCaptureRequest* request)
 }
 int stdCapture_Init(int argc, char** argv)
 {
+    active = renderedFrames = cameraApplied = 0;
+    firstMs = 0;
+    graphicsBackend = "native";
+    stdCapture_ClearGraphics();
     if (!stdCapture_IsRequested()) {
         for (int i = 1; i < argc; ++i) if (!strcmp(argv[i], "-capture")) return 0;
         return 1;
+    }
+    const char* backend = getenv("OPENJKDF2_CAPTURE_BACKEND");
+    if (backend) {
+        if (!strcmp(backend, "native")) { }
+#ifdef __linux__
+        else if (!strcmp(backend, "xvfb")) graphicsBackend = "xvfb";
+        else if (!strcmp(backend, "sdl-offscreen")) graphicsBackend = "sdl-offscreen";
+#endif
+        else return 0;
     }
     int autostart = 0, singleplayer = 0, multiplayer = 0, episode = 0, map = 0, capture = 0, startupPath = 0, character = 0;
     for (int i = 1; i < argc; ++i) {
@@ -143,9 +208,30 @@ static FILE* create_new(const char* path) {
     if (!result) { capture_close(fd); remove(path); }
     return result;
 }
+static int write_graphics_string(FILE* file, const char* value)
+{
+    if (fputc('"', file) == EOF) return 0;
+    for (; *value; ++value) {
+        if ((*value == '"' || *value == '\\') && fputc('\\', file) == EOF) return 0;
+        if (fputc(*value, file) == EOF) return 0;
+    }
+    return fputc('"', file) != EOF;
+}
+static int write_graphics(FILE* file)
+{
+    if (!graphics.ready) return 1; // Legacy direct/unit-test capture.
+    if (fputs(",\n  \"graphics\": {\"schemaVersion\": 1", file) < 0) return 0;
+    const char* keys[] = {"requestedBackend", "sdlVideoDriver", "sdlVersion", "glVendor", "glRenderer", "glVersion"};
+    const char* values[] = {graphicsBackend, graphics.driver, graphics.sdlVersion, graphics.vendor, graphics.renderer, graphics.glVersion};
+    for (size_t i = 0; i < sizeof(keys)/sizeof(keys[0]); ++i) {
+        if (fprintf(file, ", \"%s\": ", keys[i]) < 0 || !write_graphics_string(file, values[i])) return 0;
+    }
+    return fputc('}', file) != EOF;
+}
 int stdCapture_WriteRgb(const unsigned char* pixels, int width, int height)
 {
     if (!active || !pixels || width != stdCapture_request.width || height != stdCapture_request.height) return 0;
+    if (stdCapture_ExpectedVideoDriver() && !graphics.ready) return 0;
     char receipt[1100]; snprintf(receipt, sizeof(receipt), "%s.json", stdCapture_request.output);
     FILE* image = create_new(stdCapture_request.output); if (!image) return 0;
     FILE* record = create_new(receipt); if (!record) { fclose(image); remove(stdCapture_request.output); return 0; }
@@ -156,7 +242,7 @@ int stdCapture_WriteRgb(const unsigned char* pixels, int width, int height)
     const stdCaptureRequest* r = &stdCapture_request;
     if (fprintf(record, "{\n  \"schemaVersion\": 1,\n  \"mode\": \"hidden-rendered-inspection\",\n  \"format\": \"ppm-rgb8\",\n  \"width\": %d,\n  \"height\": %d,\n  \"renderedFrame\": %d,\n  \"sector\": %d,\n  \"position\": [%.17g, %.17g, %.17g],\n  \"pitchYawRoll\": [%.17g, %.17g, %.17g],\n  \"horizontalFov\": %.17g,\n  \"deterministicSimulation\": false,\n  \"resourceHashesVerifiedByEngine\": false",
         width, height, renderedFrames, r->sector, r->x, r->y, r->z, r->pitch, r->yaw, r->roll, r->fov) < 0) ok = 0;
-    if (!write_world_state(record) || fprintf(record, "\n}\n") < 0) ok = 0;
+    if (!write_graphics(record) || !write_world_state(record) || fprintf(record, "\n}\n") < 0) ok = 0;
     if (fclose(record)) ok = 0;
     if (!ok) { remove(stdCapture_request.output); remove(receipt); }
     return ok;

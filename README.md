@@ -27,6 +27,8 @@ The fork currently includes:
   comparisons with bloom/SSAO, and corrected postprocessing shader attributes.
 - [Posed hidden-rendered captures](docs/HIDDEN_RENDERED_CAPTURE.md) with
   world-state receipts and explicit multiplayer character selection.
+- [Explicit Linux SDL offscreen capture](docs/OFFSCREEN_CAPTURE.md), with
+  observed graphics receipts and an asset-free shader/readback regression.
 - [Safe packed-MAT loading](docs/PACKED_MATERIAL_ROWS.md) when display buffers
   have padded rows.
 - [Native MotS host pickup acknowledgment and respawn](docs/MOTS_ITEM_RESPAWN.md),

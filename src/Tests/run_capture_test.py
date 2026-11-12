@@ -30,14 +30,16 @@ def main():
         (stage / ".openjkdf2-capture-session").write_text("synthetic\n")
         request = stage / "request.txt"
         request.write_text("sed-engine-capture-v1\n64 64 0 3 1000\n0 0 0 0 0 0 75\n" + str(stage / "unused.ppm") + "\n")
-        for name in ("capture_request_test", "capture_ui_test", "capture_launch_test", "capture_console_test"):
+        for name in ("capture_request_test", "capture_ui_test", "capture_launch_test", "capture_console_test", "capture_backend_test", "capture_graphics_test", "capture_sdl_test", "capture_gl_loader_test"):
             exe = stage / name
             run([compiler, *flags, "-I", str(ROOT), str(ROOT / "Tests" / (name + ".c")), "-lm", "-o", str(exe)])
             command = [str(exe)]
             if name == "capture_request_test":
                 command.append(str(stage / "pixels.ppm"))
-            if name == "capture_launch_test":
+            if name in ("capture_launch_test", "capture_backend_test", "capture_sdl_test"):
                 command.append(str(request))
+            if name == "capture_graphics_test":
+                command += [str(request), str(stage / "graphics.ppm")]
             result = run(command, cwd=stage)
             logs.append({"test": name, "stdout": result.stdout, "stderr": result.stderr})
         # Restore an unsafe RaiseWindow path: the same wrapper test must fail.
@@ -58,7 +60,19 @@ def main():
         pixels = stage / "pixels.ppm"
         (args.output / "pixels.ppm").write_bytes(pixels.read_bytes())
         (args.output / "pixels.ppm.json").write_bytes((stage / "pixels.ppm.json").read_bytes())
-    sources = ["Main/stdCapture.c", "Main/stdCapture.h", "Main/stdAutostartCharacter.h", "Platform/SDL2/stdCaptureUi.h", "Tests/capture_request_test.c", "Tests/capture_ui_test.c", "Tests/capture_launch_test.c", "Tests/capture_console_test.c", "Tests/run_capture_test.py"]
+        graphics_receipt = json.loads((stage / "graphics.ppm.json").read_text())
+        assert graphics_receipt["graphics"] == {
+            "schemaVersion": 1, "requestedBackend": "sdl-offscreen",
+            "sdlVideoDriver": "offscreen", "sdlVersion": "3.4.12",
+            "glVendor": "Mesa", "glRenderer": 'quoted "GPU" \\ test', "glVersion": "4.5"}
+        (args.output / "graphics.ppm.json").write_bytes((stage / "graphics.ppm.json").read_bytes())
+        # Compile the same parser as a non-Linux target: no Linux backend may
+        # become active, while native and ordinary invocation still work.
+        exe = stage / "capture-backend-nonlinux"
+        run([compiler, *flags, "-U__linux__", "-I", str(ROOT), str(ROOT / "Tests/capture_backend_test.c"), "-lm", "-o", str(exe)])
+        result = run([str(exe), str(request)], cwd=stage)
+        logs.append({"test": "capture_backend_nonlinux", "stdout": result.stdout, "stderr": result.stderr})
+    sources = ["Main/stdCapture.c", "Main/stdCapture.h", "Main/stdAutostartCharacter.h", "Platform/SDL2/stdCaptureUi.h", "Platform/SDL2/stdCaptureGraphics.h", "Platform/SDL2/stdCaptureGlLoader.h", "Tests/capture_request_test.c", "Tests/capture_ui_test.c", "Tests/capture_launch_test.c", "Tests/capture_console_test.c", "Tests/capture_backend_test.c", "Tests/capture_graphics_test.c", "Tests/capture_sdl_test.c", "Tests/capture_gl_loader_test.c", "Tests/run_capture_test.py"]
     receipt = {
         "schemaVersion": 1, "gameLaunched": False, "windowSystemLinked": False,
         "sanitizers": ["address", "undefined"], "testGroupsPassed": len(logs),
