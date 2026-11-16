@@ -196,23 +196,26 @@ const char16_t* jkPlaylist_KindName(int kind)
     }
 }
 
-// The rules a level's episode sets for the whole game when it's hosted
-// (jkGuiNetHost_Show): saber only (MotS, ranked Jedi) and co-op.
-static int jkPlaylist_RulesOf(int type)
-{
-    return ((type & JKM_EPISODE_SABER) ? 2 : 0) | ((type & JK_EPISODE_SINGLEPLAYER) ? 1 : 0);
-}
-
+// Co-op is the game's, set once when it's hosted (jkGuiNetHost_Show): how
+// enemies sync. A saber-only level makes the game a ranked Jedi game, which
+// deathmatch and CTF levels can be too, and saber only goes on and off with
+// the level (jkPlaylist_LevelRules).
 int jkPlaylist_CanMix(int typeA, int typeB)
 {
-    return jkPlaylist_RulesOf(typeA) == jkPlaylist_RulesOf(typeB);
+    return !(typeA & JK_EPISODE_SINGLEPLAYER) == !(typeB & JK_EPISODE_SINGLEPLAYER);
 }
 
 static int jkPlaylist_Kinds(const jkPlaylist* pList)
 {
     int kinds = 0;
     for (int i = 0; i < pList->count && i < JKPLAYLIST_MAX; i++)
-        kinds |= 1 << jkPlaylist_KindOf(pList->entries[i].type);
+    {
+        int type = pList->entries[i].type;
+        kinds |= 1 << jkPlaylist_KindOf(type);
+        // Saber only and CTF: both.
+        if (type & JKM_EPISODE_SABER)
+            kinds |= 1 << JKPLAYLIST_KIND_SABER;
+    }
     return kinds;
 }
 
@@ -222,13 +225,66 @@ int jkPlaylist_IsMixed(const jkPlaylist* pList)
     return (kinds & (1 << JKPLAYLIST_KIND_DM)) && (kinds & (1 << JKPLAYLIST_KIND_CTF));
 }
 
+int jkPlaylist_HasSaber(const jkPlaylist* pList)
+{
+    for (int i = 0; i < pList->count && i < JKPLAYLIST_MAX; i++)
+    {
+        if (pList->entries[i].type & JKM_EPISODE_SABER)
+            return 1;
+    }
+    return 0;
+}
+
+int jkPlaylist_IsSaberMixed(const jkPlaylist* pList)
+{
+    for (int i = 0; i < pList->count && i < JKPLAYLIST_MAX; i++)
+    {
+        if (!(pList->entries[i].type & JKM_EPISODE_SABER))
+            return jkPlaylist_HasSaber(pList);
+    }
+    return 0;
+}
+
 const char16_t* jkPlaylist_ListKindName(const jkPlaylist* pList)
 {
+    static char16_t name[96];
+    static const int order[] = { JKPLAYLIST_KIND_DM, JKPLAYLIST_KIND_CTF, JKPLAYLIST_KIND_SABER, JKPLAYLIST_KIND_COOP };
+    const char16_t* parts[4];
+    int n = 0;
+    int kinds = jkPlaylist_Kinds(pList);
+
     if (pList->count <= 0)
         return u"";
-    if (jkPlaylist_IsMixed(pList))
-        return Main_bMotsCompat ? u"deathmatch and Kill the Fool" : u"deathmatch and Capture the Flag";
-    return jkPlaylist_KindName(jkPlaylist_KindOf(pList->entries[0].type));
+    for (int i = 0; i < 4; i++)
+    {
+        if (kinds & (1 << order[i]))
+            parts[n++] = jkPlaylist_KindName(order[i]);
+    }
+    if (n >= 3)
+        jk_snwprintf(name, 96, u"%s, %s and %s", parts[0], parts[1], parts[2]);
+    else if (n == 2)
+        jk_snwprintf(name, 96, u"%s and %s", parts[0], parts[1]);
+    else
+        jk_snwprintf(name, 96, u"%s", n ? parts[0] : u"");
+    return name;
+}
+
+void jkPlaylist_LevelRules(int type)
+{
+    // Only a ranked Jedi game: a personalities game has no saber-only levels
+    // (the Host screen makes a playlist with any a ranked Jedi game).
+    if (!Main_bMotsCompat || !(sithMulti_multiModeFlags & MULTIMODEFLAG_1000))
+        return;
+    if (type & JKM_EPISODE_SABER)
+    {
+        sithMulti_multiModeFlags |= MULTIMODEFLAG_2000;
+        sithNet_MultiModeFlags |= MULTIMODEFLAG_2000;
+    }
+    else
+    {
+        sithMulti_multiModeFlags &= ~MULTIMODEFLAG_2000;
+        sithNet_MultiModeFlags &= ~MULTIMODEFLAG_2000;
+    }
 }
 
 void jkPlaylist_SetHosting(int bOn, int idx)
