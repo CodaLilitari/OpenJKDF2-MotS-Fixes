@@ -85,3 +85,5 @@ python3 -B src/Tests/test_host_regression_runner.py
 These tests use harmless Python child commands to check failure/timeout
 propagation, partial receipts, setup failures, and the artifact allowlist. They
 do not compile or launch the engine.
+
+The optional [exact floor-query cache](../../docs/FLOOR_MISS_CACHE.md) has a standalone synthetic regression. Run `python3 -B src/Tests/run_floor_miss_cache_test.py` from the source root.

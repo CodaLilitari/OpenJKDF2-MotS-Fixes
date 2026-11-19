@@ -7,6 +7,11 @@
 // If I ever do demo recording, add it here
 #define NEEDS_STEPPED_PHYS (!jkPlayer_bJankyPhysics || sithNet_isMulti)
 
+// Added: optional exact floor-query misses on desktop targets with binary32 geometry.
+#if defined(QOL_IMPROVEMENTS) && !defined(TARGET_RETRO_HOMEBREW) && !defined(EXPERIMENTAL_FIXED_POINT)
+#define SITH_FLOOR_MISS_CACHE
+#endif
+
 // Settings for stepped physics
 #ifdef TARGET_RETRO_HOMEBREW
 #define TARGET_PHYSTICK_FPS (20.0)
