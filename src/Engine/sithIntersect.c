@@ -11,6 +11,91 @@
 #include "Engine/sithCollision.h"
 #include "Primitives/rdMath.h"
 #include "jk.h"
+#ifdef SITH_FLOOR_MISS_CACHE
+#include "sithFloorMissCache.h"
+#include <stdlib.h>
+
+// Added: allocate only for explicitly opted-in worlds. Failed allocation uses stock collision.
+static FloorMissSet *sithIntersect_paFloorMissSets;
+static uint64_t sithIntersect_floorQueryUpdate;
+
+void sithIntersect_CloseFloorMissCache(void)
+{
+    free(sithIntersect_paFloorMissSets);
+    sithIntersect_paFloorMissSets = NULL;
+}
+
+void sithIntersect_OpenFloorMissCache(void)
+{
+    const char *pOption = getenv("OPENJKDF2_FLOOR_MISS_CACHE");
+    sithIntersect_CloseFloorMissCache();
+    if (pOption && strcmp(pOption, "1") == 0)
+        sithIntersect_paFloorMissSets = calloc(SITH_FLOOR_MISS_SETS, sizeof(*sithIntersect_paFloorMissSets));
+}
+
+void sithIntersect_AdvanceFloorMissCache(void)
+{
+    ++sithIntersect_floorQueryUpdate;
+}
+
+static int sithIntersect_IsCacheableFloorQuery(const SithThing *sender, const SithThing *target, int flags,
+                         const rdVector3 *direction, flex_t radius)
+{
+    return sithIntersect_paFloorMissSets && !sender && radius == 0.0f
+        && direction->x == 0.0f && direction->y == 0.0f && direction->z == -1.0f
+        && flags == (RAYCAST_2000 | RAYCAST_800 | RAYCAST_10 | RAYCAST_2)
+        && target->type == SITH_THING_COG && (target->flags & SITH_TF_LEVELGEO)
+        && target->collide == SITH_COLLIDE_FACE && target->controlType == 0
+        && (target->moveType == SITH_MT_NONE || (target->moveType == SITH_MT_PATH &&
+            !target->trackParams.aFrames && !target->trackParams.flags))
+        && target->renderData.type == RD_THING_MODEL3 && target->renderData.model3;
+}
+static int sithIntersect_MakeFloorKey(FloorMissKey *key, const rdVector3 *p, const rdVector3 *d,
+                    flex_t dist, flex_t radius, int flags)
+{
+    _Static_assert(sizeof(flex_t) == 4 && sizeof(rdVector3) == 12, "binary32 collision query");
+    memcpy(&key->ray[0], p, 12);
+    memcpy(&key->ray[3], d, 12);
+    memcpy(&key->ray[6], &dist, 4);
+    memcpy(&key->ray[7], &radius, 4);
+    key->flags = (uint32_t)flags;
+    for (unsigned i = 0; i < 8; ++i)
+    {
+        if ((key->ray[i] & UINT32_C(0x7f800000)) == UINT32_C(0x7f800000))
+            return 0;
+    }
+    return 1;
+}
+
+#endif // SITH_FLOOR_MISS_CACHE
+
+static int sithIntersect_CheckMeshTrackingWrites(rdVector3 *startPos, rdVector3 *moveNorm, flex_t moveDistance, flex_t radius, rdMesh *pMesh, flex_t *hitDist, rdFace **ppHitFace, rdVector3 *hitNorm, int *distanceWritten);
+static int sithIntersect_CheckFaceTrackingWrites(const rdVector3 *startPos, const rdVector3 *moveNorm, flex_t moveDistance, flex_t radius, rdFace *pFace, rdVector3 *aVertices, flex_t *hitDist, rdVector3 *hitNorm, int colflags, int *distanceWritten);
+
+#ifdef SITH_FLOOR_MISS_CACHE
+static int sithIntersect_CheckCachedFloorMesh(rdModel3 *pModel, rdMesh *pMesh, rdVector3 *pStart,
+    rdVector3 *pDirection, flex_t moveDistance, flex_t radius, int flags, flex_t *pHitDistance,
+    rdFace **ppHitFace, rdVector3 *pHitNormal)
+{
+    FloorMissKey key;
+    if (!sithIntersect_MakeFloorKey(&key, pStart, pDirection, moveDistance, radius, flags))
+        return sithIntersect_CheckSphereMeshIntersection(pStart, pDirection, moveDistance, radius,
+                                                        pMesh, pHitDistance, ppHitFace, pHitNormal);
+
+    FloorMissSet *pSet = sithFloorMissCache_GetSet(sithIntersect_paFloorMissSets, pModel, pMesh,
+                                                  sithIntersect_floorQueryUpdate, rdModel3_geometryRevision);
+    if (sithFloorMissCache_Contains(pSet, &key))
+        return 0;
+
+    // A plane hit writes distance even when the polygon misses. Preserve that write.
+    int distanceWritten = 0;
+    int result = sithIntersect_CheckMeshTrackingWrites(pStart, pDirection, moveDistance, radius,
+                                                       pMesh, pHitDistance, ppHitFace, pHitNormal, &distanceWritten);
+    if (!result && !distanceWritten)
+        sithFloorMissCache_Record(pSet, &key);
+    return result;
+}
+#endif
 
 extern int sithCollision_bDebugCollide;
 
@@ -91,7 +176,6 @@ int sithIntersect_CheckSphereThingIntersection(SithThing *pThing, const rdVector
     rdVector3 *v26; // ebp
     rdGeoset *v27; // esi
     int v28; // ebx
-    int v30; // edi
     int v31; // eax
     int bFaceCollision; // [esp+10h] [ebp-4Ch]
     rdVector3 dirVec; // [esp+14h] [ebp-48h] BYREF
@@ -194,18 +278,32 @@ int sithIntersect_CheckSphereThingIntersection(SithThing *pThing, const rdVector
     v26 = hitNorm;
     v27 = v11->renderData.model3->aGeos;
     v28 = 0;
-    v30 = 0;
     //printf("aaaaa %f %f %f\n", dirVec.x, dirVec.y, dirVec.z);
+#ifdef SITH_FLOOR_MISS_CACHE
+    const int eligible = sithIntersect_IsCacheableFloorQuery(pThing, pCheck, colflags, moveNorm, radius);
+#endif
     for (thinga = 0; thinga < v27->numMeshes; thinga++)
     {
-        v31 = sithIntersect_CheckSphereMeshIntersection(&posVec, &dirVec, moveDist, radius, &v27->aMeshes[v30], pHitDistance, ppHitFace, v26);
+
+        rdMesh *mesh = &v27->aMeshes[thinga];
+#ifdef SITH_FLOOR_MISS_CACHE
+        if (eligible)
+        {
+            v31 = sithIntersect_CheckCachedFloorMesh(v11->renderData.model3, mesh, &posVec, &dirVec,
+                                                     moveDist, radius, colflags, pHitDistance, ppHitFace, v26);
+        }
+        else
+#endif
+        {
+            v31 = sithIntersect_CheckSphereMeshIntersection(&posVec, &dirVec, moveDist, radius, mesh,
+                                                             pHitDistance, ppHitFace, v26);
+        }
         if ( v31 )
         {
             v28 = v31;
-            *ppHitMesh = &v27->aMeshes[v30];
+            *ppHitMesh = mesh;
             moveDist = *pHitDistance;
         }
-        ++v30;
     }
     if ( v28 )
     {
@@ -278,6 +376,11 @@ int sithIntersect_TreeIntersection(rdHierarchyNode *paNodes,rdVector3 *pPoseVec,
 // ie, tables and such
 int sithIntersect_CheckSphereMeshIntersection(rdVector3 *startPos, rdVector3 *moveNorm, flex_t moveDistance, flex_t radius, rdMesh *pMesh, flex_t *hitDist, rdFace **ppHitFace, rdVector3 *hitNorm)
 {
+    return sithIntersect_CheckMeshTrackingWrites(startPos, moveNorm, moveDistance, radius, pMesh, hitDist, ppHitFace, hitNorm, NULL);
+}
+
+static int sithIntersect_CheckMeshTrackingWrites(rdVector3 *startPos, rdVector3 *moveNorm, flex_t moveDistance, flex_t radius, rdMesh *pMesh, flex_t *hitDist, rdFace **ppHitFace, rdVector3 *hitNorm, int *distanceWritten)
+{
     int v11; // ecx
     rdFace *v12; // edx
     int v24; // [esp+8h] [ebp-18h]
@@ -291,7 +394,7 @@ int sithIntersect_CheckSphereMeshIntersection(rdVector3 *startPos, rdVector3 *mo
     v25 = 1.0;
     for (v26 = 0; v26 < pMesh->numFaces; v26++)
     {
-        v11 = sithIntersect_CheckSphereFaceIntersectionEx(startPos, moveNorm, moveDistance, radius, &pMesh->faces[v26], pMesh->aVertices, hitDist, &pushVel, 0);
+        v11 = sithIntersect_CheckFaceTrackingWrites(startPos, moveNorm, moveDistance, radius, &pMesh->faces[v26], pMesh->aVertices, hitDist, &pushVel, 0, distanceWritten);
         if ( v11
           && (*hitDist < (flex_d_t)moveDistance
            || v24 != SITHCOLLISION_THINGADJOINCROSS && v11 == SITHCOLLISION_THINGADJOINCROSS
@@ -621,6 +724,11 @@ int sithIntersect_CheckSphereHit(const rdVector3 *startPos, const rdVector3 *mov
 // ChatGPT says: rayPlaneIntersection
 int sithIntersect_CheckSphereFaceIntersectionEx(const rdVector3 *startPos, const rdVector3 *moveNorm, flex_t moveDistance, flex_t radius, rdFace *pFace, rdVector3 *aVertices, flex_t *hitDist, rdVector3 *hitNorm, int colflags)
 {
+    return sithIntersect_CheckFaceTrackingWrites(startPos, moveNorm, moveDistance, radius, pFace, aVertices, hitDist, hitNorm, colflags, NULL);
+}
+
+static int sithIntersect_CheckFaceTrackingWrites(const rdVector3 *startPos, const rdVector3 *moveNorm, flex_t moveDistance, flex_t radius, rdFace *pFace, rdVector3 *aVertices, flex_t *hitDist, rdVector3 *hitNorm, int colflags, int *distanceWritten)
+{
     int result; // eax
     int *v18; // edx
     flex_d_t v21; // st7
@@ -637,6 +745,8 @@ int sithIntersect_CheckSphereFaceIntersectionEx(const rdVector3 *startPos, const
     SITH_ASSERTREL(radius >= 0.0f); // Added: J3D assert
 
     result = sithIntersect_CheckSphereHit(startPos, moveNorm, moveDistance, radius, &pFace->normal, &aVertices[*pFace->vertexPosIdx], hitDist, colflags);
+    if (result && distanceWritten)
+        *distanceWritten = 1;
     if ( result )
     {
         if ( (colflags & RAYCAST_400) != 0 || rdVector_Dot3(moveNorm, &pFace->normal) < 0.0 )

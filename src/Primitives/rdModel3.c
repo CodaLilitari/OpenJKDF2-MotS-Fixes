@@ -1,5 +1,9 @@
 #include "rdModel3.h"
 
+#ifdef SITH_FLOOR_MISS_CACHE
+uint64_t rdModel3_geometryRevision;
+#endif
+
 // Added: on TWL, the big cold model payload arrays (aVertices/UVs/normals/faces/
 // index pools -- word-safe writes only, parsed once) go to the slot-2 extram
 // heap. Not enabled on DC: these are read in per-frame transform loops and DC
@@ -87,6 +91,9 @@ void rdModel3_ClearFrameCounters()
 
 int rdModel3_NewEntry(rdModel3 *pModel3)
 {
+#ifdef SITH_FLOOR_MISS_CACHE
+    ++rdModel3_geometryRevision;
+#endif
     stdPlatform_Memzero32(pModel3, sizeof(rdModel3)); // Added: word-safe (aModels array may be in extram)
     stdString_SafeStrCopy(pModel3->filename, "UNKNOWN", 32);
     pModel3->geosetSelect = 0;
@@ -963,6 +970,9 @@ void rdModel3_Free(rdModel3 *pModel3)
 
 void rdModel3_FreeEntry(rdModel3 *pModel3)
 {
+#ifdef SITH_FLOOR_MISS_CACHE
+    ++rdModel3_geometryRevision;
+#endif
     if (!pModel3)
         return;
 
@@ -1025,6 +1035,9 @@ void rdModel3_FreeEntry(rdModel3 *pModel3)
 
 void rdModel3_FreeEntryGeometryOnly(rdModel3 *pModel3)
 {
+#ifdef SITH_FLOOR_MISS_CACHE
+    ++rdModel3_geometryRevision;
+#endif
     if (!pModel3)
         return;
 
@@ -1226,6 +1239,9 @@ void rdModel3_BuildExpandedRadius(rdModel3 *pModel, rdHierarchyNode *pNode, cons
 // from editors?
 void rdModel3_CalcFaceNormals(rdModel3 *pModel3)
 {
+#ifdef SITH_FLOOR_MISS_CACHE
+    ++rdModel3_geometryRevision;
+#endif
     for (int geosetIdx = 0; geosetIdx < pModel3->numGeos; geosetIdx++)
     {
         rdGeoset* geoset = &pModel3->aGeos[geosetIdx];
@@ -1371,6 +1387,9 @@ int rdModel3_GetMeshMatrix(rdThing *pThing, rdMatrix34 *orient, uint32_t nodeNum
 
 int rdModel3_ReplaceMesh(rdModel3 *pModel, int geosetNum, int meshNum, rdMesh *pSrcMesh)
 {
+#ifdef SITH_FLOOR_MISS_CACHE
+    ++rdModel3_geometryRevision;
+#endif
     _memcpy(&pModel->aGeos[geosetNum].aMeshes[meshNum], pSrcMesh, sizeof(pModel->aGeos[geosetNum].aMeshes[meshNum]));
     return 1;
 }

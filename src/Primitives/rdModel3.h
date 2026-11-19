@@ -40,6 +40,9 @@ extern "C" {
 typedef struct rdThing rdThing;
 typedef struct rdHierarchyNode rdHierarchyNode;
 typedef struct rdMesh rdMesh;
+#ifdef SITH_FLOOR_MISS_CACHE
+extern uint64_t rdModel3_geometryRevision;
+#endif
 typedef struct rdMeshinfo rdMeshinfo;
 
 #ifndef JKM_TYPES

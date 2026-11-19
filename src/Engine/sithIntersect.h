@@ -2,6 +2,11 @@
 #define _SITHINTERSECT_H
 
 #include "types.h"
+#ifdef SITH_FLOOR_MISS_CACHE
+void sithIntersect_OpenFloorMissCache(void);
+void sithIntersect_CloseFloorMissCache(void);
+void sithIntersect_AdvanceFloorMissCache(void);
+#endif
 
 #define sithIntersect_sub_507EA0_ADDR (0x00507EA0)
 #define sithIntersect_IsSphereInSector_ADDR (0x00507F30)
