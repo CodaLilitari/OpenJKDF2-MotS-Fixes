@@ -483,6 +483,128 @@ EM_JS(void, Window_wasmPaceInit, (), {
     pace.ticking = false;
     if (pace.worker) pace.worker.postMessage(0);
   };
+  /* The next screen refresh. A tab hidden while it waits gets no refresh, so that ends the
+     wait too. refreshMs: about how long a refresh takes here, the shortest gap between two
+     refreshes, let rise 2% a refresh so a slower screen is learnt. */
+  pace.refreshMs = 0;
+  pace.lastRefresh = 0;
+  pace.refresh = function() {
+    return new Promise(function(resolve) {
+      var fired = false;
+      function done() {
+        if (fired) return;
+        fired = true;
+        document.removeEventListener('visibilitychange', done);
+        var now = performance.now();
+        if (document.hidden) {
+          pace.lastRefresh = 0;
+        } else {
+          if (pace.lastRefresh) pace.refreshMs = Math.min(now - pace.lastRefresh, pace.refreshMs ? pace.refreshMs * 1.02 : Infinity);
+          pace.lastRefresh = now;
+        }
+        resolve();
+      }
+      document.addEventListener('visibilitychange', done);
+      requestAnimationFrame(done);
+    });
+  };
+  /* The graphics card's queue with Vsync on (Window_wasmEndFrame). queueCap false turns it
+     off, for tests; queueWaits, queueStalls and queueSlow (long waits on a busy card)
+     count, for tests too. */
+  pace.queueCap = true;
+  pace.queueWaits = 0;
+  pace.queueStalls = 0;
+  pace.queueSlow = 0;
+  pace.queueOffUntil = 0;
+  pace.queueBackoff = 1000;
+  pace.queueGood = 0;
+  /* Outside Chromium-based browsers (no navigator.userAgentData) the waits must first show
+     here that they cost no frames: in Firefox 160 on a test PC they cost about 19% of frames
+     with a card just too slow (191 to 154 fps), while Chrome lost none. While the card is
+     behind, a check runs 6 pairs of 0.6 s windows with the waits off in one and on in the
+     other, the order swapped every pair and the first 0.15 s of each not counted (the queue
+     filling or draining). The waits stay on only if the median of the pairs' frame rate
+     ratios (on / off) is at least 0.98 (2% is about what the check can tell apart), and
+     are checked again after a minute; waits turned
+     off are tried again after 30 s, then 1, 2, 4 and 8 minutes, then every 10. The check
+     starts with them off. selfCheck false skips it (Chromium); checksRun, checksOff,
+     checkRatio and check.on are for tests, and resetCheck() starts it over. */
+  pace.selfCheck = !navigator.userAgentData;
+  pace.checksRun = 0;
+  pace.checksOff = 0;
+  pace.checkRatio = 0;
+  pace.resetCheck = function() {
+    pace.check = { on: false, until: 0, offMs: 30000, slot: -1, slotStart: 0, frames: 0, firstAt: 0, rates: [],
+                   windowStart: 0, seen: 0, behind: 0, last: 0 };
+  };
+  pace.resetCheck();
+  /* Whether the waits may run in the frame ending now (Window_wasmEndFrame, once a frame with
+     Vsync on); behind: the card hasn't drawn the frame before this one. */
+  pace.capAllowed = function(now, behind) {
+    if (!pace.selfCheck) return true;
+    var c = pace.check, SLOTS = 12, WINDOW = 600, SETTLE = 150;
+    if (c.slot >= 0) {
+      /* A gap (a hidden tab, loading, a long task) spoils the windows: try again in 5 s. */
+      if (now - c.last > 250) { c.slot = -1; c.until = now + 5000; c.windowStart = now; c.seen = 0; c.behind = 0; c.last = now; return c.on; }
+      c.last = now;
+      if (now - c.slotStart >= WINDOW) {
+        /* Frames per ms from the first counted frame to this one, so where a window's edge
+           falls between two frames doesn't count. */
+        c.rates[c.slot] = c.frames && now > c.firstAt ? c.frames / (now - c.firstAt) : 0;
+        c.slot++;
+        c.slotStart = now;
+        c.frames = 0;
+        if (c.slot === SLOTS) {
+          var ratios = [];
+          for (var p = 0; p < SLOTS / 2; p++) {
+            var first = c.rates[2 * p], second = c.rates[2 * p + 1];
+            var on = (p & 1) ? first : second, off = (p & 1) ? second : first;
+            ratios.push(off > 0 ? on / off : 1);
+          }
+          ratios.sort(function(x, y) { return x - y; });
+          var ratio = (ratios[2] + ratios[3]) / 2;
+          pace.checksRun++;
+          pace.checkRatio = ratio;
+          c.slot = -1;
+          c.windowStart = now;
+          c.seen = 0;
+          c.behind = 0;
+          if (ratio >= 0.98) {
+            c.on = true;
+            c.until = now + 60000;
+            c.offMs = 30000;
+          } else {
+            c.on = false;
+            pace.checksOff++;
+            c.until = now + c.offMs;
+            c.offMs = Math.min(c.offMs * 2, 600000);
+          }
+          return c.on;
+        }
+      } else if (now - c.slotStart >= SETTLE) {
+        if (c.frames++ === 0) c.firstAt = now;
+      }
+      /* Pair p = slot >> 1: off then on when p is even, on then off when it's odd. */
+      return ((c.slot & 1) ^ ((c.slot >> 1) & 1)) === 1;
+    }
+    c.last = now;
+    c.seen++;
+    if (behind) c.behind++;
+    if (now - c.windowStart >= 1000) {
+      var share = c.seen ? c.behind / c.seen : 0;
+      c.windowStart = now;
+      c.seen = 0;
+      c.behind = 0;
+      if (now >= c.until && share >= 0.2) {
+        c.slot = 0;
+        c.slotStart = now;
+        c.frames = 0;
+        c.firstAt = 0;
+        c.rates = [];
+      }
+    }
+    return c.on;
+  };
 });
 
 // Added: how a frame ends in the browser. SDL's swap ended it with emscripten_sleep(0), a
@@ -491,7 +613,18 @@ EM_JS(void, Window_wasmPaceInit, (), {
 // slow card let the game queue frames until the browser stopped everything for seconds to
 // catch up.
 // With Vsync on (the default), a frame waits for the next screen refresh, and the next
-// frame is drawn in it. With Vsync off, it yields through a MessageChannel, which has no
+// frame is drawn in it. When the card is slower than the screen, the browser let the
+// game queue three frames on it (Chrome on Windows, measured), and the mouse's movement
+// waited behind them, most likely why a player with a 480 Hz screen found the game
+// sluggish until the screen ran at 144 Hz. So the next frame also waits while the card
+// hasn't drawn the frame before this one, a refresh at a time and at most 8, which keeps
+// two frames on the card: the same frame rate, and on a test PC 40-55% less time from the
+// mouse to a drawn frame. A card that keeps up never waits. Where a refresh the game
+// skips stalls while the card sits idle (Chrome with its frame limit off, about 17 ms),
+// the waits stop for a second, then two, and so on. A long wait while the card is still
+// busy is the browser holding back for it, and doesn't count. Outside Chromium the waits
+// also have to show they cost no frames first (pace.capAllowed): in Firefox they could.
+// With Vsync off, a frame yields through a MessageChannel, which has no
 // clamp, while the card has finished the frame before this one and for at most two frames
 // in a refresh; otherwise it waits for the refresh. A hidden tab gets no refreshes, so there
 // it waits for the worker above (in a match) or a timer, so a host's game keeps running,
@@ -515,11 +648,9 @@ EM_ASYNC_JS(void, Window_wasmEndFrame, (int bVsync, int bInGame, int bInMatch), 
     try { return gl.isContextLost() || gl.getSyncParameter(fence, gl.SYNC_STATUS) === gl.SIGNALED; } catch (e) { return true; }
   }
   try {
-    if (wasHidden || !bVsync) {
-      pace.fences.push(gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0));
-      gl.flush();
-    }
-    while (pace.fences.length > (wasHidden || !bVsync ? 2 : 0)) gl.deleteSync(pace.fences.shift());
+    pace.fences.push(gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0));
+    gl.flush();
+    while (pace.fences.length > 2) gl.deleteSync(pace.fences.shift());
   } catch (e) {
     pace.fences = [];
   }
@@ -532,13 +663,32 @@ EM_ASYNC_JS(void, Window_wasmEndFrame, (int bVsync, int bInGame, int bInMatch), 
     } while (last && document.hidden && performance.now() - started < 1000 && !drawn(last));
   } else if (bVsync || pace.sinceRefresh >= 2 || (before && !drawn(before))) {
     pace.stopTicker();
-    /* A tab hidden while it waits gets no refresh, so that ends the wait too. */
-    await new Promise(function(resolve) {
-      function done() { document.removeEventListener('visibilitychange', done); resolve(); }
-      document.addEventListener('visibilitychange', done);
-      requestAnimationFrame(done);
-    });
+    await pace.refresh();
     pace.sinceRefresh = 0;
+    /* Vsync on: on while the card hasn't drawn the frame before this one (above), where
+       it costs no frames (pace.capAllowed). */
+    if (bVsync && pace.queueCap && before && performance.now() >= pace.queueOffUntil &&
+        pace.capAllowed(performance.now(), !drawn(before))) {
+      for (var waits = 0; waits < 8 && !document.hidden && !drawn(before); waits++) {
+        var asked = performance.now();
+        await pace.refresh();
+        pace.queueWaits++;
+        /* A long wait is the browser's own holding back while the card is busy, as with a
+           very slow card, unless the card has drawn this frame too: then it sat idle and the
+           wait cost frames. */
+        var tookLong = pace.refreshMs && performance.now() - asked > 3 * pace.refreshMs + 2;
+        if (tookLong && !drawn(last)) pace.queueSlow++;
+        if (tookLong && drawn(last)) {
+          pace.queueStalls++;
+          pace.queueGood = 0;
+          pace.queueOffUntil = performance.now() + pace.queueBackoff;
+          pace.queueBackoff = Math.min(pace.queueBackoff * 2, 600000);
+          break;
+        }
+        /* A rare stall (a long task in the page) shouldn't add up over a long session. */
+        if (++pace.queueGood >= 2000) { pace.queueGood = 0; pace.queueBackoff = 1000; }
+      }
+    }
   } else {
     pace.stopTicker();
     if (!pace.refreshAsked) {
@@ -573,11 +723,7 @@ EM_ASYNC_JS(void, Window_wasmWaitForTick, (double msLeft, int bRefresh, int bInM
   if (document.hidden && bInMatch) {
     await pace.hiddenWait(1);
   } else if (bRefresh && !document.hidden) {
-    await new Promise(function(resolve) {
-      function done() { document.removeEventListener('visibilitychange', done); resolve(); }
-      document.addEventListener('visibilitychange', done);
-      requestAnimationFrame(done);
-    });
+    await pace.refresh();
   } else {
     await new Promise(function(resolve) { setTimeout(resolve, Math.max(0, Math.ceil(msLeft))); });
   }
