@@ -22,3 +22,23 @@ The test also compiles with MinGW-w64 and runs as a Windows console executable. 
 ## Runtime validation boundary
 
 The unchanged Castle Conflict conversion passed a 30-second MotS multiplayer host smoke using an isolated candidate runtime. The test observed the expected episode/world, a local player, advancing simulation and no resource diagnostics. Original and staged archives stayed unchanged. Separate 15-second native MotS MP and SP baseline smokes also passed with the expected worlds, advancing simulation, no resource diagnostics and unchanged archives. This establishes the loading correction; it does not certify rendered appearance, complete map gameplay, second-client synchronization or retail parity.
+
+## Extended on-disk mip chains
+
+The MAT texture header describes the on-disk chain, independently of the four
+resident mip slots in `rdTexture`. A complete chain is accepted through 1 by 1;
+each disk axis is halved with a floor of one. Counts extending past that final
+level, zero dimensions, dimensions exceeding INT32_MAX, truncated headers and
+truncated payloads remain errors.
+
+The renderer still receives at most four levels. Resident dimensions retain the
+legacy rule that neither shifted axis may become zero, so a 256 by 1 chain has
+one resident level and a 256 by 256 chain has four. The remaining packed data is
+consumed with bounded exact reads, without allocating texture surfaces, before
+the next texture/cel header or trailing palette is read. This does not change
+`rdTexture`, renderer mip selection, or the original game's retail limitations.
+
+The asset-free regression also checks two sequential full chains followed by a
+palette sentinel, 8/16-bit pixels, square and rectangular dimensions, one-wide
+chains, short reads, truncated discarded levels, fixed-capacity resident counts,
+and invalid overlong chains. Run the same sanitizer command above.
