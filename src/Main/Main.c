@@ -73,6 +73,10 @@
 
 #include "Platform/Common/stdHttp.h"
 #include "Platform/Common/stdUpdater.h"
+#ifdef PLATFORM_WSRELAY
+#include "Platform/Networking/WSRelay/stdComm_WSRelay.h"
+#include "Win95/stdComm.h"
+#endif
 
 #if defined(PLATFORM_POSIX)
 #include <locale.h>
@@ -270,6 +274,93 @@ int Main_StartupDedicated(int bFullyDedicated)
     return 0;
 }
 #endif // QOL_IMPROVEMENTS
+
+#if defined(QOL_IMPROVEMENTS) && defined(PLATFORM_WSRELAY)
+// Added: watching a match in the game (spectator mode): straight into the
+// level of the room's feed, the page's Module.jkWatchRoom, as a joiner goes
+// into its host's (jkGuiMultiplayer_Show), as a player with no body who
+// sends nothing (stdComm_WSRelay.c). 0 if it can't be watched: the page has
+// said why, and the game starts as it always does.
+// Added: the first player of the game files (player/<name>/<name>.plr), for a
+// viewer whose browser never picked one: jkGui_Startup writes "" for the
+// registry's playerShortName then. "" if there's none.
+static void Main_ViewerFirstPlayer(char* pOut, int outSize)
+{
+    stdFileSearchResult searchRes;
+    char fname[128];
+    pOut[0] = 0;
+    stdFileSearch* pFind = stdFileUtil_NewFind("player", 2, 0);
+    if (!pFind)
+        return;
+    while (stdFileUtil_FindNext(pFind, &searchRes))
+    {
+        if (!searchRes.is_subdirectory || searchRes.fpath[0] == '.' || strlen(searchRes.fpath) > 31)
+            continue;
+        stdString_snprintf(fname, sizeof(fname), "player%c%s%c%s.plr", LEC_PATH_SEPARATOR_CHR, searchRes.fpath,
+                           LEC_PATH_SEPARATOR_CHR, searchRes.fpath);
+        if (util_FileExistsLowLevel(fname))
+        {
+            stdString_SafeStrCopy(pOut, searchRes.fpath, outSize);
+            break;
+        }
+    }
+    stdFileUtil_DisposeFind(pFind);
+}
+
+static int Main_StartupViewer()
+{
+    char aTmpPlayerShortName[32];
+    char aEpisode[32];
+    char aMap[32];
+    int modeFlags = 0;
+
+    jkSmack_stopTick = 1;
+    jkSmack_nextGuiState = JK_GAMEMODE_TITLE;
+    Window_SetDrawHandlers(stdDisplay_DrawAndFlipGdi, stdDisplay_SetCooperativeLevel);
+
+    // The player last played as, as Main_StartupDedicated takes it: the name
+    // a spectator's messages go to the players under.
+    wuRegistry_GetStr("playerShortName", aTmpPlayerShortName, 32, "Viewer");
+    if (!aTmpPlayerShortName[0])
+        Main_ViewerFirstPlayer(aTmpPlayerShortName, sizeof(aTmpPlayerShortName));
+    stdString_CharToWchar(jkPlayer_playerShortName, aTmpPlayerShortName, 31);
+    jkPlayer_playerShortName[31] = 0;
+    jkPlayer_CreateConf(jkPlayer_playerShortName);
+    jkGuiNetHost_bIsDedicated = 0;
+
+    // A character, which nobody sees.
+    stdString_SafeWStrCopy(jkGuiMultiplayer_mpcInfo.name, u"", 32);
+    stdString_SafeStrCopy(jkGuiMultiplayer_mpcInfo.model, "ky.3do", 32);
+    stdString_SafeStrCopy(jkGuiMultiplayer_mpcInfo.soundClass, "ky.snd", 32);
+    stdString_SafeStrCopy(jkGuiMultiplayer_mpcInfo.sideMat, "sabergreen1.mat", 32);
+    stdString_SafeStrCopy(jkGuiMultiplayer_mpcInfo.tipMat, "sabergreen0.mat", 32);
+    jkGuiMultiplayer_mpcInfo.jediRank = 0;
+
+    int opened = stdComm_WSRelay_ViewerOpen(aEpisode, sizeof(aEpisode), aMap, sizeof(aMap), &modeFlags);
+    // Onto the match's mod first: the main loop exits at once (g_should_exit)
+    // and main() starts the engine again with it, watching the same room.
+    if (opened == STDCOMM_WSRELAY_VIEW_RESTART)
+        return 1;
+    if (!opened)
+        return 0;
+
+    // As the join screen does with the game picked (jkGuiMultiplayer_Show),
+    // the mode as the host's level runs it.
+    sithMulti_multiModeFlags = modeFlags;
+    sithMulti_InitTick(TICKRATE_DEFAULT);
+
+    std3D_StartScene();
+    std3D_EndScene();
+    sithOpenStatic("static.jkl");
+    jkHudInv_InitItems();
+
+    if (jkMain_loadFile2(aEpisode, aMap))
+        return 1;
+    stdComm_WSRelay_ViewerNoLevel(aEpisode);
+    stdComm_Close();
+    return 0;
+}
+#endif
 
 int Main_Startup(const char *cmdline)
 {
@@ -482,6 +573,11 @@ int Main_Startup(const char *cmdline)
                     return 1;
                 }
             }
+#if defined(PLATFORM_WSRELAY)
+            // Added: watching a match in the game
+            if (stdComm_WSRelay_bViewer && Main_StartupViewer())
+                return 1;
+#endif
 #endif
             if (!Main_bMotsCompat) {
                 jkSmack_SmackPlay("01-02a.smk");

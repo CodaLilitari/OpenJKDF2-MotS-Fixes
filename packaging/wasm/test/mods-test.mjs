@@ -20,7 +20,7 @@ const STATE_BUSY = 0, STATE_READY = 1, STATE_FAILED = 2, STATE_RESTART = 3;
 
 // A tab as the page starts it: picked files written, then the engine's
 // preRun steps, which mods.js uses to work out the running mod.
-async function makeTab({ files, args = [], folders = [], idb = makeIDB(), cwd = '/jk1' }) {
+async function makeTab({ files, args = [], folders = [], idb = makeIDB(), cwd = '/jk1', watchPack }) {
     const tab = {
         FS: makeFS(files, cwd),
         arguments: args,
@@ -31,6 +31,9 @@ async function makeTab({ files, args = [], folders = [], idb = makeIDB(), cwd = 
         addRunDependency(d) { this.deps.add(d); },
         removeRunDependency(d) { this.deps.delete(d); },
     };
+    // The page's say, watching a match, on whether it runs the pack.
+    if (watchPack !== undefined)
+        tab.jkWatchPack = watchPack;
     new Function('Module', 'indexedDB', mapsSource)(tab, idb);
     new Function('Module', 'indexedDB', modsSource)(tab, idb);
     for (const step of tab.preRun)
@@ -603,11 +606,11 @@ const PACK_AT = '/mots/mods/JKMRemasteredAssets.goo';
 const PACK_OFF = '/mots/jkpack-off/JKMRemasteredAssets.goo';
 const packFp = bytes => sha(bytes).slice(0, 32);
 
-function motsTab({ pack = null, at = PACK_AT, extra = {}, args = [], folders = [] } = {}) {
+function motsTab({ pack = null, at = PACK_AT, extra = {}, args = [], folders = [], watchPack } = {}) {
     const files = { ...motsRetail, ...extra };
     if (pack)
         files[at] = pack;
-    return makeTab({ files, cwd: '/mots', args: ['-motsCompat', ...args], folders });
+    return makeTab({ files, cwd: '/mots', args: ['-motsCompat', ...args], folders, watchPack });
 }
 
 // The reason a job gave up, from the line maps.js logs for it.
@@ -634,6 +637,19 @@ test('a MotS player\'s Remastered pack is fingerprinted before the engine starts
     assert.equal(inRes.jkMods.lib.parseTail(tailOf(inRes)).pack, packFp(remaster));
     // Jedi Knight has no such pack.
     assert.equal(tailOf(await makeTab({ files: { ...retailInstall, '/jk1/mods/JKMRemasteredAssets.goo': remaster } })), '');
+});
+
+test('a game watching a match played without the Remastered pack starts without its own; one with it, with it', async () => {
+    const off = await motsTab({ pack: remaster, watchPack: false });
+    assert.equal(tailOf(off), '', 'so its lobby tail is the match\'s');
+    assert.equal(off.FS.files.get(PACK_AT), undefined, 'out of where the engine loads it from');
+    assert.deepEqual(off.FS.files.get(PACK_OFF), new Uint8Array(remaster));
+    assert.equal(off.jkWatchPack, undefined, 'taken once');
+    const on = await motsTab({ pack: remaster, watchPack: true });
+    assert.equal(on.jkMods.lib.parseTail(tailOf(on)).pack, packFp(remaster));
+    assert.deepEqual(on.FS.files.get(PACK_AT), new Uint8Array(remaster));
+    // Nothing to leave out.
+    assert.equal(tailOf(await motsTab({ watchPack: false })), '');
 });
 
 test('a joiner without the host\'s Remastered pack is told to add it, and nothing is sent', async () => {
@@ -718,6 +734,281 @@ test('the Remastered pack goes with the host\'s mod, both ways', async () => {
     assert.equal(join.jkMods.restart(), '');
     assert.ok(join.FS.files.has(PACK_AT));
     assert.equal(tailOf(join), tailOf(packHost));
+});
+
+// ---- Watching a match (viewFetch): the host's mod without asking the host.
+
+const sbxPack = () => makeTab({ files: { ...install('m', sbxFiles) } }).then(t => t.jkMods.lib.pack('/jk1/m').bytes);
+
+test('a game watching a match played with a mod it has under another name restarts into it, asking nobody', async () => {
+    const host = await sbxHost();
+    const watcher = await makeTab({
+        files: { ...retailInstall, ...install('jkmods/0-Sabers', sbxFiles) },
+        folders: [{ name: 'Sabers', path: 'jkmods/0-Sabers' }],
+    });
+    watcher.jkMods.viewFetch(tailOf(host), '', () => {});
+    assert.equal(await waitMod(watcher), STATE_RESTART);
+    assert.equal(watcher.jkMods.restart(), 'jkmods/0-Sabers');
+    assert.equal(watcher.jkMods.current().fp, host.jkMods.current().fp);
+    assert.equal(watcher.jkNet, undefined, 'nothing to send through');
+    // Already on it: nothing to do.
+    watcher.jkMods.viewFetch(tailOf(host), '', () => {});
+    assert.equal(await waitMod(watcher), STATE_READY);
+    // A match played without a mod: it restarts without its own.
+    watcher.jkMods.viewFetch('', '', () => {});
+    assert.equal(await waitMod(watcher), STATE_RESTART);
+    assert.equal(watcher.jkMods.restart(), '');
+    assert.equal(watcher.jkMods.current(), null);
+});
+
+test('a game watching gets the host\'s mod from the Mod Library when the keyframe names it, and only the host\'s version', async () => {
+    const host = await sbxHost();
+    const fp = host.jkMods.current().fp;
+    const bytes = await sbxPack();
+    assert.equal(sha(bytes), fp);
+    const asked = [], progress = [];
+    const watcher = await makeTab({ files: { ...retailInstall } });
+    watcher.jkModLibrary = {
+        viewGet: async (game, id, onProgress, signal) => {
+            asked.push([game, id, signal instanceof AbortSignal]);
+            onProgress(5, 10);
+            return { fp, bytes };
+        },
+    };
+    watcher.jkMods.viewFetch(tailOf(host), '634', (d, t) => progress.push([d, t]));
+    assert.equal(await waitMod(watcher), STATE_RESTART);
+    assert.deepEqual(asked, [['jk1', '634', true]]);
+    assert.deepEqual(progress, [[5, 10]]);
+    const path = watcher.jkMods.restart();
+    assert.equal(path, 'netmods/' + fp.slice(0, 16));
+    assert.deepEqual(filesUnder(watcher, '/jk1/' + path)['cog/sabers.cog'], Buffer.from(sabers));
+
+    // The library's copy is another version, it can't be got, or it's gone.
+    async function why(viewGet) {
+        const w = await makeTab({ files: { ...retailInstall } });
+        w.jkModLibrary = { viewGet };
+        const log = console.log;
+        console.log = () => {};
+        try {
+            w.jkMods.viewFetch(tailOf(host), '634', () => {});
+            assert.equal(await waitMod(w), STATE_FAILED);
+        } finally {
+            console.log = log;
+        }
+        return w.jkMods.viewError();
+    }
+    assert.match(await why(async () => ({ fp: 'ab'.repeat(32), bytes })), /Mod Library's copy of SBX isn't the version this match is played with/);
+    assert.match(await why(async () => { throw new Error('offline'); }), /Mod Library couldn't be reached to get SBX/);
+    assert.match(await why(async () => null), /played with SBX, which your game doesn't have and the Mod Library doesn't either/);
+});
+
+test('a game watching a match played with a mod it can\'t get says how to get it, and nothing changes', async () => {
+    const host = await sbxHost();
+    const watcher = await makeTab({ files: { ...retailInstall } });
+    const log = console.log;
+    console.log = () => {};
+    try {
+        watcher.jkMods.viewFetch(tailOf(host), '', () => {});
+        assert.equal(await waitMod(watcher), STATE_FAILED);
+    } finally {
+        console.log = log;
+    }
+    assert.match(watcher.jkMods.viewError(), /put the same mod in your game folder, or join a match played with it once/);
+    assert.equal(watcher.jkMods.restart(), '', 'no restart was set up');
+    assert.equal(watcher.jkMods.current(), null);
+    // A tail it can't read.
+    const odd = await makeTab({ files: { ...retailInstall } });
+    console.log = () => {};
+    try {
+        odd.jkMods.viewFetch('4a4b4d44ff', '', () => {});
+        assert.equal(await waitMod(odd), STATE_FAILED);
+    } finally {
+        console.log = log;
+    }
+    assert.match(odd.jkMods.viewError(), /can't read/);
+});
+
+test('a game watching restarts with or without the Remastered pack as the match is played, with the mod', async () => {
+    const packHost = await motsTab({ pack: remaster });
+    const off = await motsTab({ pack: remaster, watchPack: false });
+    off.jkMods.viewFetch(tailOf(packHost), '', () => {});
+    assert.equal(await waitMod(off), STATE_RESTART);
+    assert.equal(off.jkMods.restart(), '');
+    assert.ok(off.FS.files.has(PACK_AT));
+    assert.equal(tailOf(off), tailOf(packHost));
+    const none = await motsTab();
+    const log = console.log;
+    console.log = () => {};
+    try {
+        none.jkMods.viewFetch(tailOf(packHost), '', () => {});
+        assert.equal(await waitMod(none), STATE_FAILED);
+    } finally {
+        console.log = log;
+    }
+    assert.match(none.jkMods.viewError(), /Remastered pack, which your game folder doesn't have/);
+});
+
+// The match's feed (jkdf2mp-bb-server's src/feed.js) as the host's game
+// and a game watching reach it over https: parts kept by key, put with the
+// host's token, and a game watching asking the host's game for its mod.
+function makeFeed(host, { refuse = 0 } = {}) {
+    const feed = { parts: new Map(), asks: [], puts: [], gets: 0, url: 'https://lobby.test/feed/7', token: 'ab'.repeat(16) };
+    feed.fetch = async (url, opts = {}) => {
+        const m = /^https:[/][/]lobby[.]test[/]feed[/]7[/]mod[/]([0-9a-f]{64})[/](info|[0-9]+)([?]up=([0-9a-f]+))?$/.exec(url);
+        if (!m)
+            return { ok: false, status: 404 };
+        const key = m[1] + '/' + m[2];
+        if ((opts.method || 'GET') === 'PUT') {
+            feed.puts.push(m[2]);
+            if (refuse)
+                return { ok: false, status: refuse };
+            if (m[4] !== feed.token)
+                return { ok: false, status: 403 };
+            feed.parts.set(key, new Uint8Array(opts.body));
+            return { ok: true, status: 200 };
+        }
+        feed.gets++;
+        const b = feed.parts.get(key);
+        return b ? { ok: true, status: 200, arrayBuffer: async () => b.slice().buffer } : { ok: false, status: 404 };
+    };
+    feed.src = {
+        url: feed.url,
+        ask: fp => {
+            feed.asks.push(fp);
+            if (host)
+                feed.up = host.jkMods.feedUp(feed.url + '?up=' + feed.token, fp, () => !feed.gone);
+        }
+    };
+    return feed;
+}
+
+async function withFetch(fetch, fn) {
+    const real = globalThis.fetch, log = console.log;
+    globalThis.fetch = fetch;
+    console.log = (...a) => { if (process.env.VERBOSE) log(...a); };
+    try {
+        return await fn();
+    } finally {
+        globalThis.fetch = real;
+        console.log = log;
+    }
+}
+
+test('a game watching gets a mod only the host has from the host\'s game, by way of the feed, without original game files', async () => {
+    const host = await sbxHost();
+    host.jkMods.host();
+    await settle();
+    const fp = host.jkMods.current().fp;
+    const feed = makeFeed(host);
+    const watcher = await makeTab({ files: { ...retailInstall } });
+    const progress = [];
+    await withFetch(feed.fetch, async () => {
+        watcher.jkMods.viewFetch(tailOf(host), '', (d, t, from) => progress.push([d, t, from]), feed.src);
+        assert.equal(await waitMod(watcher, 30000), STATE_RESTART);
+    });
+    assert.deepEqual(feed.asks, [fp], 'asked once');
+    assert.equal(feed.up, true);
+    const path = watcher.jkMods.restart();
+    assert.equal(path, 'netmods/' + fp.slice(0, 16));
+    const got = filesUnder(watcher, '/jk1/' + path);
+    assert.deepEqual(Object.keys(got).sort(), sbxWanted);
+    for (const rel of sbxWanted)
+        assert.deepEqual(got[rel], Buffer.from(sbxFiles[rel]), rel);
+    // What went up: the info, then its blocks, none with original game files.
+    const info = JSON.parse(new TextDecoder().decode(feed.parts.get(fp + '/info')));
+    assert.equal(info.status, 'ok');
+    assert.equal(info.sha256, fp);
+    assert.equal(info.parts, Math.ceil(info.streamSize / (1024 * 1024)));
+    assert.deepEqual(feed.puts, ['info', ...Array.from({ length: info.parts }, (_, i) => String(i))]);
+    for (const [key, b] of feed.parts)
+        assert.ok(!contains(b, retailA) && !contains(b, retailB) && !contains(b, retailEp), 'original game file bytes in ' + key);
+    assert.deepEqual(progress[0], [0, 0, 'host'], 'asking the host first');
+    assert.deepEqual(progress.at(-1), [info.streamSize, info.streamSize, 'host']);
+    // Saved here for next time, like a mod from a joined game.
+    const again = await makeTab({ files: { ...retailInstall }, idb: watcher.idb });
+    await withFetch(async () => assert.fail('fetched'), async () => {
+        again.jkMods.viewFetch(tailOf(host), '', () => {}, feed.src);
+        assert.equal(await waitMod(again), STATE_RESTART);
+    });
+    // Another game watching finds it on the feed, and asks nobody.
+    const other = await makeTab({ files: { ...retailInstall } });
+    await withFetch(feed.fetch, async () => {
+        other.jkMods.viewFetch(tailOf(host), '', () => {}, feed.src);
+        assert.equal(await waitMod(other, 30000), STATE_RESTART);
+    });
+    assert.deepEqual(feed.asks, [fp]);
+    // The host's game sends it once for that feed, and not another mod.
+    assert.equal(host.jkMods.feedUp(feed.url + '?up=' + feed.token, fp, () => true), false);
+    assert.equal(host.jkMods.feedUp(feed.url + '?up=' + feed.token, 'cd'.repeat(32), () => true), false);
+});
+
+test('a game watching falls back on the host\'s game when the Mod Library can\'t give it the mod', async () => {
+    const host = await sbxHost();
+    host.jkMods.host();
+    await settle();
+    const feed = makeFeed(host);
+    const watcher = await makeTab({ files: { ...retailInstall } });
+    watcher.jkModLibrary = { viewGet: async () => { throw new Error('offline'); } };
+    const from = new Set();
+    await withFetch(feed.fetch, async () => {
+        watcher.jkMods.viewFetch(tailOf(host), '634', (d, t, f) => from.add(f), feed.src);
+        assert.equal(await waitMod(watcher, 30000), STATE_RESTART);
+    });
+    assert.deepEqual([...from], ['host']);
+    assert.equal(watcher.jkMods.restart(), 'netmods/' + host.jkMods.current().fp.slice(0, 16));
+});
+
+test('a host\'s game that can\'t send its mod says why, and a feed that won\'t take it stops it', async () => {
+    // Its mod files changed after it started: the feed is told, and the game
+    // watching says so.
+    const host = await sbxHost();
+    const fp = host.jkMods.current().fp;
+    host.FS.files.set('/jk1/jkmods/0-SBX/cog/sabers.cog', randomBytes(100));
+    host.jkMods.host();
+    await settle(200);
+    const feed = makeFeed(host);
+    const watcher = await makeTab({ files: { ...retailInstall } });
+    await withFetch(feed.fetch, async () => {
+        watcher.jkMods.viewFetch(tailOf(host), '', () => {}, feed.src);
+        assert.equal(await waitMod(watcher, 30000), STATE_FAILED);
+    });
+    assert.deepEqual(JSON.parse(new TextDecoder().decode(feed.parts.get(fp + '/info'))).status, 'changed');
+    assert.match(watcher.jkMods.viewError(), /The host's mod files changed after their game started/);
+    assert.equal(watcher.jkMods.restart(), '');
+    // A feed that refuses (it ended, or isn't this game's): one try, then no more.
+    const host2 = await sbxHost();
+    host2.jkMods.host();
+    await settle();
+    const refusing = makeFeed(host2, { refuse: 403 });
+    await withFetch(refusing.fetch, async () => {
+        assert.equal(host2.jkMods.feedUp(refusing.url + '?up=' + refusing.token, fp, () => true), true);
+        await settle(300);
+    });
+    assert.deepEqual(refusing.puts, ['info']);
+    // No mod, or no token in the address: nothing.
+    const plain = await makeTab({ files: { ...retailInstall } });
+    assert.equal(plain.jkMods.feedUp(feed.url + '?up=' + feed.token, fp, () => true), false);
+    assert.equal(host2.jkMods.feedUp(feed.url, fp, () => true), false);
+});
+
+test('a host whose mod the Mod Library saved names the library\'s id for it (libId)', async () => {
+    const idb = makeIDB();
+    const bytes = await sbxPack();
+    const fp = sha(bytes);
+    const saver = await makeTab({ files: { ...retailInstall }, idb });
+    await saver.jkMods.library.save('jk1', 'SBX', 'gob', fp, bytes, { lib: 634, title: 'SBX' });
+    const host = await makeTab({ files: { ...retailInstall }, idb, args: ['-path', 'netmods/' + fp.slice(0, 16)] });
+    await settle();
+    assert.equal(host.jkMods.current().fp, fp);
+    assert.equal(host.jkMods.libId(), '634');
+    // Its own folder with the same files: the same mod, so the same id.
+    const own = await makeTab({ files: { ...retailInstall, ...install('jkmods/0-SBX', sbxFiles) }, idb,
+                                args: ['-path', 'jkmods/0-SBX'], folders: [{ name: 'SBX', path: 'jkmods/0-SBX' }] });
+    await settle();
+    assert.equal(own.jkMods.libId(), '634');
+    // None the library saved, or no mod.
+    assert.equal((await sbxHost()).jkMods.libId(), '');
+    assert.equal((await makeTab({ files: { ...retailInstall } })).jkMods.libId(), '');
 });
 
 let failed = 0;

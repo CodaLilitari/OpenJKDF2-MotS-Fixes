@@ -41,6 +41,42 @@ extern "C" {
 void stdComm_WSRelay_Startup();
 void stdComm_WSRelay_Shutdown();
 
+// A message sent to everyone (stdComm_SendToPlayer, before its loop), copied
+// to the room's feed for pages watching the match while the lobby asks for
+// one. pData is the message from cogMsgId on.
+void stdComm_WSRelay_FeedCopy(const void* pData, uint32_t size);
+
+// Called each frame by the host's game (sithMulti_Update): sends the room's
+// feed a keyframe (sithMulti_FeedKeyframe) when it's due.
+void stdComm_WSRelay_FeedFrame();
+
+// Watching a match in the game (spectator mode): this game plays a room's
+// feed as a player with no body, who sends nothing (see "Watching a match in
+// the game" in stdComm_WSRelay.c). Set from the page's Module.jkWatchRoom
+// when the engine starts.
+extern int stdComm_WSRelay_bViewer;
+
+// Main_StartupViewer: waits for the feed's level. 1 with its episode, map and
+// multiplayer mode flags, and this game set up to play it as a joiner would;
+// 0 if it can't be watched (the page says why) and the viewer is off.
+// 1 watching, 0 it can't, or STDCOMM_WSRELAY_VIEW_RESTART: the engine is
+// restarting into the match's mod (g_should_exit is set), to watch again.
+#define STDCOMM_WSRELAY_VIEW_RESTART (2)
+int stdComm_WSRelay_ViewerOpen(char* pEpisode, int episodeLen, char* pMap, int mapLen, int* pModeFlags);
+
+// sithMulti_ProcessWelcome, once the viewer is in the level in this slot:
+// its body is hidden and the camera follows the first player.
+void stdComm_WSRelay_ViewerJoined(int slot);
+void stdComm_WSRelay_ViewerNoLevel(const char* pEpisode);
+void stdComm_WSRelay_ViewerInLevel();
+
+// A viewer's message (sithMulti_SendChat): to the match through its feed, for
+// the host's game to put in the chat as "<name> (watching): <text>"; and
+// whether a chat line is the viewer's own coming back that way (1: it was
+// shown when it was sent, so it isn't shown again).
+void stdComm_WSRelay_ViewerSay(const char* pStr);
+int stdComm_WSRelay_ViewerOwnEcho(const char* pLine);
+
 // Called each frame of the join screen: 1 once the games stdComm_EnumSessions
 // asked for are in jkGuiMultiplayer_aEntries, for the screen to put up as it
 // does after stdComm_EnumSessions returns 0.

@@ -24,6 +24,7 @@
 #include "Engine/sithInterp.h"
 #include "stdPlatform.h"
 #include "Platform/Networking/WSRelay/stdComm_WSRelay.h"
+#include "Dss/jkDSS.h" // Added: jkDSS_SendPlayerLooksTo (sithMulti_FeedKeyframe)
 
 #define sithMulti_infoPrintf(fmt, ...) stdPlatform_Printf(fmt, ##__VA_ARGS__)
 #define sithMulti_verbosePrintf(fmt, ...) if (Main_bVerboseNetworking) \
@@ -42,6 +43,16 @@ void sithMulti_SetHandleridk(sithMultiHandler_t a1)
 void sithMulti_SendChat(const char *pStr, int arg0, int arg1)
 {
     uint32_t pStr_len; // esi
+
+#ifdef PLATFORM_WSRELAY
+    // Added: a viewer (spectator mode) sends nothing to the match itself: its
+    // message goes through the feed, for the host's game to put in the chat.
+    if (stdComm_WSRelay_bViewer)
+    {
+        stdComm_WSRelay_ViewerSay(pStr);
+        return;
+    }
+#endif
 
     pStr_len = strlen(pStr) + 1;
     if ( pStr_len >= 0x80 )
@@ -94,6 +105,13 @@ int sithMulti_ProcessChat(SithMessage *pMsg)
         arg2 = 128;
     NETMSG_POPSTR(v5, arg2);
     v5[arg2 + 1] = 0;
+
+#ifdef PLATFORM_WSRELAY
+    // Added: a viewer's own message, back from the host's game through the
+    // feed: it was shown when it was sent.
+    if ( arg1 < 0 && stdComm_WSRelay_ViewerOwnEcho(v5) )
+        return 1;
+#endif
 
     if ( arg1 < 0 )
         jk_snwprintf(sithMulti_chatWStrTmp, 256, u"%S", v5); // Added: char -> wchar
@@ -656,12 +674,27 @@ int sithMulti_ProcessWelcome(SithMessage *pMsg)
         }
         while ( v4 );
     }
+#ifdef PLATFORM_WSRELAY
+    // Added: a viewer watching the match's feed (spectator mode) is welcomed
+    // into a slot past the room's players (stdComm_WSRelay.c), which the
+    // asserts below take as in the match only while it's set up.
+    uint32_t viewerMaxPlayers = jkPlayer_maxPlayers;
+    if ( stdComm_WSRelay_bViewer && v1 >= 0 && v1 < JKPLAYER_NUM_INFOS && (uint32_t)v1 >= jkPlayer_maxPlayers )
+        jkPlayer_maxPlayers = v1 + 1;
+#endif
     g_submodeFlags &= ~8u;
     sithInterp_Reset(); // Added: render interpolation starts over with the joined world
     sithThing_LoadPostProcess();
     sithPlayer_ShowPlayer(v1, v2);
     sithPlayer_SetLocalPlayer(v1); // sets playerThingIdx and info
     sithPlayer_ResetPalEffects();
+#ifdef PLATFORM_WSRELAY
+    if ( stdComm_WSRelay_bViewer )
+    {
+        jkPlayer_maxPlayers = viewerMaxPlayers;
+        stdComm_WSRelay_ViewerJoined(v1);
+    }
+#endif
     sithEvent_RegisterTask(2, sithMulti_CheckPlayers, sithNet_tickrate, 1);
     sithMessage_StopProcessMessages();
     return 1;
@@ -1333,6 +1366,11 @@ void sithMulti_Update(int msecDeltaTime)
     }
     else if ( sithNet_isServer )
     {
+#ifdef PLATFORM_WSRELAY
+        // Added: a keyframe for the room's feed (spectator mode) when it's
+        // due (stdComm_WSRelay_FeedFrame calls sithMulti_FeedKeyframe).
+        stdComm_WSRelay_FeedFrame();
+#endif
         if ( sithNet_bSyncScores )
         {
             sithNet_bSyncScores = 0;
@@ -1499,6 +1537,68 @@ void sithMulti_Update(int msecDeltaTime)
         }
     }
 }
+
+#ifdef PLATFORM_WSRELAY
+// Added: a keyframe for the room's feed (spectator mode): the world as the big
+// sync above sends it to a player joining now, all at once, to idTo (an id no
+// player has, which DirectPlay_Send hands to the feed instead of the network).
+// Same stages, in the same order: changed surfaces, sectors with sync or
+// adjoin flags, every thing that syncs (bar weapons and explosions), removed
+// static things, then the players. No welcome: a viewer takes no seat. Sent
+// reliable where the big sync is; with no player at idTo, nothing waits for
+// an ack (sithComm_SendMsgToPlayer).
+void sithMulti_FeedKeyframe(int idTo)
+{
+    SithWorld* pWorld = sithWorld_g_pCurrentWorld;
+    if (!pWorld)
+        return;
+
+    for (int i = 0; i < pWorld->numSurfaces; i++)
+    {
+        SithSurface* pSurf = &pWorld->surfaces[i];
+        if (pSurf->flags & SITH_SURFACE_CHANGED)
+            sithDSS_SurfaceStatus(pSurf, idTo, 1);
+    }
+
+    for (int i = 0; i < pWorld->numSectors; i++)
+    {
+        SithSector* pSector = &pWorld->aSectors[i];
+        if (pSector->flags & SITH_SECTOR_SYNC)
+            sithDSS_SectorStatus(pSector, idTo, 1);
+        else if (pSector->flags & SITH_SECTOR_ADJOINSOFF)
+            sithDSS_SectorFlags(pSector, idTo, 1);
+    }
+
+    // numThings is the highest thing index in use, as in stage 3.
+    for (int i = 0; i <= pWorld->numThings; i++)
+    {
+        SithThing* pThing = &pWorld->aThings[i];
+        if (!sithThing_CanSync(pThing) || pThing->type == SITH_THING_WEAPON || pThing->type == SITH_THING_EXPLOSION)
+            continue;
+        if ((pThing->guid & 0xFFFF0000) != 0)
+            sithDSSThing_FullDescription(pThing, idTo, 1);
+        else
+            sithDSSThing_UpdateState(pThing, idTo, 1);
+        sithDSSThing_Pos(pThing, idTo, 0);
+        if ((pThing->type == SITH_THING_CORPSE || ((pThing->type == SITH_THING_ACTOR || pThing->type == SITH_THING_PLAYER) && pThing->flags & SITH_TF_DEAD))
+            && pThing->renderData.puppet)
+            sithDSS_PuppetStatus(pThing, idTo, 255);
+    }
+
+    for (uint32_t i = 0; i < sithMulti_numRemovedStaticThings; i++)
+        sithDSSThing_DestroyThing(sithMulti_aRemovedStaticThings[i], idTo);
+
+    sithMulti_SyncPlayers(idTo, 1);
+
+    // And how each player looks, which every game sends itself when someone
+    // joins (jkDSS_idk4); the host's game has them all.
+    for (uint32_t i = 0; i < jkPlayer_maxPlayers && i < JKPLAYER_NUM_INFOS; i++)
+    {
+        if ((jkPlayer_playerInfos[i].flags & 1) && jkPlayer_playerInfos[i].pLocalPlayer)
+            jkDSS_SendPlayerLooksTo(jkPlayer_playerInfos[i].pLocalPlayer, idTo);
+    }
+}
+#endif
 
 uint32_t sithMulti_GetPlayerIndexByID(int playerID)
 {

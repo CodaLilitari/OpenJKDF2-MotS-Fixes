@@ -13,6 +13,9 @@
 #include "World/sithWeapon.h"
 #include "World/sithActor.h"
 #include "Engine/sithCamera.h"
+#include "Engine/sithCollision.h"
+#include "Engine/sithIntersect.h"
+#include "General/stdPalEffects.h"
 #include "Gameplay/sithTime.h"
 #include "Dss/sithGamesave.h"
 #include "Gameplay/sithOverlayMap.h"
@@ -32,7 +35,21 @@
 #endif
 
 // Added
-static int sithControl_followingPlayer = 0;
+// Added: the slot of the player a spectator's camera follows
+// (sithMulti_IsSpectating), -1 for none: the free camera.
+static int sithControl_followingPlayer = -1;
+// Added: a viewer watching a match (stdComm_WSRelay_bViewer) has followed
+// its host, as it starts, or picked another view itself.
+static int sithControl_bViewerPicked = 0;
+#ifdef PLATFORM_WSRELAY
+static int sithControl_SpectatorHost();
+#endif
+#ifdef ARCH_WASM
+// Added: who a spectator's view follows, as last told to the page
+// (sithControl_ViewSays), -2 for not yet.
+static int sithControl_followSaid = -2;
+static void sithControl_ViewSays();
+#endif
 static int sithControl_curDebugCam = 0;
 static char16_t sithControl_debugWStrTmp[256];
 
@@ -251,7 +268,11 @@ int sithControl_Shutdown()
     // Added: clean reset
 #ifdef QOL_IMPROVEMENTS
     // Added
-    sithControl_followingPlayer = 0;
+    sithControl_followingPlayer = -1;
+    sithControl_bViewerPicked = 0;
+#ifdef ARCH_WASM
+    sithControl_followSaid = -2;
+#endif
     sithControl_curDebugCam = 0;
     memset(sithControl_debugWStrTmp, 0, sizeof(sithControl_debugWStrTmp));
 
@@ -379,7 +400,10 @@ void sithControl_Update(flex_t secDeltaTime, int msecDeltaTime)
     if ( !sithPlayer_g_pLocalPlayerThing
       || (sithPlayer_g_pLocalPlayerThing->actorParams.flags & (Main_bMotsCompat ? (SITH_AF_NOIDLECAMERA|SITH_AF_SCOPEHUD|SITH_AF_ARACHNID) : SITH_AF_NOIDLECAMERA))
       || (sithPlayer_g_pLocalPlayerThing->flags & (SITH_TF_DEAD|SITH_TF_DESTROYED)) != 0
-      || (sithCamera_g_stateFlags & 1) != 0 )
+      || (sithCamera_g_stateFlags & 1) != 0
+      // Added: a spectator (the dedicated host, or a game watching the
+      // match) has no idle camera: its own body is nowhere to circle.
+      || sithMulti_IsSpectating() )
     {
         if ( sithCamera_g_pCurCamera == &sithCamera_g_aCameras[4] )
         {
@@ -1150,10 +1174,16 @@ int sithControl_HandlePlayer(SithThing *player, flex_t deltaSecs)
     if ( player->moveType != SITH_MT_PHYSICS )
         return 0;
 
-    // Added: dedicated
-    if (sithNet_isServer && jkGuiNetHost_bIsDedicated) {
-        sithControl_PlayerLook(player, deltaSecs);
-        sithControl_FreeCam(player);
+    // Added: dedicated, or a viewer watching a match (spectator mode)
+    if (sithMulti_IsSpectating()) {
+        // Its body stays out of the world, whatever turned it on.
+        player->flags |= SITH_TF_DISABLED;
+        // The free camera turns and looks up and down itself
+        // (sithControl_SpectatorFly). sithControl_PlayerLook looked nowhere
+        // for a spectator: its look speed (sithControl_008d7f44) is only set
+        // on a player's way through here.
+        if (sithControl_followingPlayer < 0)
+            sithControl_SpectatorFly(player, deltaSecs);
         sithControl_GetKey(INPUT_FUNC_MAP, &input_read);
         if ( (input_read & 1) != 0 )
             sithOverlayMap_ToggleMap();
@@ -1287,17 +1317,58 @@ debug_controls:
     if ( player->moveType == SITH_MT_PHYSICS )
         sithPhysics_ResetThingMovement(player);
 
-    // Added
-    if (sithControl_followingPlayer > 0) {
+#ifdef PLATFORM_WSRELAY
+    // Added: a viewer starts on the host's view, as the lobby page's viewing
+    // box shows the match, once its host is in this game's player list. Jump,
+    // Fire and Alt Fire go on to the others and the free camera from there.
+    if (stdComm_WSRelay_bViewer && !sithControl_bViewerPicked && sithControl_followingPlayer < 0) {
+        int host = sithControl_SpectatorHost();
+        if (host >= 0) {
+            sithControl_bViewerPicked = 1;
+            sithControl_followingPlayer = host;
+            jk_snwprintf(sithControl_debugWStrTmp, 256, u"Following %s", jkPlayer_playerInfos[host].player_name);
+            sithConsole_PrintWString(sithControl_debugWStrTmp);
+        }
+    }
+#endif
+    // Added. The player followed left: the free camera, from where they were.
+    if (sithControl_followingPlayer >= 0 && !(jkPlayer_playerInfos[sithControl_followingPlayer].flags & 1)) {
+        sithControl_followingPlayer = -1;
+        sithWorld_g_pCurrentWorld->pCameraFocusThing = player;
+    }
+    SithThing* pFollowed = NULL;
+    if (sithControl_followingPlayer >= 0) {
         SithThing* pThing = jkPlayer_playerInfos[sithControl_followingPlayer].pLocalPlayer;
-        if (pThing) {
+        if (pThing && pThing->sector) {
+            // The free camera starts from where they were.
             rdVector_Copy3(&player->position, &pThing->position);
             rdMatrix_Copy34(&player->orient, &pThing->orient);
+            rdVector_Zero3(&player->actorParams.headPYR);
+            // Looking up or down as they are.
+            if (pThing->type == SITH_THING_PLAYER || pThing->type == SITH_THING_ACTOR)
+                player->actorParams.headPYR.x = pThing->actorParams.headPYR.x;
             sithThing_SetSector(player, pThing->sector, 0);
             sithWorld_g_pCurrentWorld->pCameraFocusThing = pThing;
-            sithWorld_g_pCurrentWorld->pLocalPlayer = jkPlayer_playerInfos[0].pLocalPlayer;
-            stdPalEffects_FlushAllAdds();
+            sithWorld_g_pCurrentWorld->pLocalPlayer = player; // Fixed: this game's own, not slot 0's (a viewer's isn't)
+            pFollowed = pThing;
         }
+    }
+    if (sithMulti_IsSpectating()) {
+        // The view is the player followed's own (their eyes, or behind them
+        // with the camera key), else the free camera's.
+        SithThing* pFocus = pFollowed ? pFollowed : player;
+        for (int i = 0; i < 2; i++) {
+            if (sithCamera_g_aCameras[i].pPrimaryFocusThing != pFocus)
+                sithCamera_SetCameraFocus(&sithCamera_g_aCameras[i], pFocus, NULL);
+        }
+        if (sithCamera_g_pCurCamera != &sithCamera_g_aCameras[0] && sithCamera_g_pCurCamera != &sithCamera_g_aCameras[1])
+            sithCamera_SetCurrentToCycleCamera();
+        // A spectator's own flashes (its body takes no hits, picks nothing
+        // up) would never fade: none.
+        stdPalEffects_FlushAllAdds();
+#ifdef ARCH_WASM
+        sithControl_ViewSays();
+#endif
     }
 
     for (v3 = INPUT_FUNC_SELECT1; v3 <= INPUT_FUNC_SELECT0; v3++)
@@ -1305,7 +1376,8 @@ debug_controls:
         sithControl_GetKey(v3, &input_read);
         if ( input_read )
         {
-            sithControl_followingPlayer = 0; // Added
+            sithControl_followingPlayer = -1; // Added
+            sithWorld_g_pCurrentWorld->pCameraFocusThing = player; // Added
             int old = jkPlayer_maxPlayers;// Added
             jkPlayer_maxPlayers = 10; // Added
             sithControl_curDebugCam = v3 - INPUT_FUNC_SELECT1; // Added
@@ -1320,34 +1392,47 @@ debug_controls:
         }
     }
     sithControl_GetKey(INPUT_FUNC_JUMP, &input_read);
-    if ( input_read )
+    // Added: a spectator's next player is Fire, or Jump while it follows
+    // one, the one before Alt Fire. In the free camera, Jump flies up
+    // (sithControl_SpectatorFly).
+    int spectatorStep = 0;
+    if (sithMulti_IsSpectating()) {
+        int fireRead = 0;
+        if (input_read && sithControl_followingPlayer >= 0)
+            spectatorStep = 1;
+        input_read = 0;
+        sithControl_GetKey(INPUT_FUNC_FIRE1, &fireRead);
+        if (fireRead)
+            spectatorStep = 1;
+        sithControl_GetKey(INPUT_FUNC_FIRE2, &fireRead);
+        if (fireRead)
+            spectatorStep = -1;
+    }
+    if ( input_read || spectatorStep )
     {
         result = 0; // Added
 
-        // Added: dedicated
-        if (!(sithNet_isServer && jkGuiNetHost_bIsDedicated)) {
+        // Added: dedicated, or a viewer
+        if (!sithMulti_IsSpectating()) {
             sithActor_DamageActor(player, player, 200.0, 1);
             result = 1;
         }
         else {
-            for (sithControl_followingPlayer++; sithControl_followingPlayer < jkPlayer_maxPlayers; sithControl_followingPlayer++) {
-                if (!sithControl_followingPlayer || jkPlayer_playerInfos[sithControl_followingPlayer].flags & 1) {
-                    break;
-                }
-            }
-            if (sithControl_followingPlayer >= jkPlayer_maxPlayers) {
-                sithControl_followingPlayer = 0;
-            }
-            if (sithControl_followingPlayer)
-                jk_snwprintf(sithControl_debugWStrTmp, 256, u"Following %s", jkPlayer_playerInfos[sithControl_followingPlayer].player_name);
-            else
+            sithControl_SpectatorNext(spectatorStep);
+            // The dedicated host's free camera starts at a starting place.
+            if (sithControl_followingPlayer < 0 && sithNet_isServer && jkGuiNetHost_bIsDedicated) {
                 jk_snwprintf(sithControl_debugWStrTmp, 256, u"Spawn cam %u", sithControl_curDebugCam);
-            sithConsole_PrintWString(sithControl_debugWStrTmp);
-            
-            if (!sithControl_followingPlayer) {
+                sithConsole_PrintWString(sithControl_debugWStrTmp);
                 sithPlayerActions_MoveToPlayerPosition(player, sithControl_curDebugCam);
             }
         }
+    }
+    // Added: a spectator's view is cameras 0 and 1 (above): the debug camera
+    // below would orbit whichever is current, made type 128 every frame,
+    // which neither the camera key nor following a player then undoes.
+    else if (sithMulti_IsSpectating())
+    {
+        result = 0;
     }
     else
     {
@@ -1423,12 +1508,238 @@ debug_controls:
         if ( input_read )
             g_mapModeFlags ^= 0x42u;
         sithCamera_g_pCurCamera->type = 128;
-        if (!(sithNet_isServer && jkGuiNetHost_bIsDedicated)) // Added
+        if (!sithMulti_IsSpectating()) // Added
             result = 1;
         else
             result = 0;
     }
     return result;
+}
+
+static void sithControl_SpectatorMoveTo(SithThing *player, const rdVector3 *dir, flex_t dist);
+
+// Added: a spectator's free camera (sithMulti_IsSpectating) turns and looks
+// up and down as a player does and flies where it looks, through adjoins but
+// not walls: Forward/Back and Slide move it, Jump takes it up and Duck down,
+// Run (Fast) goes faster. Its body has no physics (it's disabled), so this
+// turns and moves it itself, keeping its sector.
+#define SITHCONTROL_SPECTATOR_SPEED (2.0)
+#define SITHCONTROL_SPECTATOR_PITCH_MAX (85.0)
+void sithControl_SpectatorFly(SithThing *player, flex_t deltaSecs)
+{
+    if (!player || !player->sector || deltaSecs <= 0.0)
+        return;
+
+    // Up and down: as a player looks (sithControl_PlayerLook), but whether
+    // or not Mouse look is on, and as far as straight up or down: a camera
+    // has nothing else to do with the mouse. Center view levels it.
+    flex_t pitch = sithControl_GetAxis(INPUT_FUNC_PITCH)
+#ifdef QOL_IMPROVEMENTS
+                 + sithControl_GetMouseLook(INPUT_FUNC_PITCH) * 90.0 * SITHCONTROL_MOUSE_AXIS_SECS
+#endif
+                 + sithControl_GetKeyAsAxis(INPUT_FUNC_PITCH) * 90.0 * deltaSecs;
+    rdVector3* pHead = &player->actorParams.headPYR;
+    if (sithControl_GetKey(INPUT_FUNC_CENTER, 0))
+        pHead->x = 0.0;
+    else if (pitch != 0.0)
+        pHead->x = stdMath_Clamp(pHead->x + pitch, -SITHCONTROL_SPECTATOR_PITCH_MAX, SITHCONTROL_SPECTATOR_PITCH_MAX);
+    pHead->y = 0.0;
+    pHead->z = 0.0;
+
+    // Upright: a followed player's body can lean (a slope, a jump), and the
+    // free camera starts from it (in kit 167, once tilted 11-16 degrees to
+    // the side: Center View didn't level it and turning drifted). It keeps
+    // only its heading; up and down is its head's.
+    if (player->orient.uvec.z < 0.99999)
+    {
+        rdVector3 pyr;
+        rdVector3 keep = player->orient.scale;
+        rdMatrix_ExtractAngles34(&player->orient, &pyr);
+        pyr.x = 0.0;
+        pyr.z = 0.0;
+        rdMatrix_BuildRotate34(&player->orient, &pyr);
+        player->orient.scale = keep;
+    }
+
+    // The turn: the mouse's this frame, the keys' at the player's rate.
+    flex_t yaw = sithControl_GetAxis(INPUT_FUNC_TURN)
+               + sithControl_GetMouseLook(INPUT_FUNC_TURN) * player->actorParams.maxRotVelocity * SITHCONTROL_MOUSE_AXIS_SECS
+               + sithControl_GetKeyAsAxis(INPUT_FUNC_TURN) * player->actorParams.maxRotVelocity * deltaSecs;
+    if (yaw != 0.0)
+    {
+        rdVector3 pyr = {0.0, yaw, 0.0};
+        rdMatrix34 turn;
+        rdMatrix_BuildRotate34(&turn, &pyr);
+        rdMatrix_PreMultiply34(&player->orient, &turn);
+        rdMatrix_Normalize34(&player->orient);
+    }
+
+    flex_t forward = sithControl_GetKeyAsAxisNormalized(INPUT_FUNC_FORWARD);
+    flex_t slide = sithControl_GetKeyAsAxisNormalized(INPUT_FUNC_SLIDE);
+    if (Main_bMotsCompat)
+        slide = -slide; // as sithControl_FreeCam's
+    // Straight up or down, whichever way it looks. GetKey's return is
+    // whether it's held.
+    flex_t rise = (sithControl_GetKey(INPUT_FUNC_JUMP, 0) ? 1.0 : 0.0)
+                - (sithControl_GetKey(INPUT_FUNC_DUCK, 0) ? 1.0 : 0.0);
+    if (forward == 0.0 && slide == 0.0 && rise == 0.0)
+        return;
+    // As a player's walking (sithControl_PlayerMovement): Run or always run
+    // twice as fast, Walk half. GetKey's return is whether it's held.
+    flex_t speed = SITHCONTROL_SPECTATOR_SPEED;
+    if ((sithWeapon_controlOptions & 2) || sithControl_GetKey(INPUT_FUNC_FAST, 0))
+        speed *= 2.0;
+    if (sithControl_GetKey(INPUT_FUNC_SLOW, 0))
+        speed *= 0.5;
+
+    // Where it looks: its turn, then its head's pitch.
+    rdMatrix34 look;
+    rdMatrix_Copy34(&look, &player->orient);
+    rdMatrix_PreRotate34(&look, &player->actorParams.headPYR);
+    rdVector3 move;
+    rdVector_Zero3(&move);
+    rdVector_ScaleAdd3Acc(&move, &look.lvec, forward);
+    rdVector_ScaleAdd3Acc(&move, &look.rvec, slide);
+    rdVector_ScaleAdd3Acc(&move, &rdroid_zVector3, rise);
+    flex_t len = rdVector_Normalize3Acc(&move);
+    flex_t dist = (len < 1.0 ? len : 1.0) * speed * deltaSecs;
+    if (dist <= 0.0)
+        return;
+
+    sithControl_SpectatorMoveTo(player, &move, dist);
+}
+
+// Added: how far a spectator's body can go from from along dir (a unit
+// vector), up to dist: through adjoins a player can pass, up to a wall or a
+// thing in the way, other than its own body, an item, a weapon or the dead
+// (a railing, a crate, a door, a player standing still). As the camera
+// behind a player searches (sithCamera_SearchSectorInRadius), but that one
+// (RAYCAST_2000) only sees things with a cog, so kit 161's free camera flew
+// through players.
+static flex_t sithControl_SpectatorReach(SithThing *player, const rdVector3 *from, const rdVector3 *dir, flex_t dist)
+{
+    flex_t got = dist;
+    sithCollision_SearchForCollisions(player->sector, 0, from, dir, dist, 0.02, RAYCAST_200 | RAYCAST_800);
+    for (SithCollision* c = sithCollision_PopStack(); c; c = sithCollision_PopStack())
+    {
+        if (c->type & SITHCOLLISION_ADJOINCROSS)
+            continue;
+        if (c->type & SITHCOLLISION_THING)
+        {
+            SithThing* t = c->pThingCollided;
+            // One it's already touching doesn't hold it: it can get away.
+            if (!t || t == player || t->type == SITH_THING_ITEM || t->type == SITH_THING_WEAPON
+                || (t->flags & SITH_TF_DEAD) || c->distance <= 0.0)
+                continue;
+        }
+        got = c->distance < dist ? c->distance : dist;
+        break;
+    }
+    sithCollision_DecreaseStackLevel();
+    return got;
+}
+
+// Added: moves a spectator's body (disabled, so with no physics) dist along
+// dir, as far as it can go (sithControl_SpectatorReach), stopping a little
+// short of what's in the way. It only ever ends up inside a sector of the
+// level: kit 159's free camera flew through a railing into the dark outside.
+static void sithControl_SpectatorMoveTo(SithThing *player, const rdVector3 *dir, flex_t dist)
+{
+    if (!player->sector || dist <= 0.0)
+        return;
+    rdVector3 from = player->position;
+    rdVector3 to = from;
+    flex_t got = sithControl_SpectatorReach(player, &from, dir, dist);
+    if (got < dist - 0.0001)
+    {
+        // Stopped: short of what it hit, so it's never touching it.
+        got -= 0.01;
+        if (got <= 0.0)
+            return;
+    }
+    rdVector_ScaleAdd3Acc(&to, dir, got);
+    SithSector* pSector = sithCollision_FindSectorInRadius(player->sector, &from, &to, 0.0);
+    if (!pSector || !sithIntersect_IsSphereInSector(&to, 0.0, pSector))
+        return;
+    rdVector_Copy3(&player->position, &to);
+    if (pSector != player->sector)
+        sithThing_SetSector(player, pSector, 0);
+}
+
+#ifdef PLATFORM_WSRELAY
+// Added: the host's slot in the match, -1 while it isn't in this game's
+// player list (or has no body in a level yet). A dedicated host has no body
+// to follow (its own is out of the world): the first player who has, then.
+static int sithControl_SpectatorHost()
+{
+    int n = (int)jkPlayer_maxPlayers;
+    if (n > JKPLAYER_NUM_INFOS)
+        n = JKPLAYER_NUM_INFOS;
+    uint32_t hostId = sithNet_serverNetId ? (uint32_t)sithNet_serverNetId : 1;
+    int host = -1, first = -1;
+    for (int i = 0; i < n; i++)
+    {
+        if (i == (int)playerThingIdx || !(jkPlayer_playerInfos[i].flags & 1))
+            continue;
+        SithThing* pThing = jkPlayer_playerInfos[i].pLocalPlayer;
+        int bBody = pThing && pThing->sector && !(pThing->flags & SITH_TF_DISABLED);
+        if ((uint32_t)jkPlayer_playerInfos[i].playerNetId == hostId)
+        {
+            if (bBody)
+                return i;
+            host = i;
+        }
+        else if (bBody && first < 0)
+        {
+            first = i;
+        }
+    }
+    return host >= 0 ? first : -1;
+}
+#endif
+
+// Added: a spectator's camera (sithMulti_IsSpectating) on to the next player
+// in the match (dir 1) or the one before (-1). Past the last, the free
+// camera, from where the last one was.
+void sithControl_SpectatorNext(int dir)
+{
+    sithControl_bViewerPicked = 1;
+    int n = (int)jkPlayer_maxPlayers;
+    if (n > JKPLAYER_NUM_INFOS)
+        n = JKPLAYER_NUM_INFOS;
+    int i = sithControl_followingPlayer;
+    if (i >= n)
+        i = -1;
+    for (int tries = 0; tries <= n; tries++)
+    {
+        i += (dir < 0) ? -1 : 1;
+        if (i >= n)
+            i = -1;
+        else if (i < -1)
+            i = n - 1;
+        if (i < 0)
+            break;
+        if (i != (int)playerThingIdx && (jkPlayer_playerInfos[i].flags & 1) && jkPlayer_playerInfos[i].pLocalPlayer)
+            break;
+    }
+    int wasFollowing = sithControl_followingPlayer >= 0;
+    sithControl_followingPlayer = i;
+    // The free camera starts where the player followed was, a step behind
+    // their eyes rather than inside their body.
+    if (i < 0 && wasFollowing && sithPlayer_g_pLocalPlayerThing)
+    {
+        SithThing* pSelf = sithPlayer_g_pLocalPlayerThing;
+        rdVector3 back;
+        rdVector_Neg3(&back, &pSelf->orient.lvec);
+        sithControl_SpectatorMoveTo(pSelf, &back, 0.25);
+    }
+    if (i >= 0)
+        jk_snwprintf(sithControl_debugWStrTmp, 256, u"Following %s", jkPlayer_playerInfos[i].player_name);
+    else
+        jk_snwprintf(sithControl_debugWStrTmp, 256, u"Free camera");
+    sithConsole_PrintWString(sithControl_debugWStrTmp);
+    if (i < 0 && sithWorld_g_pCurrentWorld && sithPlayer_g_pLocalPlayerThing)
+        sithWorld_g_pCurrentWorld->pCameraFocusThing = sithPlayer_g_pLocalPlayerThing;
 }
 
 void sithControl_PlayerLook(SithThing *player, flex_t deltaSecs)
@@ -2777,6 +3088,58 @@ EMSCRIPTEN_KEEPALIVE int sithControl_WebFunctionDown(int funcIdx)
     if (funcIdx < 0 || funcIdx >= INPUT_FUNC_MAX)
         return 0;
     return !!sithControl_GetKey(funcIdx, NULL);
+}
+
+#ifdef ARCH_WASM
+// Added: the viewing page's box shows who the view follows over its game, in
+// the page's own letters (index.html's Module.jkWatchFollow): the game's own
+// "Following" line is small there, the game being drawn screen-sized and
+// scaled down to the box. The player's name and 1, or "" and 0 for the free
+// camera.
+EM_JS(void, sithControl_js_view_follow, (int following, const char16_t* pName), {
+    if (typeof Module.jkWatchFollow !== 'function') return;
+    var chars = [];
+    for (var i = 0; pName && i < 31; i++) {
+        var ch = HEAPU16[(pName >> 1) + i];
+        if (!ch) break;
+        chars.push(ch);
+    }
+    try {
+        Module.jkWatchFollow(String.fromCharCode.apply(null, chars), !!following);
+    } catch (e) {}
+});
+
+// Tells the page when the view follows another player or the free camera,
+// checked each frame while spectating.
+static void sithControl_ViewSays()
+{
+    int i = sithControl_followingPlayer;
+    if (i == sithControl_followSaid)
+        return;
+    sithControl_followSaid = i;
+    sithControl_js_view_follow(i >= 0, i >= 0 ? jkPlayer_playerInfos[i].player_name : NULL);
+}
+#endif
+
+// Added: for the viewing page's box (index.html's jkWatchKeys), which shows
+// a spectator's keys as the player bound them. The nth key (not an axis)
+// funcIdx is bound to, as a game key (stdControl_WebKeyName names it), plus
+// 0x10000 when it's the other way (Back for Forward, the other side for
+// Slide); -1 past the last.
+EMSCRIPTEN_KEEPALIVE int sithControl_WebFunctionKey(int funcIdx, int n)
+{
+    if (funcIdx < 0 || funcIdx >= INPUT_FUNC_MAX || n < 0)
+        return -1;
+    stdControlKeyInfo* pInfo = &sithControl_aInputFuncToKeyinfo[funcIdx];
+    for (uint32_t j = 0; j < pInfo->numEntries; j++)
+    {
+        stdControlKeyInfoEntry* pEntry = &pInfo->aEntries[j];
+        if (!(pEntry->flags & INPUT_MAPPING_FLAG_DXKEY) || (pEntry->flags & INPUT_MAPPING_FLAG_AXIS))
+            continue;
+        if (n-- == 0)
+            return (int)(pEntry->dxKeyNum & 0xFFFF) | ((pEntry->flags & INPUT_MAPPING_FLAG_AXIS_REVERSED) ? 0x10000 : 0);
+    }
+    return -1;
 }
 
 EMSCRIPTEN_KEEPALIVE const char* sithControl_WebFunctionName(int funcIdx)

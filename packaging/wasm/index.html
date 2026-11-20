@@ -42,6 +42,38 @@
       })();
     </script>
     <script>
+      // ---- Left for another page, but kept by the browser (its back/forward
+      // cache): a page kept that way keeps its sockets open, so the lobby
+      // still counted it, watching a match or in a game, for minutes, until
+      // the tab was closed (seen in Edge, kit 161). So every socket the page
+      // or the game opens is closed as it goes into the cache, as a page
+      // closed would be, and the page starts again if it's come back to.
+      (function() {
+        var Real = window.WebSocket;
+        if (typeof Real !== 'function' || typeof Set !== 'function') return;
+        var open = new Set();
+        function WebSocket(url, protocols) {
+          var ws = arguments.length > 1 ? new Real(url, protocols) : new Real(url);
+          open.add(ws);
+          ws.addEventListener('close', function() { open.delete(ws); });
+          return ws;
+        }
+        WebSocket.prototype = Real.prototype;
+        ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach(function(k) { WebSocket[k] = Real[k]; });
+        window.WebSocket = WebSocket;
+        window.addEventListener('pagehide', function(ev) {
+          if (!ev.persisted) return;
+          open.forEach(function(ws) {
+            try { ws.close(); } catch (e) {}
+          });
+          open.clear();
+        });
+        window.addEventListener('pageshow', function(ev) {
+          if (ev.persisted) location.reload();
+        });
+      })();
+    </script>
+    <script>
       // The room pictures (Room pictures, in the styles). A link to a room
       // window (#nar-shaddaa, which Quit also comes back to) opens it with
       // the page, so its picture is asked for here, alongside the page,
@@ -60,6 +92,16 @@
         link.href = ROOM_PICTURES[key];
         document.head.appendChild(link);
       })();
+      // #watch-<room>-window is the viewing page in a window of its own
+      // (Pop out): only that, filling the window, so the lobby page under
+      // it is never drawn.
+      if (/^#watch-[0-9]{1,9}-window$/.test(location.hash)) document.documentElement.classList.add('watch-window');
+      // #watch-<room>-embed is the viewing page's box on the lobby page, a
+      // frame of this page: only the game, watching that match (in the
+      // lobby's script, startWatchEmbed). Not as a page of its own.
+      if (/^#watch-[0-9]{1,9}-embed$/.test(location.hash) && window.parent !== window) {
+        document.documentElement.classList.add('watch-embed');
+      }
     </script>
     <style>
       body {
@@ -179,6 +221,23 @@
         color: var(--gold);
         font: bold 17px Verdana, Geneva, sans-serif;
         text-align: center;
+      }
+      /* Over the bottom of the game while it watches a match: what it says
+         (Module.jkViewNotice). It leaves the game playable underneath. */
+      .view-note {
+        position: fixed;
+        bottom: 24px;
+        left: 50%;
+        z-index: 25;
+        max-width: min(640px, calc(100% - 32px));
+        margin: 0;
+        padding: 8px 16px;
+        transform: translateX(-50%);
+        background-color: rgba(0, 0, 0, 0.85);
+        color: var(--gold);
+        font: bold 14px Verdana, Geneva, sans-serif;
+        text-align: center;
+        pointer-events: none;
       }
       /* Over the top of the game in a tab that another tab's game took the
          saves from. It leaves the game playable underneath. */
@@ -900,7 +959,7 @@
       #room[open] { display: flex; flex-direction: column; }
       #room::backdrop { background-color: rgba(0, 20, 20, 0.6); }
       #room :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
-      #room .titlebar {
+      #room .titlebar, #watch .titlebar {
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -909,8 +968,8 @@
         background-color: var(--gold);
         border-bottom: 1px solid #000;
       }
-      #room h1 { margin: 0; font: bold 15px Verdana, Geneva, sans-serif; overflow-wrap: anywhere; }
-      #room .close {
+      #room h1, #watch h1 { margin: 0; font: bold 15px Verdana, Geneva, sans-serif; overflow-wrap: anywhere; }
+      #room .close, #watch .close {
         flex: none;
         width: 26px;
         height: 24px;
@@ -939,6 +998,10 @@
         cursor: pointer;
       }
       .room-toolbar button:hover { border-color: #fff var(--win-dark) var(--win-dark) #fff; }
+      /* A button that can't be used now looks it (it looked and hovered like
+         any other, and a click did nothing). */
+      .room-toolbar button:disabled { opacity: 0.45; cursor: default; }
+      .room-toolbar button:disabled:hover { border-color: transparent; }
       .room-toolbar button[aria-pressed=true] {
         border-color: var(--win-dark) #fff #fff var(--win-dark);
         background-color: #e4e1db;
@@ -1261,8 +1324,511 @@
       .live-dot.on { background-color: var(--live); box-shadow: 0 0 0 1px #116633; }
       #room-status-extra { margin-left: auto; }
 
+      /* Watching a match: the Watch tag on a game, the preview that takes
+         the place of who's on while one is watched, and the viewing page
+         (#watch). A match's live view is the lobby's (its clock, scores and
+         latest kills); the level's picture stands behind it. */
+      .watch-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        flex: none;
+        margin: 3px 0 0;
+        padding: 0 5px;
+        border: 0;
+        background-color: #1f5f6b;
+        color: #fff;
+        font: 11px/16px Verdana, sans-serif;
+        cursor: pointer;
+      }
+      .watch-tag:hover { filter: brightness(1.15); }
+      .watch-tag .eye, .watch-off .eye, .pv .eye, #watch .eye { width: 12px; height: 12px; flex: none; color: var(--join); }
+      .watch-tag .wc { margin-left: 2px; padding-left: 4px; border-left: 1px solid rgba(255, 255, 255, 0.35); font-variant-numeric: tabular-nums; }
+      .watch-tag[aria-pressed=true] { background-color: var(--gold); color: #000; }
+      .watch-tag[aria-pressed=true] .eye { color: #000; }
+      .watch-tag[aria-pressed=true] .wc { border-left-color: rgba(0, 0, 0, 0.35); }
+      .watch-off {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        flex: none;
+        margin-top: 3px;
+        font: 11px/16px Verdana, sans-serif;
+        color: var(--muted);
+        text-shadow: 1px 1px 0 #000;
+      }
+      .watch-off .eye { opacity: 0.6; color: var(--muted); }
+      .table.picked .table-head { box-shadow: 0 0 0 2px var(--gold); }
+      .game-list tr.picked td { box-shadow: inset 0 1px var(--gold), inset 0 -1px var(--gold); }
+      .game-list .watch-button { background-color: #1f5f6b; }
+      .game-list td.acts .zone-button { display: block; width: 100%; min-width: 76px; }
+      .game-list td.acts .zone-button + .zone-button { margin-top: 4px; }
+
+      /* The preview, beside the tables. */
+      .pv {
+        flex: none;
+        width: 340px;
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        background-color: #000;
+        color: #e0e0e0;
+        font: 12px/1.35 Verdana, Geneva, sans-serif;
+      }
+      .pv-head {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 2px 3px 2px 8px;
+        background-color: var(--win-grey);
+        border-bottom: 1px solid var(--win-dark);
+        box-shadow: inset 0 -1px #fff;
+        color: #000;
+        line-height: 20px;
+      }
+      .pv-head b { flex: none; }
+      .pv-head span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #333; }
+      .pv-head button, .watch-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        min-width: 22px;
+        height: 20px;
+        padding: 0 6px;
+        border: 1px solid;
+        border-color: #fff #404040 #404040 #fff;
+        background-color: var(--win-grey);
+        color: #000;
+        font: 12px Verdana, sans-serif;
+        cursor: pointer;
+      }
+      .watch-btn:active, .pv-head button:active { border-color: #404040 #fff #fff #404040; }
+      .watch-btn.go { background-color: var(--join); font-weight: bold; border-color: #e9ffff var(--join-lo) var(--join-lo) #e9ffff; }
+      .watch-btn:disabled { opacity: 0.55; cursor: default; }
+      .pv-body { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+      .watch-view {
+        position: relative;
+        aspect-ratio: 16 / 9;
+        overflow: hidden;
+        border: 1px solid #333;
+        background: #0b1a1a center / cover no-repeat;
+      }
+      .watch-view::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0.7));
+      }
+      .watch-view .no-pic {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 16px;
+        color: var(--muted);
+        font: bold 15px Verdana, sans-serif;
+        text-align: center;
+      }
+      .watch-badge {
+        position: absolute;
+        z-index: 1;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        max-width: calc(100% - 12px);
+        padding: 2px 6px;
+        background-color: rgba(0, 0, 0, 0.72);
+        color: #fff;
+        font: 11px Verdana, sans-serif;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .watch-badge.live { left: 6px; top: 6px; font-weight: bold; font-size: 10px; letter-spacing: 0.04em; }
+      .watch-badge.live i { width: 7px; height: 7px; border-radius: 50%; background-color: #e53b2f; box-shadow: 0 0 0 2px rgba(229, 59, 47, 0.35); }
+      .watch-badge.live.over i { background-color: var(--win-dark); box-shadow: none; }
+      .watch-badge.count { right: 6px; top: 6px; }
+      .watch-badge.kill { left: 6px; bottom: 6px; display: block; }
+      .watch-badge.kill b { color: var(--gold); font-weight: bold; }
+      .watch-clock { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+      .watch-clock b { font: bold 20px Verdana, sans-serif; color: #fff; font-variant-numeric: tabular-nums; }
+      .watch-clock small { color: var(--muted); font-size: 11px; text-align: right; }
+      .watch-bar { height: 4px; margin-top: 3px; background-color: #333; }
+      .watch-bar span { display: block; height: 100%; background-color: var(--gold); }
+      .watch-teams { display: flex; flex-wrap: wrap; gap: 4px 12px; font-weight: bold; color: #fff; }
+      .pv table, #watch table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+      .pv th, #watch th { padding: 0 0 2px 6px; font: bold 9px Verdana, sans-serif; color: #808080; text-align: right; }
+      .pv td, #watch td { padding: 2px 0 2px 6px; text-align: right; }
+      .pv th:first-child, .pv td:first-child, #watch th:first-child, #watch td:first-child {
+        padding-left: 0;
+        text-align: left;
+        overflow-wrap: anywhere;
+      }
+      .pv td.score, #watch td.score { color: var(--gold); font-weight: bold; }
+      .pv .lead::after, #watch .lead::after { content: " \2605"; color: var(--gold); }
+      .pv .host-tag, #watch .host-tag { margin-left: 4px; color: var(--gold); font-size: 10px; }
+      .watch-h {
+        display: flex;
+        justify-content: space-between;
+        margin: 0 0 3px;
+        padding-bottom: 1px;
+        border-bottom: 1px solid #808080;
+        font: 12px Verdana, Geneva, sans-serif;
+        text-transform: uppercase;
+        color: #e0e0e0;
+      }
+      .watch-kills { margin: 0; padding: 0; list-style: none; font-size: 11px; color: #bbb; }
+      .watch-kills li { margin: 0 0 3px; }
+      .watch-kills b { color: #fff; font-weight: normal; }
+      .watch-kills span { color: #808080; }
+      .watch-facts { color: var(--muted); font-size: 11px; }
+      .watch-note { margin: 0; color: #808080; font-size: 11px; }
+      /* What the game said when it stopped watching, over the match. */
+      .watch-said { order: -1; margin: 0; color: var(--gold); font-weight: bold; text-align: center; }
+      .watch-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+      .watch-acts .watch-btn { height: 28px; padding: 0 12px; font-size: 13px; }
+      .watch-acts .watch-btn.go { flex: 1; }
+      .watch-seats { color: #fff; font-weight: bold; }
+      .watch-seats.full { color: var(--gold); }
+
+      /* The viewing page: every match to watch, the match, and its details. */
+      #watch {
+        width: min(1248px, calc(100vw - 32px));
+        height: min(760px, calc(100vh - 32px));
+        padding: 0;
+        border: 2px solid #000;
+        background-color: var(--win-grey);
+        color: var(--win-text);
+        font: 13px/1.35 Verdana, Geneva, sans-serif;
+        box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.45);
+      }
+      #watch[open] { display: flex; flex-direction: column; }
+      #watch::backdrop { background-color: rgba(0, 20, 20, 0.6); }
+      #watch :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+      #watch .room-toolbar .grow { flex: 1; }
+      #watch .room-toolbar .watch-btn.go { height: 24px; padding: 0 12px; }
+      #watch .room-toolbar .wcount { display: inline-flex; align-items: center; gap: 4px; margin: 0 8px; font: 12px Tahoma, Verdana, sans-serif; }
+      #watch .room-toolbar .wcount .eye { width: 14px; height: 14px; color: var(--teal); }
+      .watch-body { flex: 1; min-height: 0; display: flex; background-color: #000; }
+      .mlist {
+        flex: none;
+        width: 236px;
+        overflow-y: auto;
+        border-right: 2px solid var(--win-dark);
+        color: #e0e0e0;
+        font: 12px Verdana, Geneva, sans-serif;
+      }
+      .mlist section { padding: 6px 6px 8px; }
+      .mlist ul { margin: 0; padding: 0; list-style: none; }
+      .mlist button {
+        display: block;
+        width: 100%;
+        padding: 4px 5px 5px;
+        border: 0;
+        border-bottom: 1px solid #1c1c1c;
+        background: none;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .mlist button:hover { background-color: #0b2020; }
+      .mlist button[aria-current=true] { background-color: #1f5f6b; outline: 1px solid var(--join); outline-offset: -1px; }
+      .mlist .n { display: flex; justify-content: space-between; gap: 6px; }
+      .mlist .n b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; }
+      .mlist .n span { display: inline-flex; align-items: center; gap: 3px; flex: none; color: var(--join); font-variant-numeric: tabular-nums; }
+      .mlist .s { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--gold); font-size: 11px; font-variant-numeric: tabular-nums; }
+      .mlist .m { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #808080; font-size: 11px; }
+      .mlist .off { padding: 4px 5px 5px; border-bottom: 1px solid #1c1c1c; }
+      .mlist .off .n b, .mlist .off .s { color: #6a6a6a; }
+      .mlist .none { padding: 4px 5px; color: #808080; }
+      .stage { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; padding: 10px; overflow-y: auto; color: #fff; border-right: 2px solid var(--win-dark); }
+      .stage .watch-clock b { font-size: 26px; }
+      .stage .watch-badge { font-size: 12px; }
+      .stage .watch-kills { font-size: 12px; }
+      .stage .empty { margin: auto; max-width: 420px; color: var(--muted); text-align: center; }
+      .details { flex: none; width: 280px; overflow-y: auto; color: #e0e0e0; font: 12px Verdana, sans-serif; }
+      .details section { padding: 6px 8px 8px; }
+      .details dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; margin: 0; }
+      .details dt { color: #808080; }
+      .details dd { margin: 0; overflow-wrap: anywhere; }
+      /* The match's view, as big as the window lets it be while the clock
+         still shows under it. */
+      .watch-info { display: contents; }
+      .stage .watch-screen {
+        flex: none;
+        align-self: center;
+        width: min(100%, max(320px, calc((min(760px, 100vh - 32px) - 210px) * 16 / 9)));
+      }
+      html.watch-window .stage .watch-screen { width: min(100%, max(320px, calc((100vh - 190px) * 16 / 9))); }
+      /* Full screen: the view fills the screen, with the match over it. */
+      .watch-screen.full {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        max-width: none;
+        background-color: #000;
+        color: #fff;
+      }
+      .watch-screen:focus { outline: none; }
+      .watch-screen.full .watch-view { position: absolute; inset: 0; aspect-ratio: auto; border: 0; }
+      .watch-screen.full .watch-view .watch-badge { display: none; }
+      .watch-screen.full .watch-view .no-pic { font-size: clamp(15px, 2vw, 30px); }
+      .watch-screen.full.idle { cursor: none; }
+      .watch-hud { display: none; }
+      .watch-screen.full .watch-hud {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        gap: 12px;
+        padding: max(12px, 2vh) max(12px, 2vw);
+        pointer-events: none;
+        font: clamp(12px, 1.2vw, 20px)/1.35 Verdana, Geneva, sans-serif;
+      }
+      .hud-top { grid-column: 1 / -1; display: flex; align-items: center; gap: 0.8em; min-width: 0; }
+      .hud-top .watch-badge { position: static; flex: none; display: inline-flex; font-size: 0.8em; }
+      .hud-top .grow { flex: 1; }
+      .hud-title { min-width: 0; padding: 0.3em 0.7em; background-color: rgba(0, 0, 0, 0.6); }
+      .hud-title b, .hud-title span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .hud-title span { color: #bbb; font-size: 0.8em; }
+      .hud-clock { flex: none; min-width: 9em; padding: 0.3em 0.7em; background-color: rgba(0, 0, 0, 0.6); }
+      .watch-hud .watch-clock b { font-size: 1.6em; }
+      .watch-hud .watch-clock small { font-size: 0.8em; }
+      .hud-count { flex: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 0.35em; padding: 0.3em 0.7em; background-color: rgba(0, 0, 0, 0.6); }
+      .hud-count .eye { width: 1.1em; height: 1.1em; }
+      .hud-exit {
+        flex: none;
+        white-space: nowrap;
+        pointer-events: auto;
+        padding: 0.35em 0.8em;
+        border: 1px solid rgba(255, 255, 255, 0.5);
+        background-color: rgba(0, 0, 0, 0.6);
+        color: #fff;
+        font: inherit;
+        font-size: 0.85em;
+        cursor: pointer;
+        transition: opacity 0.3s;
+      }
+      .hud-exit:hover { background-color: rgba(31, 95, 107, 0.85); }
+      .hud-panel { padding: 0.5em 0.8em; background-color: rgba(0, 0, 0, 0.6); }
+      .hud-scores { grid-column: 2; grid-row: 2; align-self: start; width: min(24em, 36vw); max-height: 100%; overflow: hidden; }
+      .hud-kills { grid-column: 1; grid-row: 3; align-self: end; justify-self: start; max-width: min(36em, 60vw); }
+      .watch-hud .watch-teams { margin-bottom: 0.3em; }
+      #watch .watch-hud th { font-size: 0.65em; }
+      #watch .watch-hud td { padding: 0.15em 0 0.15em 0.6em; }
+      .watch-hud .watch-kills { font-size: 0.85em; }
+      .hud-keys { grid-column: 2; grid-row: 3; align-self: end; justify-self: end; color: #bbb; font-size: 0.75em; transition: opacity 0.3s; }
+      .watch-screen.full.idle .hud-exit, .watch-screen.full.idle .hud-keys { opacity: 0; }
+      /* On a narrow or upright screen (a phone), the match's name and clock
+         get lines of their own, and the scores the width. */
+      @media (max-width: 700px), (max-aspect-ratio: 1/1) {
+        .watch-screen.full .watch-hud { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; font-size: 13px; }
+        .hud-top { flex-wrap: wrap; row-gap: 0.5em; }
+        .hud-title, .hud-clock { order: 1; flex: 1 1 100%; }
+        .hud-scores { grid-column: 1; grid-row: 2; width: auto; }
+        .hud-kills { grid-column: 1; grid-row: 4; max-width: none; }
+        .hud-keys { display: none; }
+      }
+      @media (pointer: coarse) {
+        .hud-keys { display: none; }
+      }
+      /* The viewing page in a window of its own (Pop out): only it, filling
+         the window. */
+      html.watch-window body > :not(#watch) { display: none !important; }
+      html.watch-window #watch {
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        max-width: none;
+        max-height: none;
+        border: 0;
+        box-shadow: none;
+      }
+      html.watch-window #watch::backdrop { background-color: #000; }
+      html.watch-window #watch [data-wact=back], html.watch-window #watch [data-wact=back] + .sep,
+      html.watch-window #watch [data-wact=pop] { display: none; }
+      /* The match itself in the box (watchBox): a frame of this page whose
+         game watches it, over the level's picture and under the badges and
+         the scores over it. Until its game plays the match, the picture
+         shows through. */
+      .stage .watch-screen { position: relative; }
+      .watch-frame {
+        position: absolute;
+        left: 0;
+        top: 0;
+        z-index: 1;
+        width: 100%;
+        height: 100%;
+        transform-origin: 0 0;
+        border: 0;
+        background: transparent;
+        color-scheme: normal;
+      }
+      .watch-screen:has(.watch-frame) .watch-view::after { display: none; }
+      .watch-screen.box-panel .watch-frame { z-index: 2; }
+      /* Once its game plays the match, black around it, not the picture. */
+      .watch-screen.box-live .watch-view { background: #000 !important; }
+      .watch-screen.box-live .watch-view .no-pic { visibility: hidden; }
+      /* The box's page gave the keys back (Esc): no ring around the box. */
+      .watch-screen:focus { outline: none; }
+      /* The keys for watching (Controls, watchKeysPanel), over the box's
+         game once it plays the match. Clicks go through to the game. */
+      #watch .watch-keys {
+        position: absolute;
+        right: 6px;
+        bottom: 6px;
+        z-index: 3;
+        max-width: calc(100% - 12px);
+        max-height: calc(100% - 40px);
+        overflow: hidden;
+        padding: 6px 9px 7px;
+        background-color: rgba(0, 0, 0, 0.72);
+        color: #ddd;
+        font: 11px/1.35 Verdana, sans-serif;
+        pointer-events: none;
+      }
+      .watch-screen:not(.box-live) .watch-keys, .watch-screen.box-panel .watch-keys,
+      .watch-screen:not(.box-live) .hud-controls { display: none; }
+      /* Who the box's game follows (watchFollowLabel), in the page's own
+         letters: the game's own line is small in the box. On the whole
+         screen, in the bar along the top. */
+      #watch .watch-follow {
+        position: absolute;
+        left: 50%;
+        top: 6px;
+        z-index: 3;
+        max-width: max(40%, calc(100% - 300px));
+        transform: translateX(-50%);
+        padding: 2px 8px;
+        background-color: rgba(0, 0, 0, 0.72);
+        color: var(--gold);
+        font: bold 12px Verdana, sans-serif;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        pointer-events: none;
+      }
+      .hud-follow {
+        flex: none;
+        max-width: 16em;
+        padding: 0.3em 0.7em;
+        background-color: rgba(0, 0, 0, 0.6);
+        color: var(--gold);
+        font-weight: bold;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #watch .watch-follow:empty, .hud-follow:empty, #watch .watch-screen.full .watch-follow,
+      .watch-screen:not(.box-live) .watch-follow, .watch-screen:not(.box-live) .hud-follow,
+      .watch-screen.box-panel .watch-follow { display: none; }
+      #watch .watch-keys .keys-head { display: flex; align-items: center; gap: 10px; margin-bottom: 3px; color: #fff; font-weight: bold; }
+      #watch .watch-keys .keys-head span { flex: 1; }
+      #watch .watch-keys .keys-hide {
+        pointer-events: auto;
+        padding: 0 6px;
+        border: 1px solid rgba(255, 255, 255, 0.45);
+        background: transparent;
+        color: #fff;
+        font: inherit;
+        font-weight: normal;
+        cursor: pointer;
+      }
+      #watch .watch-keys .keys-hide:hover { background-color: rgba(31, 95, 107, 0.85); }
+      #watch .watch-keys table { width: auto; }
+      #watch .watch-keys th, #watch .watch-keys td { padding: 1px 0; font: inherit; text-align: left; white-space: nowrap; }
+      #watch .watch-keys th { padding-right: 12px; color: #bbb; font-weight: normal; }
+      #watch .watch-keys td { color: var(--gold); }
+      #watch .watch-keys .keys-note { margin-top: 3px; color: #999; font-size: 0.9em; }
+      #watch .watch-screen.full .watch-keys { right: auto; bottom: auto; left: max(12px, 2vw); top: 50%; transform: translateY(-50%); font-size: clamp(12px, 0.9vw, 16px); }
+      /* Its game stopped watching: why, and the way back to it. */
+      .watch-view .box-note {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        z-index: 1;
+        width: min(420px, calc(100% - 24px));
+        padding: 10px 14px 12px;
+        transform: translate(-50%, -50%);
+        background-color: rgba(0, 0, 0, 0.8);
+        color: #fff;
+        font: 13px/1.4 Verdana, sans-serif;
+        text-align: center;
+      }
+      .watch-view .box-note p { margin: 0 0 8px; }
+
+      /* This page as that box (#watch-<room>-embed, set in the head): only
+         the game, the folder prompt and what the game says, on nothing, so
+         the lobby page's picture shows until the match is on (embed-live). */
+      html.watch-embed, html.watch-embed body { margin: 0; overflow: hidden; background: transparent; }
+      html.watch-embed body > :not(.emscripten_border):not(#view-note):not(#picker) { display: none !important; }
+      html.watch-embed:not(.embed-live) #canvas { visibility: hidden; }
+      html.watch-embed .view-note { bottom: 10px; padding: 5px 12px; font-size: 12px; }
+      /* The box's page is the screen's size, scaled down to the box (boxFit on
+         the lobby page): what it shows over the game is as big as it would be
+         in a page the box's size. */
+      html.watch-embed #picker, html.watch-embed .view-note { zoom: var(--box-zoom, 1); }
+      html.watch-embed #picker {
+        position: fixed;
+        inset: 0;
+        width: auto;
+        height: auto;
+        max-width: none;
+        max-height: none;
+        margin: 0;
+        border: 0;
+        box-shadow: none;
+        overflow-y: auto;
+        background-color: rgba(0, 51, 51, 0.94);
+        font-size: 14px;
+      }
+      html.watch-embed #picker::backdrop { background: transparent; }
+      /* What it needs and the button for it come first, in a box this small. */
+      html.watch-embed #picker .body { display: flex; flex-direction: column; padding: 10px 14px 12px; }
+      html.watch-embed #picker .body > * { order: 1; }
+      html.watch-embed #picker #picker-embed { order: -4; }
+      html.watch-embed #picker .actions.picker-intro { order: -3; margin-bottom: 4px; }
+      html.watch-embed #picker #picker-result, html.watch-embed #picker #problem-reload { order: -2; }
+      html.watch-embed #picker .picker-intro.picker-option { order: -1; margin: 6px 0 12px; }
+      html.watch-embed #picker .titlebar .close, html.watch-embed #picker .promises,
+      html.watch-embed #picker .actions .cancel, html.watch-embed #picker .picker-option .fine { display: none; }
+      .embed-only { display: none; }
+      html.watch-embed #picker .embed-only:not([hidden]) { display: block; }
+      /* Getting the game going: only what it's doing, along the bottom. */
+      html.watch-embed #picker.embed-busy {
+        inset: auto 0 0 0;
+        background-color: rgba(0, 0, 0, 0.8);
+        overflow: hidden;
+      }
+      html.watch-embed #picker.embed-busy .titlebar { display: none; }
+      html.watch-embed #picker.embed-busy .body { padding: 6px 12px; }
+      html.watch-embed #picker.embed-busy #picker-result { margin: 0; color: var(--gold); font: bold 12px Verdana, sans-serif; }
+      @media (max-width: 900px) {
+        .watch-body { flex-direction: column; overflow-y: auto; }
+        .mlist, .details { width: auto; overflow: visible; border-right: 0; }
+        .mlist { border-bottom: 2px solid var(--win-dark); max-height: 30vh; overflow-y: auto; }
+        .stage { flex: none; overflow: visible; border-right: 0; }
+        /* In a window of its own, the match comes first. */
+        html.watch-window .watch-body .stage, html.watch-window .watch-body .details { order: -1; }
+        html.watch-window .watch-body .details { border-bottom: 2px solid var(--win-dark); }
+      }
+
       @media (max-width: 700px) {
-        #room { width: 100vw; height: 100dvh; max-width: none; max-height: none; border: 0; box-shadow: none; }
+        #room, #watch { width: 100vw; height: 100dvh; max-width: none; max-height: none; border: 0; box-shadow: none; }
+        #watch [data-wact=pop] { display: none; }
+        .pv { order: -1; width: auto; overflow: visible; border-bottom: 2px solid var(--win-dark); }
+        .watch-body .stage, .watch-body .details { order: -1; }
+        .watch-body .details { border-bottom: 2px solid var(--win-dark); }
+        .mlist { max-height: none; }
         .room-body { flex-direction: column; overflow-y: auto; }
         .room-games { flex: none; overflow: visible; border-right: 0; border-bottom: 2px solid var(--win-dark); padding: 12px 16px; --backdrop-x: -7px; }
         .roster { width: auto; overflow: visible; }
@@ -1478,7 +2044,7 @@
       .style-2001 .footer { margin-top: 14px; }
 
       /* The folder prompt and the room window keep their layout, in blue. */
-      .style-2001 #picker .titlebar, .style-2001 #room .titlebar {
+      .style-2001 #picker .titlebar, .style-2001 #room .titlebar, .style-2001 #watch .titlebar {
         background: linear-gradient(var(--tab), var(--tab-dark));
         color: #fff;
       }
@@ -1492,10 +2058,10 @@
         border-color: #8fd0f2;
         background-color: var(--tab-dark);
       }
-      .style-2001 #picker::backdrop, .style-2001 #room::backdrop { background-color: rgba(0, 25, 45, 0.6); }
+      .style-2001 #picker::backdrop, .style-2001 #room::backdrop, .style-2001 #watch::backdrop { background-color: rgba(0, 25, 45, 0.6); }
       .style-2001 #picker .promises b, .style-2001 .gfx-notice h2, .style-2001 dialog.SDL3_messagebox h1 { color: #fff; }
       .style-2001 .gfx-notice { border-left-color: var(--orange-light); }
-      .style-2001 #room :focus-visible { outline-color: var(--frame); }
+      .style-2001 #room :focus-visible, .style-2001 #watch :focus-visible { outline-color: var(--frame); }
       .style-2001 .room-toolbar [data-act=host] circle { fill: var(--tab); stroke: var(--teal-dark); }
       .style-2001 .room-toolbar [data-act=host] path { fill: #fff; }
       .style-2001 .room-toolbar [data-act=join] circle { fill: var(--join); stroke: var(--join-lo); }
@@ -1803,6 +2369,7 @@
       <canvas class="emscripten" id="canvas" oncontextmenu="event.preventDefault()" tabindex=-1></canvas>
     </div>
     <p class="quit-note" id="quit-note" role="status" hidden>Saving your settings and going back to the lobby&hellip;</p>
+    <p class="view-note" id="view-note" role="status" hidden></p>
     <p class="saves-elsewhere" id="saves-elsewhere" role="status" hidden>The game was started in another tab, so this one no longer saves controls or games. Close this tab, or reload it to play and save here.</p>
 <div class="spinner" id='spinner'></div>
     <div class="emscripten" id="status">Downloading...</div>
@@ -2557,6 +3124,9 @@
         <button class="close" type="button" aria-label="Close">&#x2715;</button>
       </div>
       <div class="body">
+        <p class="picker-intro embed-only" id="picker-embed">Before you can watch matches, the game needs your own
+          copy of <span class="embed-game">Jedi Knight</span>. Choose your game folder once: with "Save the game files
+          in this browser" ticked, matches show here straight away from then on.</p>
         <p class="picker-intro">Choose the folder where <span id="picker-game">Jedi Knight: Dark Forces II (or Mysteries
           of the Sith)</span> is installed, the one with <code>episode</code> and <code>resource</code> inside.</p>
         <ul class="promises picker-intro">
@@ -2664,7 +3234,45 @@
       </div>
     </dialog>
 
+    <!-- The viewing page: watching a match full size (Watching a match). -->
+    <dialog id="watch" aria-labelledby="watch-title">
+      <div class="titlebar">
+        <h1 id="watch-title">Watching</h1>
+        <button class="close" type="button" aria-label="Close">&#x2715;</button>
+      </div>
+      <div class="room-toolbar" role="toolbar" aria-label="Watching">
+        <button type="button" data-wact="back"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M9 3L5 7l4 4" fill="none" stroke="#336666" stroke-width="2"/></svg>Back to the room</button>
+        <span class="sep" aria-hidden="true"></span>
+        <button type="button" data-wact="prev"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M2 2v10M12 2L5 7l7 5z" fill="#336666" stroke="#336666"/></svg>Previous match</button>
+        <button type="button" data-wact="next"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M12 2v10M2 2l7 5-7 5z" fill="#336666" stroke="#336666"/></svg>Next match</button>
+        <span class="grow"></span>
+        <span class="wcount" id="watch-count"></span>
+        <button type="button" data-wact="pop" title="Watch in a window of its own, to move and size as you like"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M6 2H1.5v10.5H12V8" fill="none" stroke="#336666" stroke-width="1.6"/><path d="M8 1h5v5M13 1L6.5 7.5" fill="none" stroke="#336666" stroke-width="1.6"/></svg>Pop out</button>
+        <button type="button" data-wact="full" aria-pressed="false" title="The match's view on the whole screen (F; Esc to leave)"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M1 5V1h4M9 1h4v4M13 9v4H9M5 13H1V9" fill="none" stroke="#336666" stroke-width="1.8"/></svg>Full screen</button>
+        <button type="button" data-wact="keys" id="watch-keys" aria-pressed="true" title="Show or hide the keys for watching: other players, the free camera, messages"><svg viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="3" width="12" height="8" rx="1" fill="none" stroke="#336666" stroke-width="1.6"/><path d="M3.5 5.5h1M6.5 5.5h1M9.5 5.5h1M4 8.5h6" stroke="#336666" stroke-width="1.4"/></svg>Controls</button>
+        <button type="button" data-wact="game" id="watch-game"><svg viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="2.5" width="12" height="9" rx="1" fill="none" stroke="#336666" stroke-width="1.6"/><path d="M5.5 5v4l3.5-2z" fill="#336666"/></svg>Watch in the game</button>
+        <button type="button" class="watch-btn go" data-wact="join" id="watch-join">Join</button>
+      </div>
+      <div class="watch-body">
+        <nav class="mlist" id="watch-list" aria-label="Matches to watch"></nav>
+        <section class="stage" id="watch-stage" aria-live="off">
+          <!-- The match's view: kept from one drawing to the next, so it can
+               stay on the whole screen (Full screen). -->
+          <div class="watch-screen" id="watch-screen" tabindex="-1" hidden></div>
+          <div class="watch-info" id="watch-info"></div>
+        </section>
+        <aside class="details" id="watch-details" aria-label="Match details"></aside>
+      </div>
+      <div class="room-status">
+        <span class="panel"><span class="live-dot" id="watch-live-dot"></span><span id="watch-live">Connecting</span></span>
+        <span class="panel" id="watch-summary"></span>
+      </div>
+    </dialog>
+
     <script type='text/javascript'>
+      // This page is the viewing page's box on the lobby page (set in the
+      // head): its game only watches the match there (startWatchEmbed).
+      var watchEmbed = document.documentElement.classList.contains('watch-embed');
       var statusElement = document.getElementById('status');
       var progressElement = document.getElementById('progress');
       var spinnerElement = document.getElementById('spinner');
@@ -4924,7 +5532,9 @@
       }
 
       function loadEngine(withBundledData) {
-        leaveGuard = true;
+        // The box's game is the lobby page's, which asks nothing when it's left.
+        leaveGuard = !watchEmbed;
+        embedStarted = true;
         if (withBundledData) {
           var data = document.createElement('script');
           data.src = 'openjkdf2_data.js';
@@ -5110,6 +5720,7 @@
         document.getElementById('picker-game').textContent = !pickerWant ?
           'Jedi Knight: Dark Forces II (or Mysteries of the Sith)' :
           pickerWant.game === 'mots' ? 'Mysteries of the Sith' : 'Jedi Knight: Dark Forces II';
+        picker.querySelector('.embed-game').textContent = pickerWant ? GAME_NAMES[pickerWant.game] : 'the game';
         picker.querySelectorAll('.picker-intro').forEach(function(e) { e.hidden = false; });
         modChoice.hidden = true;
         problemReload.hidden = true;
@@ -5182,6 +5793,129 @@
         location.reload();
       });
 
+      // ---- This page as the viewing page's box (watchEmbed): a frame of the
+      // lobby page, whose game watches the match the box shows. It tells the
+      // lobby page (its jkWatchBoxSays) live once its game plays the match,
+      // and left, with why, once it has stopped (or never could start), so
+      // the box shows the match's picture again with Watch again.
+      var embedStarted = false, embedLive = false, embedPanel = false, embedZoomNow = 1;
+      // How much the lobby page scales this page down (jkWatchBoxZoom), so
+      // the prompt and what the game says are drawn that much bigger.
+      function embedZoom() {
+        var z = 1;
+        try {
+          z = Number(window.parent.jkWatchBoxZoom(window)) || 1;
+        } catch (e) {}
+        if (z === embedZoomNow) return;
+        embedZoomNow = z;
+        document.documentElement.style.setProperty('--box-zoom', String(z));
+      }
+      function embedSays(state, text) {
+        try {
+          if (window.parent !== window && typeof window.parent.jkWatchBoxSays === 'function')
+            window.parent.jkWatchBoxSays(window, state, String(text || ''));
+        } catch (e) {}
+        return true;
+      }
+      if (watchEmbed) {
+        // The box has nowhere else to go: Esc doesn't close its prompt, and
+        // a prompt closed with nothing started (a problem clicked away) is
+        // the box giving up, saying what it said.
+        picker.addEventListener('cancel', function(ev) { ev.preventDefault(); });
+        picker.addEventListener('close', function() {
+          setTimeout(function() {
+            if (!embedStarted && !picker.open) embedSays('left', document.getElementById('picker-result').textContent);
+          });
+        });
+        // The first press on the game, and the first after the lobby page had
+        // the keys, only puts the keys in the box: the game would take it as
+        // Fire (the next player) and lock the mouse. The box can have the
+        // keys before anyone clicks it (its folder prompt takes them), so
+        // that's not what tells.
+        var embedArmed = true, embedSwallow = false;
+        window.addEventListener('blur', function() { embedArmed = true; });
+        var swallow = function(ev) {
+          if (ev.type === 'pointerdown') {
+            var onGame = !!ev.target && ev.target.id === 'canvas';
+            embedSwallow = embedArmed && onGame;
+            if (onGame) embedArmed = false;
+          }
+          if (!embedSwallow) return;
+          ev.stopImmediatePropagation();
+          if (ev.type === 'mouseup') embedSwallow = false;
+        };
+        ['pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach(function(type) {
+          window.addEventListener(type, swallow, true);
+        });
+        // Esc gives the mouse and the keys back to the lobby page, for
+        // clicking anything there: the game never hears it, as its menu
+        // is of no use to a box that only watches. The browser lets go of
+        // a locked mouse on Esc by itself, often without the page hearing
+        // the key: the same then.
+        ['keydown', 'keyup', 'keypress'].forEach(function(type) {
+          window.addEventListener(type, function(ev) {
+            if (ev.key !== 'Escape' && ev.code !== 'Escape') return;
+            ev.preventDefault();
+            ev.stopImmediatePropagation();
+            if (ev.type !== 'keydown' || ev.repeat) return;
+            if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
+            embedSays('letgo');
+          }, true);
+        });
+        document.addEventListener('pointerlockchange', function() {
+          if (!document.pointerLockElement && embedLive && document.hasFocus()) embedSays('letgo');
+        });
+        // The keys for watching as the player bound them in the game, for
+        // the lobby page's Controls (watchKeysPanel): {fire1: [[the game's
+        // name for a key (DIK_SPACE), the other way (Back, the other
+        // side)], ...], ...}. null before the game is there.
+        var EMBED_KEY_FUNCS = { forward: 0, slide: 2, jump: 4, duck: 5, fast: 6, fire1: 10, fire2: 11, map: 33, camera: 37, talk: 38 };
+        window.jkWatchKeys = function() {
+          if (typeof Module._sithControl_WebFunctionKey !== 'function' || typeof Module._stdControl_WebKeyName !== 'function') return null;
+          var out = {};
+          Object.keys(EMBED_KEY_FUNCS).forEach(function(name) {
+            var list = [];
+            for (var n = 0; n < 8; n++) {
+              var k = Module._sithControl_WebFunctionKey(EMBED_KEY_FUNCS[name], n);
+              if (k < 0) break;
+              list.push([Module.UTF8ToString(Module._stdControl_WebKeyName(k & 0xffff)), !!(k & 0x10000)]);
+            }
+            out[name] = list;
+          });
+          return out;
+        };
+        // The game shows once it plays the match (until then the lobby
+        // page's picture shows through). The feed doesn't count its game
+        // (Module.jkWatchBox): the lobby page counts itself the whole time.
+        setInterval(function() {
+          var view = Module.jkView;
+          if (!embedLive && view && view.phase === 'live') {
+            embedLive = true;
+            document.documentElement.classList.add('embed-live');
+            embedSays('live');
+          }
+          embedZoom();
+          embedLook();
+        }, 250);
+      }
+      // Getting the game going shows only what it's doing, along the bottom
+      // of the box; the folder prompt, or a problem, is a panel of its own
+      // over the lobby page's badges. Also as each step says what it does
+      // (showPickerResult), so the panel doesn't flash between them.
+      function embedLook() {
+        if (!watchEmbed) return;
+        var intro = picker.querySelector('.actions.picker-intro');
+        var busy = picker.open && (picker.classList.contains('checking') ||
+                                   (intro.hidden && modChoice.hidden && problemReload.hidden &&
+                                    document.getElementById('picker-result').className !== 'error'));
+        picker.classList.toggle('embed-busy', busy);
+        var panel = picker.open && !busy;
+        if (panel !== embedPanel) {
+          embedPanel = panel;
+          embedSays(panel ? 'panel' : 'busy');
+        }
+      }
+
       function hideZone() {
         document.getElementById('zone').hidden = true;
         document.documentElement.classList.remove('zone-open');
@@ -5226,6 +5960,7 @@
       }
 
       Module.jkQuitToLobby = function() {
+        if (watchEmbed) return embedSays('left', '');
         leaveGuard = false;  // no "Leave site?" question: the player chose Quit
         document.getElementById('quit-note').hidden = false;
         // pickerWant is still the prompt the game was started from.
@@ -5596,6 +6331,13 @@
           if (savesElsewhere && !populate) return callback(null);
           return syncfs.apply(this, arguments);
         };
+        // The viewing page's box only watches: it loads the saves (the
+        // controls and settings) and never stores them, nor takes them from
+        // a tab that plays.
+        if (watchEmbed) {
+          savesElsewhere = true;
+          return;
+        }
         if (!savesChannel) return;
         savesChannel.onmessage = function(ev) {
           if (ev.data !== 'saves-taken' || savesElsewhere) return;
@@ -6879,6 +7621,18 @@
         });
       }
 
+      // What watching starts with: only the graphics packs the player keeps on
+      // (only they see them, in every game), as the start window has them.
+      function watchStartMods(folderMods, game) {
+        var leftOut = modsLeftOut(game);
+        var on = [];
+        folderMods.forEach(function(m, i) {
+          if (m.optional && !m.library && leftOut.indexOf(modKey(m)) < 0)
+            on.push({ index: i, name: m.name, path: m.path, key: modKey(m) });
+        });
+        return on;
+      }
+
       // The name of several mods together, for the lobby (at most 63
       // characters, mods.js).
       function setName(names) {
@@ -7161,6 +7915,7 @@
         var el = document.getElementById('picker-result');
         el.textContent = text;
         el.className = isError ? 'error' : '';
+        embedLook();
       }
 
       // fileList is the picked folder's files, or the ones saved in the
@@ -7271,7 +8026,8 @@
             await addLibraryMods(await libraryMods(game), folderMods, files, ext);
           }
           lap('finding mods');
-          if (folderMods.length > 1) {
+          // Only the start window shows clashes, and watching has none.
+          if (folderMods.length > 1 && !(pickerWant && pickerWant.watch)) {
             showPickerResult('Looking through your mods...');
             found = await findClashes(folderMods, files, ext);
             lap('comparing mods');
@@ -7311,7 +8067,10 @@
             lap('comparing with the saved files');
           }
         }
-        var picked = await chooseMods(folderMods, saved, found.clashes, game, fromBrowser, copy && copy.time, news, kept);
+        // Watching starts at once, with no start window: the match says
+        // which mod it's played with, and the game gets onto it (mods.js).
+        var picked = pickerWant && pickerWant.watch ? watchStartMods(folderMods, game) :
+          await chooseMods(folderMods, saved, found.clashes, game, fromBrowser, copy && copy.time, news, kept);
         // The player went to choose a different folder, or closed the prompt.
         if (!picked) return;
         lap('start window');
@@ -7775,6 +8534,8 @@
         b.addEventListener('click', function() {
           delete Module.jkJoinRoom;
           delete Module.jkJoinImperial;
+          delete Module.jkWatchRoom;
+          delete Module.jkWatchPack;
           openPicker(null);
         });
       });
@@ -7920,6 +8681,8 @@
         b.addEventListener('click', function() {
           delete Module.jkJoinRoom;
           delete Module.jkJoinImperial;
+          delete Module.jkWatchRoom;
+          delete Module.jkWatchPack;
           startDemo(DEMO_WANT);
         });
       });
@@ -7944,7 +8707,7 @@
       if (window.location.hash === '#bundled') {
         hideZone();
         loadEngine(true);
-      } else {
+      } else if (!watchEmbed) {
         document.documentElement.classList.add('zone-open');
         Module.setStatus('Waiting for game folder...');
       }
@@ -8027,7 +8790,7 @@
           if (!obj(v) || !num(v.at)) return null;
           var out = { mode: num(v.mode), sl: num(v.sl), tl: num(v.tl), at: num(v.at), over: num(v.over),
                       nocount: v.nocount === 'password' || v.nocount === 'coop' ? v.nocount : '', count: num(v.count),
-                      pl: null, sb: [], teams: null, last: null, streak: null };
+                      pl: null, sb: [], teams: null, last: null, kills: null, streak: null };
           if (obj(v.pl) && num(v.pl.n) > 0 && num(v.pl.i) < num(v.pl.n))
             out.pl = { i: num(v.pl.i), n: num(v.pl.n), loop: !!v.pl.loop, next: str(v.pl.next, 48) };
           if (Array.isArray(v.sb)) {
@@ -8036,8 +8799,13 @@
             });
           }
           if (Array.isArray(v.teams) && v.teams.length === 5) out.teams = v.teams.map(score);
-          if (Array.isArray(v.last) && num(v.last[3]))
-            out.last = [str(v.last[0], 32), str(v.last[1], 32), Math.min(num(v.last[2]), 5), num(v.last[3])];
+          function kill(k) { return [str(k[0], 32), str(k[1], 32), Math.min(num(k[2]), 5), num(k[3])]; }
+          if (Array.isArray(v.last) && num(v.last[3])) out.last = kill(v.last);
+          // Its latest kills, the oldest first, for watching it.
+          if (Array.isArray(v.kills)) {
+            var kills = v.kills.slice(-8).filter(function(k) { return Array.isArray(k) && num(k[3]); }).map(kill);
+            if (kills.length) out.kills = kills;
+          }
           if (Array.isArray(v.streak) && num(v.streak[1])) out.streak = [str(v.streak[0], 32), num(v.streak[1])];
           return out;
         }
@@ -8048,7 +8816,13 @@
           return { id: num(g.id), name: str(g.name, 32), game: g.game === 'mots' ? 'mots' : 'jk1',
                    map: str(g.map, 64), title: str(g.title, 48), episode: str(g.episode, 64), mod: str(g.mod, 64),
                    locked: !!g.locked, players: num(g.players), max: num(g.max), names: names(g.names),
-                   net: num(g.net), rank: g.rank === undefined ? -1 : Math.min(num(g.rank), 99), live: live(g.live) };
+                   net: num(g.net), rank: g.rank === undefined ? -1 : Math.min(num(g.rank), 99), live: live(g.live),
+                   // Whether its match can be watched (1 or 0; -1 from a
+                   // lobby that doesn't say), and by how many pages; feed: 1
+                   // when its host's game sends the feed a game watches it
+                   // from ("Watch in the game", playWatched).
+                   spect: g.spect === undefined ? -1 : g.spect ? 1 : 0, watching: num(g.watching),
+                   feed: g.feed ? 1 : 0 };
         });
         var lobby = names(s.lobby);
         var by = s.byGame && typeof s.byGame === 'object' ? s.byGame : {};
@@ -8172,6 +8946,8 @@
         if (a) imperialLive.updated = new Date();
         renderRoomCount();
         if (room.open) renderRoom();
+        // Its games come first in a room, so they number the lobby's.
+        if (watchDlg.open) renderWatch();
       }
 
       // Asks the Worker now and every IMPERIAL_POLL_MS after, while the page
@@ -8245,6 +9021,8 @@
         if (lobbyLive.status) lobbyLive.updated = new Date();
         renderRoomCount();
         if (room.open) renderRoom();
+        if (watchDlg.open) renderWatch();
+        watchLinkReady();
         matchesStatus(lobbyLive.status);
       }
 
@@ -8563,19 +9341,23 @@
       // on: the clocks in Info, the bars, the last kill's "ago" and the
       // lines on the tables. Nothing else is redrawn.
       function tickLive() {
-        if (!room.open || document.hidden) return;
-        roomGames.querySelectorAll('[data-live]').forEach(function(box) {
-          var g = liveGames[box.dataset.live];
+        if ((!room.open && !watchDlg.open) || document.hidden) return;
+        var boxes = Array.prototype.slice.call(room.querySelectorAll('[data-live]'))
+          .concat(Array.prototype.slice.call(watchDlg.querySelectorAll('[data-live]')));
+        boxes.forEach(function(box) {
+          var g = liveGames[box.dataset.live] || watchGames[box.dataset.live];
           var v = g && gameLive(g);
           if (!v) return;
           var c = liveClock(v);
           box.querySelectorAll('[data-tick]').forEach(function(e) {
             switch (e.dataset.tick) {
             case 'big': e.textContent = c.big; break;
-            case 'small': e.textContent = c.small; break;
+            case 'small': e.textContent = c.small + (e.dataset.after || ''); break;
             case 'bar': e.style.width = Math.round((c.part || 0) * 100) + '%'; break;
             case 'feed': e.textContent = liveFeed(v); break;
             case 'summary': e.textContent = liveSummary(v); break;
+            case 'lastkill': if (v.last) killLine(e, v.last, true); break;
+            case 'kills': fillKills(e, v, Number(e.dataset.n) || 3); break;
             }
           });
         });
@@ -8641,6 +9423,9 @@
         info.append(summary, dl);
         var meta = el('div', 'table-meta');
         meta.append(info);
+        // Watch, for a match that can be watched (Watching a match).
+        if (!g.imperial && g.spect >= 0) meta.append(watchTag(g, no));
+        if (!g.imperial && g.id === watchLive.id) li.classList.add('picked');
         if (v) {
           var line = el('p', 'table-summary', liveSummary(v));
           line.dataset.tick = 'summary';
@@ -8761,7 +9546,7 @@
         thead.append(head);
         var tbody = el('tbody');
         games.forEach(function(g, i) {
-          var tr = el('tr');
+          var tr = el('tr', !g.imperial && g.id === watchLive.id ? 'picked' : null);
           var no = gameNumber(i);
           var name = el('td', null, g.name || '(no name)');
           if (g.locked) name.insertAdjacentHTML('beforeend', ' ' + LOCK_SVG);
@@ -8783,6 +9568,17 @@
             b.dataset.label = no;
             b.dataset.key = 'join-' + g.uid;
             action.append(b);
+          }
+          // Watch, below Join (Watching a match), also for a game that's full.
+          if (!g.imperial && canWatch(g)) {
+            var wb = el('button', 'zone-button watch-button', g.id === watchLive.id ? 'Watching' : 'Watch');
+            wb.type = 'button';
+            wb.dataset.watch = g.id;
+            wb.dataset.key = 'watch-' + g.uid;
+            wb.setAttribute('aria-pressed', String(g.id === watchLive.id));
+            wb.setAttribute('aria-label', 'Watch ' + no + (g.watching ? ', ' + g.watching + ' watching' : ''));
+            action.className = 'acts';
+            action.append(wb);
           }
           var off = g.imperial && !g.listed;
           var level = off ? '' : levelTitle(g);
@@ -8890,7 +9686,7 @@
         document.getElementById('room-title').textContent = ROOMS[lobbyLive.room].title;
         // A redraw keeps what has focus and which Info panels are open.
         var active = document.activeElement;
-        var focusKey = active && roomGames.contains(active) ? active.dataset.key : null;
+        var focusKey = active && room.contains(active) ? active.dataset.key : null;
         var openInfo = Array.from(roomGames.querySelectorAll('details[open]')).map(function(d) { return d.dataset.key; });
         roomGames.replaceChildren();
         liveGames = {};
@@ -8917,12 +9713,14 @@
         }
         lobbyLive.cols = 0;
         fillTables(true);
+        // The match watched, beside the tables.
+        renderWatchPane();
         openInfo.forEach(function(k) {
           var d = roomGames.querySelector('details[data-key="' + k + '"]');
           if (d) d.open = true;
         });
         if (focusKey) {
-          var f = roomGames.querySelector('[data-key="' + focusKey + '"]');
+          var f = room.querySelector('[data-key="' + focusKey + '"]');
           if (f) f.focus();
         }
         room.querySelectorAll('[data-view]').forEach(function(b) {
@@ -8935,6 +9733,15 @@
       function openRoom(key) {
         if (!Object.prototype.hasOwnProperty.call(ROOMS, key)) return;
         if (lobbyLive.room !== key) lobbyLive.seen = {};
+        // Another room's window stops watching a game of this one's.
+        if (watchLive.id && !watchDlg.open) {
+          var watched = watchedGame();
+          if (!watched || watched.key !== key) {
+            watchLive.id = 0;
+            watchLive.last = null;
+            sayWatching();
+          }
+        }
         lobbyLive.room = key;
         roomGames.dataset.roomKey = key;   // picks the room's picture
         roomWindowsOpened[key] = true;
@@ -8989,6 +9796,8 @@
         else delete Module.jkJoinRoom;
         if (kind === 'join-imperial' && /^[0-9a-f]{32}$/.test(id)) Module.jkJoinImperial = id;
         else delete Module.jkJoinImperial;
+        delete Module.jkWatchRoom;
+        delete Module.jkWatchPack;
         room.close();
         if (want.demo) startDemo(want);
         else openPicker(want);
@@ -9011,6 +9820,1368 @@
         });
       });
       room.querySelector('.close').addEventListener('click', function() { room.close(); });
+
+      // ---- Watching a match (spectating). Each of the lobby's games that
+      // can be watched has Watch by its Info (spect in the lobby's status:
+      // a host's game may turn watching off, and a game with a password
+      // can't be watched unless its host turns it on). Watch shows the match
+      // beside the tables, in place of who's on: the level's picture, how
+      // many are watching, its clock, scores and latest kills, its open
+      // seats and Join. Watch full size opens the viewing page (#watch),
+      // with every match there is to watch, in both games, to switch
+      // between. The page tells the lobby which match it watches (spectate
+      // <room>, spectate 0 when it stops), so the counts go up and down;
+      // that's all it sends, and watching takes no seat. A link to
+      // #watch-<room> opens the viewing page on that match. What it shows is
+      // the match as the lobby's status has it (its live part, from the
+      // host's game's reports), as Info does.
+      var EYE_SVG = '<svg class="eye" viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8s2.6-4.8 7-4.8S15 8 15 8s-2.6 ' +
+                    '4.8-7 4.8S1 8 1 8z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="8" cy="8" r="2.3" ' +
+                    'fill="currentColor"/></svg>';
+      var watchDlg = document.getElementById('watch');
+      // The match's view on it, which Full screen puts on the whole screen.
+      var watchScreen = document.getElementById('watch-screen');
+      // This page is the viewing page in a window of its own (Pop out,
+      // #watch-<room>-window), set in the head.
+      var watchWindow = document.documentElement.classList.contains('watch-window');
+      // Full screen, where the browser has it for a part of a page (not an
+      // iPhone's).
+      var watchCanFull = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+      // id: the lobby room watched, 0 for none; sent: what the lobby was
+      // last told; last: the watched game as last seen ({key, g, no}), to say
+      // so once it has ended; fromLink: a #watch-<room> waiting for the
+      // status that has it; joining: the viewing page is closing for Join.
+      // note: what the game said when it stopped watching (takeViewNote),
+      // on the viewing page until another match is picked.
+      var watchLive = { id: 0, sent: 0, last: null, fromLink: 0, joining: false, note: '' };
+      // The match itself in the viewing page's box (boxShow, below): frame,
+      // the frame of this page whose game watches it; uid and id, the game
+      // and room it watches; ended, when the match left the lobby while the box still plays its
+      // last seconds; left, what each game's box said when it stopped (by
+      // uid), until Watch again.
+      var watchBox = { frame: null, uid: '', id: 0, w: 0, h: 0, zoom: 1, keys: null, follow: '', followEls: {}, ended: 0, left: {} };
+      // uid -> the game, as the viewing page last drew it (tickLive).
+      var watchGames = {};
+
+      // A line to the lobby on the page's own connection, or to the mock-up's
+      // sample lobby, which takes it instead. False when it can't go now.
+      function lobbySay(line) {
+        if (window.jkLobbyMock) {
+          if (window.jkLobbyMock.say) window.jkLobbyMock.say(line);
+          return true;
+        }
+        var w = lobbyWatch;
+        if (!w || !w.ws || w.ws.readyState !== 1) return false;
+        try {
+          w.ws.send(line);
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }
+
+      // Tells the lobby which match this page watches, if it doesn't know
+      // yet; again once the connection comes back (startLobbyWatch).
+      // Also while the box's game watches the match: its feed leaves that
+      // game out (?box=1), so one person is counted once, and the count
+      // doesn't move while the box's game starts again (into the host's mod).
+      function sayWatching() {
+        var id = watchLive.id;
+        if (watchLive.sent === id) return;
+        if (lobbySay('spectate ' + id)) watchLive.sent = id;
+      }
+
+      // Every game of the lobby's in every room, numbered as the room
+      // windows number them: [{key, g, no}], the rooms in ROOMS' order.
+      function watchList() {
+        var s = lobbyLive.status, out = [];
+        if (!s) return out;
+        Object.keys(ROOMS).forEach(function(key) {
+          var r = roomStatus(s, key);
+          roomGameList(r.games, roomImperial(key), ROOMS[key].game).forEach(function(g, i) {
+            if (!g.imperial) out.push({ key: key, g: g, no: gameNumber(i) });
+          });
+        });
+        return out;
+      }
+
+      // The lobby's game with this room id ({key, g, no}), null once it's gone.
+      function watchedGame(id) {
+        var all = watchList();
+        for (var i = 0; i < all.length; i++) if (all[i].g.id === (id || watchLive.id)) return all[i];
+        return null;
+      }
+
+      function canWatch(g) { return !g.imperial && g.spect === 1; }
+
+      // Watches a game, by its room id (0 to stop): beside the tables, or on
+      // the viewing page while that's open.
+      function watchGame(id) {
+        if ((id || 0) !== watchLive.id) watchLive.note = '';
+        watchLive.id = id || 0;
+        var w = watchLive.id ? watchedGame() : null;
+        watchLive.last = w;
+        sayWatching();
+        watchAddress();
+        if (room.open) renderRoom();
+        if (watchDlg.open) renderWatch();
+      }
+
+      // ---- A level's picture, behind its match: the Level Library's first
+      // screenshot of a community level, from the library's list for its
+      // game (/levels/all/<game>.json, asked for the first time a match on
+      // a level that isn't a retail one is watched), else the room's own.
+      var levelPics = { lists: {}, asked: {} };
+      function levelPicture(w) {
+        var fallback = typeof ROOM_PICTURES === 'object' && ROOM_PICTURES[w.key] || '';
+        if (retailEpisode(w.g) || isDemoGame(w.g)) return fallback;
+        var list = levelPics.lists[w.g.game];
+        if (list === undefined) {
+          askLevelList(w.g.game);
+          return fallback;
+        }
+        var level = list && findLevel(list, w.g);
+        return level ? '/levels/s/' + level.id + '-1.jpg' : fallback;
+      }
+      function askLevelList(game) {
+        if (levelPics.asked[game]) return;
+        levelPics.asked[game] = true;
+        if (window.jkLobbyMock || typeof fetch !== 'function' || !/^https?:$/.test(location.protocol)) {
+          levelPics.lists[game] = null;
+          return;
+        }
+        fetch('/levels/all/' + game + '.json').then(function(res) {
+          return res.ok ? res.json() : null;
+        }).then(function(j) {
+          levelPics.lists[game] = j && Array.isArray(j.levels) ? j.levels : null;
+          if (room.open && watchLive.id) renderWatchPane();
+          if (watchDlg.open) renderWatch();
+        }, function() { levelPics.lists[game] = null; });
+      }
+      // The names a library level's GOB goes by in a host's episode/: its
+      // own, cut to 31 characters, or with _<its number> after it, as Use
+      // Level saves it (placeName in library.js).
+      function libraryNames(n, id) {
+        var base = String(n || '').replace(/^.*\//, '').replace(/\.[^.]*$/, '').replace(/[\/\\:*?"<>|\x00-\x1f]/g, '_')
+                     .replace(/^\.+/, '').replace(/\.\.+/g, '.');
+        var tag = '_' + id;
+        return [base.substring(0, 31), base.substring(0, 31 - tag.length) + tag,
+                base.substring(0, 30 - tag.length) + tag + 'b'].map(function(s) { return s.toLowerCase(); });
+      }
+      // The library's level a game is on, by its episode and map, with a
+      // screenshot; null for none.
+      function findLevel(list, g) {
+        var ep = String(g.episode || '').replace(/\.(gob|goo)$/i, '').toLowerCase();
+        var map = String(g.map || '').toLowerCase();
+        for (var i = 0; i < list.length; i++) {
+          var l = list[i];
+          if (!l || !(l.sh > 0) || !Array.isArray(l.g)) continue;
+          for (var j = 0; j < l.g.length; j++) {
+            var f = l.g[j] || {};
+            var levels = Array.isArray(f.lv) ? f.lv.map(function(x) { return String(x).toLowerCase(); }) : [];
+            if (libraryNames(f.n, l.id).indexOf(ep) >= 0 && (!levels.length || levels.indexOf(map) >= 0)) return l;
+          }
+        }
+        return null;
+      }
+
+      // ---- What watching shows of a match, beside the tables and on the
+      // viewing page. w is {key, g, no}; v its match (gameLive), or null
+      // before its host's game has reported.
+
+      // The view: the level's picture, LIVE SCORES or how the level stands,
+      // how many are watching, and the latest kill.
+      function watchView(w, v) {
+        var view = el('div', 'watch-view');
+        var pic = levelPicture(w);
+        if (pic) view.style.backgroundImage = 'url("' + pic + '")';
+        else view.append(el('span', 'no-pic', levelTitle(w.g) || w.g.map || ''));
+        var live = el('span', 'watch-badge live' + (!v || v.over ? ' over' : ''));
+        live.append(el('i'), !v ? 'NO SCORES YET' : v.over ? 'LEVEL OVER' : 'LIVE SCORES');
+        view.append(live);
+        if (w.g.watching) {
+          var count = el('span', 'watch-badge count');
+          count.insertAdjacentHTML('beforeend', EYE_SVG);
+          count.append(w.g.watching + ' watching');
+          view.append(count);
+        }
+        if (v && v.last && v.nocount !== 'password') {
+          var kill = el('span', 'watch-badge kill');
+          kill.dataset.tick = 'lastkill';
+          killLine(kill, v.last, true);
+          view.append(kill);
+        }
+        return view;
+      }
+
+      // A kill, in words, into e: "Kyle_K killed MaraJade with a lightsaber",
+      // and how long ago with ago.
+      function killLine(e, k, ago) {
+        var w = KILL_WORDS[k[2]] || KILL_WORDS[0];
+        e.replaceChildren();
+        if (k[0]) e.append(el('b', null, k[0]), ' ' + w[0] + ' ', el('b', null, k[1] || 'a player'), w[1]);
+        else e.append(el('b', null, k[1] || 'A player'), ' died');
+        if (ago) e.append(el('span', null, ' · ' + agoText(lobbyNow() - k[3])));
+      }
+
+      function watchClock(box, v) {
+        var c = liveClock(v);
+        var row = el('div', 'watch-clock');
+        var big = el('b', null, c.big);
+        big.dataset.tick = 'big';
+        var small = el('small', null, c.small);
+        small.dataset.tick = 'small';
+        if (v.sl) small.dataset.after = ' · ' + (v.mode & MODE_TEAMS ? 'first team to ' : 'first to ') + v.sl;
+        small.textContent = c.small + (small.dataset.after || '');
+        row.append(big, small);
+        box.append(row);
+        if (v.tl && !v.over) {
+          var bar = el('div', 'watch-bar');
+          var fill = el('span');
+          fill.dataset.tick = 'bar';
+          fill.style.width = Math.round(c.part * 100) + '%';
+          bar.append(fill);
+          box.append(bar);
+        }
+      }
+
+      // The scoreboard, the host's game's, best first (by team in a team
+      // game), or why there's none.
+      function watchScores(box, g, v) {
+        if (v.nocount === 'password') {
+          box.append(el('p', 'watch-note', "Scores aren't shown for games with a password."));
+          return;
+        }
+        var teams = liveTeams(v);
+        if (teams.length) {
+          var line = el('div', 'watch-teams');
+          teams.forEach(function(t) {
+            var b = el('span');
+            b.append(el('span', 'team-chip t' + t), TEAM_NAMES[t] + ' ' + v.teams[t]);
+            line.append(b);
+          });
+          box.append(line);
+        }
+        if (!v.sb.length) return;
+        var rows = v.sb.slice();
+        if (teams.length) rows.sort(function(a, b) { return teams.indexOf(a[4]) - teams.indexOf(b[4]) || b[1] - a[1]; });
+        var table = el('table');
+        var head = el('tr');
+        ['Player', 'Score', 'Kills', 'Deaths'].forEach(function(h) { head.append(el('th', null, h)); });
+        table.append(head);
+        var lead = !teams.length && rows.length > 1 && rows[0][1] > rows[1][1] && rows[0][1] > 0;
+        var host = g.names[0] || '';
+        rows.forEach(function(r, i) {
+          var tr = el('tr');
+          var name = el('td', i === 0 && lead ? 'lead' : null);
+          if (teams.length && r[4]) name.append(el('span', 'team-chip t' + r[4]));
+          name.append(r[0] || 'Player');
+          if (host && r[0] === host) name.append(el('span', 'host-tag', 'host'));
+          tr.append(name, el('td', 'score', String(r[1])), el('td', null, String(r[2])), el('td', null, String(r[3])));
+          table.append(tr);
+        });
+        box.append(table);
+      }
+
+      // Its latest kills, the newest first.
+      function watchKills(v, n) {
+        var ul = el('ul', 'watch-kills');
+        ul.dataset.tick = 'kills';
+        ul.dataset.n = n;
+        fillKills(ul, v, n);
+        return ul;
+      }
+      function fillKills(ul, v, n) {
+        ul.replaceChildren();
+        var kills = (v.kills || (v.last ? [v.last] : [])).slice(-n).reverse();
+        kills.forEach(function(k) {
+          var li = el('li');
+          killLine(li, k, true);
+          ul.append(li);
+        });
+        if (!kills.length) ul.append(el('li', null, 'No kills yet.'));
+      }
+
+      // How it's played, in a line: mode, Force rank, mod, level, standings.
+      function watchFacts(g, v) {
+        var parts = [v ? modeText(g, v.mode, v.nocount === 'coop') : null,
+                     g.rank >= 0 ? 'Max Force rank ' + g.rank : null, g.mod || 'No mod', levelTitle(g) || g.map,
+                     !v ? null : v.nocount === 'password' ? "doesn't count (password)" :
+                     v.nocount === 'coop' ? "doesn't count (co-op level)" : 'counts for the leaderboard'];
+        return el('div', 'watch-facts', parts.filter(Boolean).join(' · '));
+      }
+
+      function watchSeats(g) {
+        var open = g.max - g.players;
+        return el('span', 'watch-seats' + (isFull(g) ? ' full' : ''),
+                  isFull(g) ? 'Game is full' : g.max ? plural(open, 'seat open', 'seats open') : '');
+      }
+
+      // Join, as the game's table has it: nothing for a game that can't be
+      // joined from here, with why.
+      function watchJoinButton(w) {
+        var g = w.g;
+        var b = el('button', 'watch-btn go', 'Join ' + w.no);
+        b.type = 'button';
+        b.dataset.watchJoin = g.id;
+        b.dataset.key = 'watch-join';
+        var why = isFull(g) ? 'Game is full' : otherVersion(g) ? VERSION_STATE[otherVersion(g)] : '';
+        if (why) {
+          b.disabled = true;
+          b.title = why;
+        }
+        return b;
+      }
+
+      // The preview beside the tables, in place of who's on, while a game in
+      // this room window's room is watched.
+      function renderWatchPane() {
+        var old = room.querySelector('.pv');
+        if (!watchLive.id) {
+          if (old) old.remove();
+          roster.hidden = false;
+          return;
+        }
+        var w = watchedGame();
+        if (w) watchLive.last = w;
+        var shown = w || watchLive.last;
+        var pane = el('aside', 'pv');
+        pane.setAttribute('aria-label', 'Watching ' + (shown ? shown.no : 'a game'));
+        var head = el('div', 'pv-head');
+        head.append(el('b', null, shown ? shown.no : 'Watching'),
+                    el('span', null, shown ? (shown.g.name || '(no name)') : ''));
+        var close = el('button', null, '✕');
+        close.type = 'button';
+        close.dataset.watchStop = '1';
+        close.dataset.key = 'watch-stop';
+        close.setAttribute('aria-label', 'Stop watching, show who\'s on');
+        close.title = 'Stop watching';
+        head.append(close);
+        pane.append(head);
+        var body = el('div', 'pv-body');
+        pane.append(body);
+        if (!w) {
+          body.append(el('p', 'watch-note', (shown ? shown.no + ' has' : 'This game has') + ' ended.'));
+        } else {
+          var v = gameLive(w.g);
+          body.append(watchView(w, v));
+          if (v) {
+            body.dataset.live = w.g.uid;
+            liveGames[w.g.uid] = w.g;
+            var clock = el('div');
+            watchClock(clock, v);
+            body.append(clock);
+            watchScores(body, w.g, v);
+            if (v.nocount !== 'password') {
+              body.append(el('div', 'watch-h', 'Last kills'), watchKills(v, 3));
+            }
+          } else {
+            body.append(el('p', 'watch-note', "Its host's game hasn't sent the lobby its scores yet. " +
+                                              'Players: ' + (w.g.names.filter(Boolean).join(', ') || plural(w.g.players, 'player', 'players')) + '.'));
+          }
+          body.append(watchFacts(w.g, v));
+          var seats = el('div', 'watch-acts');
+          seats.append(watchSeats(w.g));
+          body.append(seats);
+          var acts = el('div', 'watch-acts');
+          var full = el('button', 'watch-btn', 'Watch full size');
+          full.type = 'button';
+          full.dataset.watchFull = w.g.id;
+          full.dataset.key = 'watch-full';
+          acts.append(watchJoinButton(w), full);
+          body.append(acts);
+        }
+        if (old) old.replaceWith(pane);
+        else roster.after(pane);
+        roster.hidden = true;
+      }
+
+      // A game's Watch, by its Info: Watching while it's the one watched,
+      // with how many are; Off for one that can't be watched.
+      function watchTag(g, no) {
+        if (g.spect !== 1) {
+          var off = el('span', 'watch-off');
+          off.insertAdjacentHTML('beforeend', EYE_SVG);
+          off.append('Off');
+          off.setAttribute('aria-label', 'Watching off');
+          off.title = g.locked ? "Games with a password can't be watched" : 'Its host turned watching off';
+          return off;
+        }
+        var on = g.id === watchLive.id;
+        var b = el('button', 'watch-tag');
+        b.type = 'button';
+        b.dataset.watch = g.id;
+        b.dataset.key = 'watch-' + g.uid;
+        b.setAttribute('aria-pressed', String(on));
+        b.setAttribute('aria-label', 'Watch ' + no + (g.watching ? ', ' + g.watching + ' watching' : ''));
+        b.insertAdjacentHTML('beforeend', EYE_SVG);
+        b.append(on ? 'Watching' : 'Watch');
+        if (g.watching) b.append(el('span', 'wc', String(g.watching)));
+        return b;
+      }
+
+      // What Full screen shows over the view: the match and its clock, how
+      // many are watching, the scores, the latest kills and the way out. w
+      // null: only the way out (the match has ended).
+      function watchHud(w, v, list) {
+        var hud = el('div', 'watch-hud');
+        var top = el('div', 'hud-top');
+        if (w) {
+          var live = el('span', 'watch-badge live' + (!v || v.over ? ' over' : ''));
+          live.append(el('i'), !v ? 'NO SCORES YET' : v.over ? 'LEVEL OVER' : 'LIVE SCORES');
+          var title = el('div', 'hud-title');
+          title.append(el('b', null, w.no + ' · ' + (w.g.name || '(no name)')),
+                       el('span', null, (levelTitle(w.g) || w.g.map || '') + ' · ' + ROOMS[w.key].name));
+          top.append(live, title);
+          if (v) {
+            var clock = el('div', 'hud-clock');
+            watchClock(clock, v);
+            top.append(clock);
+          }
+        }
+        top.append(el('span', 'grow'));
+        if (w && w.g.watching) {
+          var count = el('span', 'hud-count');
+          count.insertAdjacentHTML('beforeend', EYE_SVG);
+          count.append(w.g.watching + ' watching');
+          top.append(count);
+        }
+        // Who the box's game follows, and the keys for watching, shown or
+        // hidden here too while the box's game plays the match.
+        if (w && watchBox.frame && watchBox.id === w.g.id) {
+          top.append(watchFollowLabel('hud-follow'));
+          var keysB = el('button', 'hud-exit hud-controls', watchKeysOn ? 'Hide controls' : 'Controls');
+          keysB.type = 'button';
+          keysB.dataset.wact = 'keys';
+          top.append(keysB);
+        }
+        var exit = el('button', 'hud-exit', 'Exit full screen');
+        exit.type = 'button';
+        exit.dataset.wact = 'full';
+        top.append(exit);
+        hud.append(top);
+        if (w && v && v.nocount !== 'password') {
+          if (v.sb.length || liveTeams(v).length) {
+            var scores = el('div', 'hud-panel hud-scores');
+            watchScores(scores, w.g, v);
+            hud.append(scores);
+          }
+          var kills = el('div', 'hud-panel hud-kills');
+          kills.append(watchKills(v, 4));
+          hud.append(kills);
+        }
+        var others = (list || []).filter(function(x) { return canWatch(x.g) && x.g.id !== watchLive.id; }).length;
+        hud.append(el('div', 'hud-keys', (others ? '← → other matches · ' : '') + 'Esc to leave'));
+        return hud;
+      }
+
+      // ---- Full screen: the match's view on the whole screen. The page
+      // goes on drawing it there (renderWatch), so the scores stay live.
+      function watchFullOn() {
+        return !!watchScreen && (document.fullscreenElement || document.webkitFullscreenElement || null) === watchScreen;
+      }
+      function watchFull(on) {
+        if (on === watchFullOn()) return;
+        var p = null;
+        try {
+          if (on) {
+            if (!watchCanFull || watchScreen.hidden) return;
+            p = watchScreen.requestFullscreen ? watchScreen.requestFullscreen({ navigationUI: 'hide' }) :
+                watchScreen.webkitRequestFullscreen();
+          } else {
+            p = document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen();
+          }
+        } catch (e) {}
+        if (p && p.catch) p.catch(function() {});
+      }
+      // The pointer and the way out fade after a while with nothing moving.
+      var watchIdleTimer = 0;
+      function watchAwake() {
+        watchScreen.classList.remove('idle');
+        clearTimeout(watchIdleTimer);
+        if (watchFullOn()) watchIdleTimer = setTimeout(function() { watchScreen.classList.add('idle'); }, 2500);
+      }
+      // When Full screen was last left (Esc does that, not close the page).
+      var watchFullLeft = 0;
+      function watchFullChanged() {
+        var on = watchFullOn();
+        if (on === watchScreen.classList.contains('full')) return;
+        watchScreen.classList.toggle('full', on);
+        var b = watchDlg.querySelector('.room-toolbar [data-wact=full]');
+        b.setAttribute('aria-pressed', String(on));
+        watchAwake();
+        if (watchDlg.open) renderWatch();
+        // The keys go to the view, not to the button that put it there (a
+        // Space would press it again), and back after.
+        if (on) {
+          watchScreen.focus({ preventScroll: true });
+        } else {
+          watchFullLeft = Date.now();
+          if (watchDlg.open && (document.activeElement === watchScreen || document.activeElement === document.body)) {
+            b.focus({ preventScroll: true });
+          }
+        }
+      }
+      document.addEventListener('fullscreenchange', watchFullChanged);
+      document.addEventListener('webkitfullscreenchange', watchFullChanged);
+      watchScreen.addEventListener('pointermove', watchAwake);
+      watchScreen.addEventListener('dblclick', function(ev) {
+        if (ev.target.closest('button')) return;
+        watchFull(!watchFullOn());
+      });
+      // F for Full screen while the viewing page shows; on the whole screen,
+      // the arrows go to the previous and next match.
+      document.addEventListener('keydown', function(ev) {
+        if (!watchDlg.open || ev.altKey || ev.ctrlKey || ev.metaKey || ev.repeat) return;
+        if (ev.target && /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName)) return;
+        if (ev.key === 'f' || ev.key === 'F') {
+          if (!watchCanFull || (!watchFullOn() && watchScreen.hidden)) return;
+          ev.preventDefault();
+          watchFull(!watchFullOn());
+        } else if (watchFullOn() && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
+          ev.preventDefault();
+          watchStep(ev.key === 'ArrowLeft' ? -1 : 1);
+        }
+      });
+
+      // ---- Pop out: the viewing page in a window of its own, to move and
+      // size as one likes (or put on the whole screen from there). That
+      // window is this page at #watch-<room>-window and watches the match
+      // itself, so this one stops (one watcher, not two); a second Pop out
+      // takes the same window to its match.
+      function popWatch() {
+        var id = watchLive.id;
+        if (!id) return;
+        var width = Math.min(1280, (screen.availWidth || 1280) - 40);
+        var height = Math.min(800, (screen.availHeight || 800) - 40);
+        var win = null;
+        try {
+          win = window.open(location.pathname + location.search + '#watch-' + id + '-window', 'jkdf2mp-watch',
+                            'popup,width=' + width + ',height=' + height);
+        } catch (e) {}
+        if (!win) {
+          document.getElementById('watch-summary').textContent =
+            "Your browser didn't open the window. Let this site open pop-ups, then try again.";
+          return;
+        }
+        try { win.focus(); } catch (e) {}
+        watchFull(false);
+        watchGame(0);
+        watchDlg.close();
+      }
+      // In that window: the lobby page's Join, from the page that opened it
+      // (jkJoinWatched), so the game starts there, where the player is. With
+      // no page behind it, this window becomes the lobby page.
+      function openerLobby() {
+        try {
+          var o = window.opener;
+          return o && !o.closed && typeof o.jkJoinWatched === 'function' ? o : null;
+        } catch (e) {
+          return null;
+        }
+      }
+      function leaveWatchWindow() {
+        watchFull(false);
+        watchWindow = false;
+        document.documentElement.classList.remove('watch-window');
+        document.title = 'jkdf2mp Game Rooms';
+        history.replaceState(history.state, '', location.pathname + location.search);
+      }
+      window.jkJoinWatched = function(id) {
+        var w = watchedGame(Number(id));
+        if (!w || isFull(w.g) || otherVersion(w.g)) return false;
+        try { window.focus(); } catch (e) {}
+        joinWatched(w.g.id);
+        return true;
+      };
+      // Esc leaves Full screen, and only that; and it doesn't close the
+      // window's only page.
+      watchDlg.addEventListener('cancel', function(ev) {
+        if (watchWindow || watchFullOn() || Date.now() - watchFullLeft < 500) ev.preventDefault();
+      });
+
+      // ---- The viewing page.
+      function renderWatch() {
+        var list = watchList();
+        var w = watchLive.id ? watchedGame() : null;
+        if (w) watchLive.last = w;
+        var shown = w || (watchLive.id ? watchLive.last : null);
+        document.getElementById('watch-title').textContent = shown ?
+          'Watching ' + shown.no + ' · ' + (shown.g.name || '(no name)') + ' — ' + ROOMS[shown.key].name :
+          'Watching';
+        // A window of its own is named for it, in the taskbar too.
+        if (watchWindow) document.title = document.getElementById('watch-title').textContent + ' · jkdf2mp';
+        watchGames = {};
+
+        // The matches, by room.
+        var nav = document.getElementById('watch-list');
+        nav.replaceChildren();
+        Object.keys(ROOMS).forEach(function(key) {
+          var mine = list.filter(function(x) { return x.key === key; });
+          var sec = el('section');
+          var h = el('h2', 'watch-h', ROOMS[key].demo ? 'Free Demo Room' : GAME_NAMES[ROOMS[key].game]);
+          h.append(el('span', null, String(mine.filter(function(x) { return canWatch(x.g); }).length)));
+          sec.append(h);
+          var ul = el('ul');
+          mine.forEach(function(x) {
+            var li = el('li');
+            var v = gameLive(x.g);
+            var top = el('div', 'n');
+            top.append(el('b', null, x.g.name || '(no name)'));
+            var item;
+            if (canWatch(x.g)) {
+              item = el('button');
+              item.type = 'button';
+              item.dataset.watchPick = x.g.id;
+              item.dataset.key = 'pick-' + x.g.id;
+              if (x.g.id === watchLive.id) item.setAttribute('aria-current', 'true');
+              if (x.g.watching) {
+                var count = el('span');
+                count.insertAdjacentHTML('beforeend', EYE_SVG);
+                count.append(String(x.g.watching));
+                count.setAttribute('aria-label', x.g.watching + ' watching');
+                top.append(count);
+              }
+            } else {
+              item = el('div', 'off');
+              top.append(el('span', null, 'Watching off'));
+            }
+            item.append(top);
+            if (v && v.nocount !== 'password') item.append(el('div', 's', liveSummary(v)));
+            item.append(el('div', 'm', x.no + ' · ' + (levelTitle(x.g) || x.g.map) + ' · ' +
+                                       (x.g.max ? x.g.players + '/' + x.g.max : String(x.g.players))));
+            li.append(item);
+            ul.append(li);
+          });
+          if (!mine.length) ul.append(el('li', 'none', 'No games right now.'));
+          sec.append(ul);
+          nav.append(sec);
+        });
+
+        // The match: its view (watchScreen, which stays put so Full screen
+        // can keep it) and what's under it (info).
+        var stage = document.getElementById('watch-stage');
+        var info = document.getElementById('watch-info');
+        var details = document.getElementById('watch-details');
+        info.replaceChildren();
+        details.replaceChildren();
+        delete stage.dataset.live;
+        delete details.dataset.live;
+        var joinB = document.getElementById('watch-join');
+        joinB.hidden = !w;
+        var gameB = document.getElementById('watch-game');
+        var inGame = w ? watchInGame(w) : null;
+        // The box shows the match in the game itself, where it can.
+        gameB.hidden = !inGame || boxCan(w);
+        if (inGame) {
+          gameB.disabled = !!inGame.why;
+          gameB.title = inGame.why || 'Watch it in the game, from any player\'s view or a free camera (with your game files)';
+        }
+        var fullB = watchDlg.querySelector('.room-toolbar [data-wact=full]');
+        fullB.hidden = !watchCanFull;
+        fullB.disabled = !w;
+        var keysB = document.getElementById('watch-keys');
+        keysB.hidden = !w || !boxCan(w);
+        keysB.setAttribute('aria-pressed', String(watchKeysOn));
+        var empty = !lobbyLive.status ?
+          (lobbyLive.state === 'down' ? "The lobby isn't answering right now." : 'Connecting to the lobby…') :
+          !watchLive.id ? (list.some(function(x) { return canWatch(x.g); }) ?
+            'Pick a match on the left to watch it.' : 'Nobody is playing a match that can be watched right now.') :
+          !w ? (shown ? shown.no + ' (' + (shown.g.name || 'no name') + ') has' : 'This game has') +
+               ' ended. Pick another match on the left.' : '';
+        if (watchLive.note) info.append(el('p', 'watch-said', watchLive.note));
+        // The box's game goes on through the lobby's connection dropping, and
+        // through the match's end, which it shows its delay later: until it
+        // says it stopped (jkWatchBoxSays), or BOX_END_MS after the match
+        // left the lobby.
+        var keepBox = empty && !!watchBox.frame && watchBox.id === watchLive.id && (!lobbyLive.status || !w);
+        if (empty && !keepBox) boxStop();
+        if (keepBox && lobbyLive.status && !watchBox.ended) {
+          watchBox.ended = Date.now();
+          setTimeout(function() {
+            if (!watchBox.ended || Date.now() - watchBox.ended < BOX_END_MS) return;
+            boxStop();
+            if (watchDlg.open) renderWatch();
+          }, BOX_END_MS);
+        }
+        if (keepBox) {
+          info.append(el('p', 'empty', !lobbyLive.status ? empty :
+            (shown ? shown.no + ' (' + (shown.g.name || 'no name') + ')' : 'This game') +
+            ' has ended. Its last seconds still play above, as they were played.'));
+        } else if (empty) {
+          info.append(el('p', 'empty', empty));
+          // On the whole screen, it says so there, until Esc.
+          if (watchFullOn()) {
+            var note = el('div', 'watch-view');
+            note.append(el('span', 'no-pic', empty.replace(' on the left', '')));
+            watchScreen.replaceChildren(note, watchHud(null, null, list));
+          } else {
+            watchScreen.replaceChildren();
+            watchScreen.hidden = true;
+          }
+        } else {
+          var v = gameLive(w.g);
+          var view = watchView(w, v);
+          if (watchCanFull) view.title = 'Double-click for full screen';
+          var frame = boxShow(w);
+          if (!frame && watchBox.left[w.g.uid] !== undefined) view.append(boxNote(w));
+          boxScreen(frame, view, watchHud(w, v, list), frame ? watchKeysPanel() : null,
+                    frame ? watchFollowLabel('watch-follow') : null);
+          watchScreen.hidden = false;
+          if (v) {
+            stage.dataset.live = details.dataset.live = w.g.uid;
+            watchGames[w.g.uid] = w.g;
+            var clock = el('div');
+            watchClock(clock, v);
+            info.append(clock);
+            if (v.nocount !== 'password') {
+              var teams = liveTeams(v);
+              if (teams.length) {
+                var line = el('div', 'watch-teams');
+                teams.forEach(function(t) {
+                  var b = el('span');
+                  b.append(el('span', 'team-chip t' + t), TEAM_NAMES[t] + ' ' + v.teams[t]);
+                  line.append(b);
+                });
+                info.append(line);
+              }
+              info.append(el('div', 'watch-h', 'Last kills'), watchKills(v, 5));
+              if (v.streak) info.append(el('p', 'watch-note', v.streak[0] + ': ' + v.streak[1] + ' kills in a row.'));
+            }
+          } else {
+            info.append(el('p', 'watch-note', "Its host's game hasn't sent the lobby its scores yet."));
+          }
+          info.append(watchFacts(w.g, v));
+
+          var sec = el('section');
+          sec.append(el('h2', 'watch-h', 'Scores'));
+          if (v) watchScores(sec, w.g, v);
+          else sec.append(el('p', 'watch-note', 'None yet.'));
+          details.append(sec);
+          if (v) {
+            var rules = el('section');
+            rules.append(el('h2', 'watch-h', 'Rules'));
+            var dl = el('dl');
+            ruleRows(w.g, v).forEach(function(r) { dl.append(el('dt', null, r[0]), el('dd', null, r[1])); });
+            rules.append(dl);
+            details.append(rules);
+          }
+          var game = el('section');
+          game.append(el('h2', 'watch-h', 'Game'));
+          var gl = el('dl');
+          [['Map', levelTitle(w.g) || w.g.map || 'Unknown'], ['Episode', episodeTitle(w.g) || w.g.episode || 'Unknown'],
+           ['Mod', w.g.mod || 'None'], ['Players', w.g.max ? w.g.players + ' of ' + w.g.max : String(w.g.players)],
+           ['Host', w.g.names[0] || 'Unknown'], ['Room', ROOMS[w.key].name]].forEach(function(r) {
+            gl.append(el('dt', null, r[0]), el('dd', null, r[1]));
+          });
+          game.append(gl);
+          if (v && v.pl) {
+            var next = v.pl.i + 1 < v.pl.n || v.pl.loop ? (v.pl.next || 'the next level') : '';
+            game.append(el('p', 'watch-note', 'Playlist: level ' + (v.pl.i + 1) + ' of ' + v.pl.n + '. ' +
+                                              (next ? 'Up next: ' + next + '.' : 'This is its last level.')));
+          }
+          var seats = el('div', 'watch-acts');
+          seats.style.marginTop = '6px';
+          seats.append(watchSeats(w.g));
+          game.append(seats);
+          details.append(game);
+
+          var j = watchJoinButton(w);
+          joinB.textContent = j.textContent;
+          joinB.disabled = j.disabled;
+          joinB.title = j.title;
+          joinB.dataset.watchJoin = w.g.id;
+        }
+
+        // How many are watching it, and the way to the others.
+        var count = document.getElementById('watch-count');
+        count.replaceChildren();
+        if (w && w.g.watching) {
+          count.insertAdjacentHTML('beforeend', EYE_SVG);
+          count.append(w.g.watching + ' watching');
+        }
+        var others = list.filter(function(x) { return canWatch(x.g) && x.g.id !== watchLive.id; });
+        watchDlg.querySelectorAll('[data-wact=prev], [data-wact=next]').forEach(function(b) { b.disabled = !others.length; });
+        var dot = document.getElementById('watch-live-dot');
+        dot.classList.toggle('on', !!lobbyLive.status);
+        document.getElementById('watch-live').textContent = lobbyLive.status ? 'Live' :
+          lobbyLive.state === 'down' ? 'Not connected' : 'Connecting';
+        var watchable = list.filter(function(x) { return canWatch(x.g); }).length;
+        document.getElementById('watch-summary').textContent = lobbyLive.status ?
+          'Updated ' + lobbyLive.updated.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }) +
+          ' · ' + plural(watchable, 'match', 'matches') + ' to watch' : '';
+      }
+
+      // The address says which match the viewing page shows (#watch-<room>,
+      // or #watch-<room>-window in a window of its own), so a reload, or Back
+      // to a page the browser had left (pagehide), opens it again
+      // (watchFromLink).
+      function watchAddress() {
+        if (!watchLive.id || !(watchWindow || watchDlg.open)) return;
+        var hash = '#watch-' + watchLive.id + (watchWindow ? '-window' : '');
+        if (location.hash !== hash) history.replaceState(history.state, '', location.pathname + location.search + hash);
+      }
+
+      // Opens the viewing page, on a game (by room id) or the one watched.
+      function openWatch(id) {
+        if (id) {
+          watchLive.id = id;
+          watchLive.last = watchedGame();
+          sayWatching();
+        }
+        if (!watchDlg.open) watchDlg.showModal();
+        watchAddress();
+        renderWatch();
+        if (room.open) renderRoom();
+      }
+
+      // The next or previous match that can be watched, round the list.
+      function watchStep(by) {
+        var all = watchList().filter(function(x) { return canWatch(x.g) || x.g.id === watchLive.id; });
+        if (!all.length) return;
+        var at = all.findIndex(function(x) { return x.g.id === watchLive.id; });
+        var next = at < 0 ? all[by > 0 ? 0 : all.length - 1] : all[(at + by + all.length) % all.length];
+        if (next && next.g.id !== watchLive.id) watchGame(next.g.id);
+      }
+
+      // Leaving the viewing page goes back to the room window of the game
+      // watched, with it beside the tables (or the window it came from).
+      watchDlg.addEventListener('close', function() {
+        watchFull(false);
+        boxStop();
+        watchLive.note = '';
+        // Not for Join, or a game starting: the close event comes after.
+        if (watchLive.joining) {
+          watchLive.joining = false;
+          if (!watchWindow && location.hash.indexOf('#watch-') === 0)
+            history.replaceState(history.state, '', location.pathname + location.search);
+          return;
+        }
+        // A window of its own closes with it; if the browser keeps it (it
+        // wasn't opened by Pop out), it's the lobby page from then on.
+        if (watchWindow) {
+          watchGame(0);
+          try { window.close(); } catch (e) {}
+          leaveWatchWindow();
+          return;
+        }
+        var w = watchLive.id ? watchedGame() : null;
+        var key = w ? w.key : room.open ? lobbyLive.room : null;
+        if (key) openRoom(key);
+        else watchGame(0);
+        if (location.hash.indexOf('#watch-') === 0) history.replaceState(history.state, '', location.pathname + location.search);
+      });
+      watchDlg.querySelector('.close').addEventListener('click', function() { watchDlg.close(); });
+      watchDlg.addEventListener('click', function(ev) {
+        var act = ev.target.closest('[data-wact]');
+        var pick = ev.target.closest('[data-watch-pick]');
+        if (pick) return watchGame(Number(pick.dataset.watchPick));
+        if (!act) return;
+        if (act.dataset.wact === 'back') watchDlg.close();
+        else if (act.dataset.wact === 'prev') watchStep(-1);
+        else if (act.dataset.wact === 'next') watchStep(1);
+        else if (act.dataset.wact === 'pop') popWatch();
+        else if (act.dataset.wact === 'full') watchFull(!watchFullOn());
+        else if (act.dataset.wact === 'join') joinWatched();
+        else if (act.dataset.wact === 'game') playWatched();
+        else if (act.dataset.wact === 'again') boxAgain();
+        else if (act.dataset.wact === 'keys') watchKeysToggle();
+      });
+
+      // Join from watching (the game watched, or the one with room id id):
+      // the game's room window takes it from there.
+      function joinWatched(id) {
+        var w = watchedGame(id);
+        if (!w || isFull(w.g) || otherVersion(w.g)) return;
+        if (watchWindow) {
+          var o = openerLobby();
+          if (o && o.jkJoinWatched(w.g.id)) {
+            watchGame(0);
+            window.close();
+            return;
+          }
+          leaveWatchWindow();
+        }
+        if (watchDlg.open) {
+          watchLive.joining = true;
+          watchDlg.close();
+        }
+        if (lobbyLive.room !== w.key || !room.open) openRoom(w.key);
+        roomAction('join', w.g.id, w.no);
+      }
+
+      // ---- Watch in the game: the game itself plays the match's feed (the
+      // lobby's /feed/<room>, which its host's game sends), as a player with
+      // no body who sends nothing, takes no seat and follows any player or
+      // flies free (stdComm_WSRelay.c), from the player's own game files.
+      // null when it can't be watched that way; why: what stands in the way.
+      // The lobby's name for a match played with the MotS Remastered pack and
+      // no mod (jkdf2mp-bb-server's modName); "<mod>, Remastered pack" with a
+      // mod too. The game watches with the player's own pack.
+      var PACK_ONLY = 'Remastered pack';
+      function watchInGame(w) {
+        if (!w || w.g.imperial || !canWatch(w.g) || !w.g.feed) return null;
+        return { why: otherVersion(w.g) ? VERSION_STATE[otherVersion(w.g)] : '' };
+      }
+      // Starts the game watching the match watched (or the one with room id
+      // id), as Join starts it joining (roomAction): Module.jkWatchRoom
+      // tells the engine which. In a window of its own, the page that opened
+      // it does it (jkPlayWatched), as for Join.
+      function playWatched(id) {
+        var w = watchedGame(id);
+        var can = watchInGame(w);
+        if (!can || can.why) return;
+        if (watchWindow) {
+          var o = openerLobby();
+          if (o && typeof o.jkPlayWatched === 'function' && o.jkPlayWatched(w.g.id)) {
+            watchGame(0);
+            window.close();
+            return;
+          }
+          leaveWatchWindow();
+        }
+        var key = w.key;
+        // watch: the way back once it stops watching (jkViewLeft).
+        var want = { game: ROOMS[key].game, room: ROOMS[key].name, lobbyRoom: key, demo: !!ROOMS[key].demo,
+                     watch: w.g.id };
+        if (window.jkLobbyMock) {
+          document.getElementById('watch-summary').textContent = 'Mock-up: on the live page, this asks for your ' +
+            GAME_NAMES[want.game] + ' folder, and the game starts watching ' + w.no + ', 30 seconds behind.';
+          return;
+        }
+        delete Module.jkJoinRoom;
+        delete Module.jkJoinImperial;
+        Module.jkWatchRoom = w.g.id;
+        // MotS: the game runs the player's Remastered pack only if the match
+        // does (mods.js), as a joiner's does once it's restarted for it. The
+        // lobby names a match with both "<mod>, Remastered pack". A match
+        // played with a mod: the game gets onto it once the match says which
+        // (its own copy, or the Mod Library's), restarting for it.
+        Module.jkWatchPack = w.g.mod === PACK_ONLY || / Remastered pack$/.test(w.g.mod || '');
+        watchFull(false);
+        watchGame(0);
+        if (watchDlg.open) {
+          watchLive.joining = true;
+          watchDlg.close();
+        }
+        if (room.open) room.close();
+        if (want.demo) startDemo(want);
+        else openPicker(want);
+      }
+      // ---- The match itself in the viewing page's box: a frame of this page
+      // (#watch-<room>-embed) whose game watches the match's feed as Watch in
+      // the game does, starting on its host's view, from the game files
+      // saved in this browser, or the folder it asks for in the box (Antonio,
+      // 2026-11-19). It stays put while the page is drawn again around it (a
+      // frame moved or put back loads again), over the level's picture and
+      // under the badges. Not on a phone or tablet, nor in the mock-up.
+      // How long the box plays on once its match has left the lobby, at most:
+      // its delay (30 s by default) and then some.
+      var BOX_END_MS = 90000;
+      function boxCan(w) {
+        var can = watchInGame(w);
+        return !!can && !can.why && !window.jkLobbyMock && !phoneNote() && /^https?:$/.test(location.protocol);
+      }
+      // The box's frame for w, made if it hasn't one; null for none (it
+      // can't, or it stopped: watchBox.left).
+      function boxShow(w) {
+        if (!w || !boxCan(w) || watchBox.left[w.g.uid] !== undefined) return boxStop();
+        if (watchBox.frame && watchBox.uid === w.g.uid) return watchBox.frame;
+        boxStop();
+        var f = document.createElement('iframe');
+        f.className = 'watch-frame';
+        f.title = 'The match, as its players see it';
+        f.allow = 'autoplay; fullscreen';
+        f.src = location.pathname + location.search + '#watch-' + w.g.id + '-embed';
+        var size = boxSize();
+        f.style.width = size.w + 'px';
+        f.style.height = size.h + 'px';
+        watchBox.frame = f;
+        watchBox.uid = w.g.uid;
+        watchBox.id = w.g.id;
+        watchBox.w = size.w;
+        watchBox.h = size.h;
+        watchBox.zoom = 1;
+        return f;
+      }
+      // The box's page is the screen's size the whole time (no more than
+      // BOX_MAX_PIXELS), scaled to the box (boxFit), so its game never sees
+      // its window change size. In kits 163 and 164 a box watching an
+      // SBX-MotS v3 match went white once it went full screen (the game
+      // changing size in the level), and once its game crashed.
+      var BOX_MAX_PIXELS = 2560 * 1440;
+      function boxSize() {
+        var w = 0, h = 0;
+        try {
+          w = Math.round(Number(screen.width) || 0);
+          h = Math.round(Number(screen.height) || 0);
+        } catch (e) {}
+        if (w < 320 || h < 240) {
+          w = 1280;
+          h = 720;
+        }
+        if (w * h > BOX_MAX_PIXELS) {
+          var k = Math.sqrt(BOX_MAX_PIXELS / (w * h));
+          w = Math.round(w * k);
+          h = Math.round(h * k);
+        }
+        return { w: w, h: h };
+      }
+      // Scales the box's page to fit the box (or the screen, in full
+      // screen), in the middle: all of it shows, the folder prompt too, with
+      // black above and below when the screen is wider than the box. The
+      // page is told how much (jkWatchBoxZoom).
+      function boxFit() {
+        var f = watchBox.frame;
+        if (!f || f.parentNode !== watchScreen) return;
+        var cw = watchScreen.clientWidth, ch = watchScreen.clientHeight;
+        var w = watchBox.w, h = watchBox.h;
+        if (!cw || !ch || !w || !h) return;
+        var s = Math.min(cw / w, ch / h);
+        function px(v) { return (Math.abs(v) < 0.005 ? 0 : v).toFixed(2) + 'px'; }
+        f.style.transform = 'translate(' + px((cw - w * s) / 2) + ', ' + px((ch - h * s) / 2) + ') scale(' + s + ')';
+        watchBox.zoom = 1 / s;
+      }
+      if (typeof ResizeObserver === 'function') new ResizeObserver(boxFit).observe(watchScreen);
+      window.jkWatchBoxZoom = function(win) {
+        var f = watchBox.frame;
+        return f && f.contentWindow === win ? watchBox.zoom || 1 : 1;
+      };
+      // The box's game stops (the frame goes, and its game with it).
+      function boxStop() {
+        var f = watchBox.frame;
+        if (!f) return null;
+        watchBox.frame = null;
+        watchBox.uid = '';
+        watchBox.id = 0;
+        watchBox.ended = 0;
+        watchBox.keys = null;
+        watchBox.follow = '';
+        watchBox.followEls = {};
+        watchScreen.classList.remove('box-panel', 'box-live');
+        f.remove();
+        return null;
+      }
+      // The box: its frame, where it is, then the rest (redrawn each time).
+      function boxScreen(frame) {
+        var rest = Array.prototype.slice.call(arguments, 1).filter(Boolean);
+        Array.prototype.slice.call(watchScreen.children).forEach(function(c) {
+          if (c !== frame) c.remove();
+        });
+        if (frame && frame.parentNode !== watchScreen) {
+          watchScreen.prepend(frame);
+          boxFit();
+        }
+        watchScreen.append.apply(watchScreen, rest);
+      }
+      // Why the box's game stopped, and Watch again.
+      function boxNote(w) {
+        var note = el('div', 'box-note');
+        note.append(el('p', null, watchBox.left[w.g.uid] || 'The game stopped watching this match.'));
+        var again = el('button', 'watch-btn go', 'Watch again');
+        again.type = 'button';
+        again.dataset.wact = 'again';
+        note.append(again);
+        return note;
+      }
+      function boxAgain() {
+        var w = watchLive.id ? watchedGame() : null;
+        if (w) delete watchBox.left[w.g.uid];
+        renderWatch();
+      }
+      // The keys for watching (Controls): over the box's game once it
+      // plays the match, as the player bound them in the game (its page's
+      // jkWatchKeys), until hidden. Remembered in this browser.
+      var watchKeysOn = true;
+      try {
+        watchKeysOn = localStorage.getItem('jkdf2mp-watch-keys') !== 'off';
+      } catch (e) {}
+      function watchKeysToggle() {
+        watchKeysOn = !watchKeysOn;
+        try {
+          localStorage.setItem('jkdf2mp-watch-keys', watchKeysOn ? 'on' : 'off');
+        } catch (e) {}
+        renderWatch();
+      }
+      function boxKeys(f) {
+        try {
+          var get = f && f.contentWindow && f.contentWindow.jkWatchKeys;
+          return typeof get === 'function' ? get() : null;
+        } catch (e) {
+          return null;
+        }
+      }
+      // A key as the game names it (DIK_LCONTROL, KEY_MOUSE_B1), as players
+      // know it.
+      var KEY_WORDS = {
+        SPACE: 'Space', LCONTROL: 'Left Ctrl', RCONTROL: 'Right Ctrl', LSHIFT: 'Left Shift', RSHIFT: 'Right Shift',
+        LMENU: 'Left Alt', RMENU: 'Right Alt', RETURN: 'Enter', NUMPADENTER: 'Numpad Enter', ESCAPE: 'Esc', TAB: 'Tab',
+        BACK: 'Backspace', UP: 'Up arrow', DOWN: 'Down arrow', LEFT: 'Left arrow', RIGHT: 'Right arrow', PRIOR: 'Page Up',
+        NEXT: 'Page Down', HOME: 'Home', END: 'End', INSERT: 'Insert', DELETE: 'Delete', CAPITAL: 'Caps Lock', GRAVE: '`',
+        MINUS: '-', EQUALS: '=', LBRACKET: '[', RBRACKET: ']', SEMICOLON: ';', APOSTROPHE: "'", BACKSLASH: '\\',
+        COMMA: ',', PERIOD: '.', SLASH: '/', MOUSE_B1: 'Left mouse', MOUSE_B2: 'Right mouse', MOUSE_B3: 'Middle mouse',
+        MOUSE_B4: 'Mouse 4', MOUSE_B5: 'Mouse 5', MOUSE_WHEELUP: 'Wheel up', MOUSE_WHEELDOWN: 'Wheel down',
+        ADD: 'Numpad +', SUBTRACT: 'Numpad -', MULTIPLY: 'Numpad *', DIVIDE: 'Numpad /', DECIMAL: 'Numpad .'
+      };
+      function keyLabel(raw) {
+        var k = String(raw || '').replace(/^(DIK|KEY)_/, '');
+        if (!k || k === 'UNKNOWN') return '';
+        if (Object.prototype.hasOwnProperty.call(KEY_WORDS, k)) return KEY_WORDS[k];
+        var m = /^NUMPAD(.+)$/.exec(k);
+        if (m) return 'Numpad ' + m[1];
+        m = /^JOY(\d+)_B(\d+)$/.exec(k);
+        if (m) return 'Pad ' + (m[1] === '1' ? '' : m[1] + ' ') + 'button ' + m[2];
+        if (/^([A-Z0-9]|F[0-9]{1,2})$/.test(k)) return k;
+        return k.charAt(0) + k.slice(1).toLowerCase().replace(/_/g, ' ');
+      }
+      // Who the box's game follows ("Following Kyle", "Free camera", its
+      // page's Module.jkWatchFollow), over it in the page's own letters:
+      // the game's own line is small in the box. One over the box, one in
+      // the bar on the whole screen; kept up to date in place.
+      function watchFollowLabel(cls) {
+        if (!watchBox.frame) return null;
+        var label = el('div', cls, watchBox.follow || '');
+        watchBox.followEls[cls] = label;
+        return label;
+      }
+      function watchKeysPanel() {
+        if (!watchKeysOn || !watchBox.frame) return null;
+        var k = watchBox.keys;
+        // The keys bound to one command (both ways, or one), each once.
+        function names(list, rev, out) {
+          out = out || [];
+          (list || []).forEach(function(e) {
+            var n = keyLabel(e[0]);
+            if (n && (rev === undefined || !!e[1] === rev) && out.indexOf(n) < 0) out.push(n);
+          });
+          return out;
+        }
+        // The first max of them (2): a letter or digit, then the mouse,
+        // then other keys, the numpad, and a pad's buttons last, so the
+        // panel stays small over the box.
+        function rank(n) {
+          return n.length === 1 ? 0 : / mouse$|^Mouse |^Wheel /.test(n) ? 1 : /^Numpad /.test(n) ? 3 : /^Pad /.test(n) ? 4 : 2;
+        }
+        function first(list, max) {
+          return list.map(function(n, i) { return [rank(n), i, n]; })
+                     .sort(function(a, b) { return a[0] - b[0] || a[1] - b[1]; })
+                     .slice(0, max || 2).map(function(x) { return x[2]; });
+        }
+        function keys(name, command, max) {
+          if (!k) return command;
+          var got = first(names(k[name]), max);
+          return got.length ? got.join(', ') : command + ' (not bound)';
+        }
+        // Move: one key each way, forward, left, back, right (W, A, S, D),
+        // a letter rather than an arrow where there's both.
+        var move = 'Forward, back and strafe';
+        if (k) {
+          var firstKey = function(list) {
+            return list.filter(function(x) { return x.length === 1; })[0] || list[0];
+          };
+          var side = names(k.slide, false), other = names(k.slide, true);
+          var leftish = function(x) { return /^(A|Left arrow|Numpad [14])$/.test(x); };
+          if (other.some(leftish) && !side.some(leftish)) {
+            var t = side;
+            side = other;
+            other = t;
+          }
+          var got = [firstKey(names(k.forward, false)), firstKey(side), firstKey(names(k.forward, true)), firstKey(other)]
+                    .filter(Boolean);
+          if (got.length) move = got.join(', ');
+        }
+        var panel = el('div', 'watch-keys');
+        var head = el('div', 'keys-head');
+        var hide = el('button', 'keys-hide', 'Hide');
+        hide.type = 'button';
+        hide.dataset.wact = 'keys';
+        head.append(el('span', null, 'Controls'), hide);
+        var table = el('table');
+        [['Next player', keys('fire1', 'Fire')],
+         ['Player before', keys('fire2', 'Alt Fire')],
+         ['First / third person', keys('camera', 'Camera view')],
+         ['Look around', 'Mouse'],
+         ['Move', move],
+         ['Up / down', keys('jump', 'Jump', 1) + ' / ' + keys('duck', 'Crouch', 1)],
+         ['Faster', keys('fast', 'Run')],
+         ['Map', keys('map', 'Map')],
+         ['Message the players', keys('talk', 'Talk')],
+         ['Give back the mouse', 'Esc']].forEach(function(row) {
+          var tr = el('tr');
+          tr.append(el('th', null, row[0]), el('td', null, row[1]));
+          table.append(tr);
+        });
+        panel.append(head, table,
+                     el('div', 'keys-note', 'After the last player comes the free camera: look, move, and go up and down.'));
+        return panel;
+      }
+      // The box's page asks which match it watches (startWatchEmbed): only
+      // the one the box shows.
+      window.jkWatchEmbedWant = function(id) {
+        var w = watchedGame(Number(id));
+        if (!w || !watchBox.frame || watchBox.id !== w.g.id || !boxCan(w)) return null;
+        return { game: ROOMS[w.key].game, room: ROOMS[w.key].name, lobbyRoom: w.key, demo: !!ROOMS[w.key].demo,
+                 pack: w.g.mod === PACK_ONLY || / Remastered pack$/.test(w.g.mod || '') };
+      };
+      // What the box's page says (embedSays there): live, its game plays
+      // the match; left, it stopped, with why.
+      window.jkWatchBoxSays = function(win, state, text) {
+        var f = watchBox.frame;
+        if (!f || f.contentWindow !== win) return;
+        if (state === 'live') {
+          watchScreen.classList.add('box-live');
+          watchBox.keys = boxKeys(f);
+          if (watchDlg.open) renderWatch();
+        } else if (state === 'follow') {
+          // Who its game follows now: in place, the page as it is.
+          watchBox.follow = String(text || '').substring(0, 48);
+          Object.keys(watchBox.followEls).forEach(function(k) {
+            watchBox.followEls[k].textContent = watchBox.follow;
+          });
+        } else if (state === 'letgo') {
+          // Esc in the box: the keys come back to the viewing page.
+          try {
+            window.focus();
+          } catch (e) {}
+          try {
+            if (!watchScreen.hasAttribute('tabindex')) watchScreen.tabIndex = -1;
+            watchScreen.focus({ preventScroll: true });
+          } catch (e) {}
+        } else if (state === 'panel' || state === 'busy') {
+          watchScreen.classList.toggle('box-panel', state === 'panel');
+        } else if (state === 'left') {
+          text = String(text || '').substring(0, 200);
+          // A match that's over: what it said stays on the page, which says
+          // the match has ended.
+          if (!watchedGame(watchBox.id) && text) watchLive.note = text;
+          watchBox.left[watchBox.uid] = text;
+          boxStop();
+          if (watchDlg.open) renderWatch();
+        }
+      };
+      // This page as the box (#watch-<room>-embed): straight into watching
+      // that match, from the files saved in this browser if there are some,
+      // as Watch in the game starts it (playWatched), the prompt asking for
+      // the folder otherwise, in the box.
+      function startWatchEmbed() {
+        var id = Number(/^#watch-([0-9]{1,9})-embed$/.exec(location.hash)[1]);
+        var got = null;
+        try {
+          got = window.parent.jkWatchEmbedWant(id);
+        } catch (e) {}
+        if (!got || !ROOMS[got.lobbyRoom]) return embedSays('left', '');
+        var key = String(got.lobbyRoom);
+        var want = { game: ROOMS[key].game, room: ROOMS[key].name, lobbyRoom: key, demo: !!ROOMS[key].demo, watch: id };
+        delete Module.jkJoinRoom;
+        delete Module.jkJoinImperial;
+        Module.jkWatchRoom = id;
+        Module.jkWatchPack = !!got.pack;
+        // The feed leaves this game out of the room's watching (?box=1): this
+        // page is counted for it (sayWatching)
+        Module.jkWatchBox = true;
+        // Who the game follows, for the lobby page to show over it
+        // (watchFollowLabel): the game's own line is small in the box.
+        Module.jkWatchFollow = function(name, following) {
+          name = String(name || '').replace(/[^\x20-\x7e]/g, '?').replace(/\s+/g, ' ').trim().substring(0, 31).trim();
+          embedSays('follow', !following ? 'Free camera' : 'Following ' + (name || 'a player'));
+        };
+        if (want.demo) startDemo(want);
+        else openPicker(want);
+      }
+      window.jkPlayWatched = function(id) {
+        var w = watchedGame(Number(id));
+        var can = watchInGame(w);
+        if (!can || can.why || leaveGuard) return false;
+        try { window.focus(); } catch (e) {}
+        playWatched(w.g.id);
+        return true;
+      };
+      // What the game says while it watches (Module.jkView's say), over the
+      // game for a while; the last of it goes back with the player.
+      var viewNoteTimer = 0, viewNoteLast = '';
+      var VIEW_NOTE_KEY = 'jkdf2mp-watch-note';
+      Module.jkViewNotice = function(text) {
+        var note = document.getElementById('view-note');
+        viewNoteLast = String(text || '');
+        note.textContent = viewNoteLast;
+        note.hidden = !viewNoteLast;
+        clearTimeout(viewNoteTimer);
+        viewNoteTimer = setTimeout(function() { note.hidden = true; }, 10000);
+      };
+      // The game stopped watching (the match ended, the player left it, or it
+      // couldn't be watched): back to the viewing page on that match, as
+      // Quit goes back to the lobby (jkQuitToLobby), saying why.
+      Module.jkViewLeft = function(id) {
+        if (!pickerWant || !pickerWant.watch) return false;
+        // The viewing page's box: the lobby page takes it from here.
+        if (watchEmbed) return embedSays('left', viewNoteLast);
+        leaveGuard = false;
+        try { sessionStorage.setItem(VIEW_NOTE_KEY, viewNoteLast); } catch (e) {}
+        document.getElementById('quit-note').textContent = 'Going back to watching\u2026';
+        document.getElementById('quit-note').hidden = false;
+        saveThenLeave(function(done) { Module.FS.syncfs(false, done); }, QUIT_SAVE_MS, function() {
+          history.replaceState(null, '', location.pathname + location.search + '#watch-' + (Number(id) || pickerWant.watch));
+          location.reload();
+        });
+        return true;
+      };
+      // Back on the viewing page: what the game said last, once.
+      function takeViewNote() {
+        var text = '';
+        try {
+          text = sessionStorage.getItem(VIEW_NOTE_KEY) || '';
+          sessionStorage.removeItem(VIEW_NOTE_KEY);
+        } catch (e) {}
+        return text.substring(0, 200);
+      }
+
+      // The room window's Watch, the preview's close, Watch full size and
+      // Join.
+      room.addEventListener('click', function(ev) {
+        var t = ev.target.closest('[data-watch], [data-watch-stop], [data-watch-full], [data-watch-join]');
+        if (!t) return;
+        if (t.dataset.watch) {
+          watchGame(Number(t.dataset.watch) === watchLive.id ? 0 : Number(t.dataset.watch));
+          // On a phone the preview sits above the tables: bring it in view.
+          var pv = watchLive.id && window.matchMedia && matchMedia('(max-width: 700px)').matches && room.querySelector('.pv');
+          if (pv) pv.scrollIntoView({ block: 'start' });
+        }
+        else if (t.dataset.watchStop) watchGame(0);
+        else if (t.dataset.watchFull) openWatch(Number(t.dataset.watchFull));
+        else if (t.dataset.watchJoin) joinWatched();
+      });
+      // Closing the room window stops watching, unless it's for the viewing
+      // page on top of it.
+      room.addEventListener('close', function() {
+        if (!watchDlg.open && watchLive.id) watchGame(0);
+      });
+
+      // A link to #watch-<room>: the viewing page on that match, once the
+      // lobby's status is in.
+      function watchFromLink() {
+        var m = /^#watch-([0-9]{1,9})(-window)?$/.exec(location.hash);
+        if (!m) return false;
+        watchLive.fromLink = Number(m[1]);
+        watchLive.fromLinkNote = takeViewNote();
+        // A window of its own shows the viewing page at once, connecting.
+        if (watchWindow && !watchDlg.open) {
+          watchDlg.showModal();
+          renderWatch();
+        }
+        watchLinkReady();
+        return true;
+      }
+      function watchLinkReady() {
+        if (!watchLive.fromLink || !lobbyLive.status) return;
+        var id = watchLive.fromLink;
+        watchLive.fromLink = 0;
+        var w = watchedGame(id);
+        if (w && !room.open && !watchWindow) openRoom(w.key);
+        openWatch(w && canWatch(w.g) ? id : 0);
+        watchLive.note = watchLive.fromLinkNote || '';
+        watchLive.fromLinkNote = '';
+        if (watchLive.note) renderWatch();
+      }
       // Pointing at a room, tabbing to it or touching it starts its picture's
       // download (ROOM_PICTURES), so it's mostly there by the time the window
       // opens. The browser keeps it, and the window's own ask finds it.
@@ -9037,7 +11208,7 @@
       // the browser's data saver on (Save-Data): then only a room pointed at
       // or opened asks for its picture. Nor once a game is starting.
       function askRoomPicturesWhenIdle() {
-        if (typeof ROOM_PICTURES !== 'object' || (navigator.connection && navigator.connection.saveData)) return;
+        if (typeof ROOM_PICTURES !== 'object' || (navigator.connection && navigator.connection.saveData) || watchWindow) return;
         var whenIdle = typeof requestIdleCallback === 'function' ? requestIdleCallback :
             function(fn) { setTimeout(fn, 1000); };
         whenIdle(function() {
@@ -9103,6 +11274,9 @@
           }
           ws.onopen = function() {
             ws.send('watch');
+            // The match this page watches, if any, to a lobby that's new to it.
+            watchLive.sent = 0;
+            sayWatching();
             w.keepalive = setInterval(function() { if (ws.readyState === 1) ws.send('ping'); }, 25000);
           };
           ws.onmessage = function(ev) {
@@ -9164,6 +11338,7 @@
       });
 
       function playFullscreen() {
+        if (watchEmbed) return;  // the viewing page's Full screen takes its box there
         if (!fullscreenOption.checked || document.fullscreenElement || !document.fullscreenEnabled) return;
         if (!document.getElementById('zone').hidden || document.querySelector('dialog[open]')) return;
         if (gameLost) return;  // the game stopped, or lost its graphics and they aren't back: only a reload helps
@@ -9859,13 +12034,20 @@
 
       var hideZoneBeforeLobby = hideZone;
       hideZone = function() {
-        matchesGameStart();
-        // The prompt it starts from showed "Share my screenshots on match
-        // pages", where the lobby takes them.
-        shotGameStart();
+        // The viewing page's box only watches: nothing for the match record.
+        if (!watchEmbed) {
+          matchesGameStart();
+          // The prompt it starts from showed "Share my screenshots on match
+          // pages", where the lobby takes them.
+          shotGameStart();
+        }
         clearTimeout(matchesLive.retry);
         stopLobbyWatch();
         stopImperialWatch();
+        if (watchDlg.open) {
+          watchLive.joining = true;
+          watchDlg.close();
+        }
         if (room.open) room.close();
         hideZoneBeforeLobby();
       };
@@ -9878,10 +12060,12 @@
           startLobbyWatch();
           startImperialWatch();
         }
-        openRoom(location.hash.substring(1));
+        if (!watchFromLink()) openRoom(location.hash.substring(1));
+      } else if (watchEmbed) {
+        startWatchEmbed();
       }
       window.addEventListener('hashchange', function() {
-        if (document.documentElement.classList.contains('zone-open')) openRoom(location.hash.substring(1));
+        if (document.documentElement.classList.contains('zone-open') && !watchFromLink()) openRoom(location.hash.substring(1));
       });
     </script>
     <script type='text/javascript'>

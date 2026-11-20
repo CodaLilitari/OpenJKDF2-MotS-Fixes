@@ -64,6 +64,15 @@
 // checks room passwords). The JS below handles signal, ice and lobby itself;
 // the engine never sees them.
 //
+// Watching a match: a lobby that says feed (jkdf2mp-bb-server's src/feed.js)
+// takes a feed for each watched room's match. A game in a room says feed;
+// while the room's match is watched the lobby answers feed <room> <token>,
+// and the game sends a copy of every message it sends everyone
+// (stdComm_SendToPlayer) to /feed/<room>?up=<token>, batched every
+// FEED_BATCH_MS, until the lobby says feed off or the game leaves. The JS
+// handles feed itself. No keyframes yet: this is the first step, to measure
+// what a match sends.
+//
 // Room passwords: this game tells the lobby it can send them (/relay?pw=1).
 // A lobby that says pw then lists no passwords and checks the one the player
 // typed, which goes with join as the hex of its UTF-16LE units, for a game
@@ -137,6 +146,8 @@
 #include "Win95/stdComm.h"
 #include "Dss/sithMulti.h"
 #include "Devices/sithComm.h"
+#include "Devices/sithControl.h"
+#include "Devices/sithConsole.h"
 #include "World/sithThing.h"
 #include "Main/Main.h"
 #include "General/stdString.h"
@@ -1368,8 +1379,16 @@ EM_JS(void, wsrelay_js_connect, (int netcode), {
                 var seat = text.split(' ');
                 net.seat = { room: parseInt(seat[1], 10), id: parseInt(seat[2], 10), key: seat[3] || "" };
                 if (net.seat.id > 1) net.askIce();
+                net.askFeed();
                 return true;
             }
+            /* The room's feed for pages watching its match: where to send,
+               or to stop. */
+            if (op === 'feed') {
+                net.onFeed(text.split(' '));
+                return true;
+            }
+            if (op === 'rejoined' || op === 'rehosted') net.askFeed();
             /* A player whose data channel is still up is still playing: the
                engine decides when they're gone (DirectPlay_Receive). */
             var gone = op === 'peer-left' ? net.peers[parseInt(text.substring(sp + 1), 10)] : net.peers[1];
@@ -1401,6 +1420,235 @@ EM_JS(void, wsrelay_js_connect, (int netcode), {
             if (line === net.helloSent) return;
             net.helloSent = line;
             net.ws.send(line);
+        };
+
+        /* Watching a match: this game's copy of what it sends everyone, to
+           its room's feed while the lobby says (feed <room> <token>), one
+           binary chunk every FEED_BATCH_MS: a 0 (packets), then each packet
+           as u16 length (LE) and its bytes from cogMsgId on. The host's game
+           also sends keyframes: the world as a player joining now would be
+           sent it (sithMulti_FeedKeyframe), as a chunk of kind 1 and, past
+           FEED_MAX_CHUNK, more of kind 2. One goes once the feed is open, at
+           each new level, every FEED_KEY_MS, and when the feed asks ("key":
+           a page is waiting for one). Its first packet is JKF1 and a line of
+           JSON on the level (wsrelay_js_feed_key_begin), its last JKF1 and
+           {"v":1,"end":true}. Chunks queue in
+           order and at most FEED_SENDS go a tick: a lobby's feed takes at
+           most 64 KiB a chunk and 20 chunks a second. Every minute the
+           network log says how much went, to measure a match's feed. */
+        var FEED_BATCH_MS = 250, FEED_MAX_CHUNK = 60000, FEED_LOG_MS = 60000, FEED_RETRIES = 6, FEED_RETRY_MAX_MS = 8000;
+        var FEED_KEY_MS = 60000, FEED_KEY_ASK_MS = 5000, FEED_KEY_MAX = 4 * 1024 * 1024, FEED_SENDS = 4, FEED_QUEUE_MAX = 400;
+        var FEED_SAID_MAX = 8;
+        net.feed = null;
+        net.askFeed = function() {
+            if (Module['jkNetOld'] || net.state !== 1 || net.lobbyCan.indexOf('feed') < 0) return;
+            net.ws.send('feed');
+        };
+        net.onFeed = function(parts) {
+            if (parts[1] === 'off') {
+                net.feedStop('the lobby stopped it');
+                return;
+            }
+            var room = parseInt(parts[1], 10), token = parts[2] || '';
+            if (!(room > 0) || !/^[0-9a-f]{32}$/.test(token)) return;
+            /* The feed is beside the lobby: wss://<host>/feed/<room>. */
+            var base = (net.ws && net.ws.url) || Module['jkRelayUrl'] || '';
+            var cut = base.lastIndexOf('/relay');
+            var url = (cut >= 0 ? base.substring(0, cut) : base) + '/feed/' + room + '?up=' + token;
+            if (net.feed && net.feed.url === url) return;
+            net.feedStop();
+            net.feed = { url: url, ws: null, parts: [], size: 0, out: [], chunks: 0, bytes: 0, packets: 0, keys: 0,
+                         key: null, keyWant: true, keyAt: 0, keyAskAt: 0, said: [],
+                         since: performance.now(), timer: setInterval(function() { net.feedFlush(); }, FEED_BATCH_MS), tries: 0 };
+            net.feedOpen(net.feed);
+        };
+        net.feedOpen = function(feed) {
+            var ws;
+            try {
+                ws = new WebSocket(feed.url);
+            } catch (e) {
+                net.note('feed: ' + e);
+                return;
+            }
+            ws.binaryType = 'arraybuffer';
+            feed.ws = ws;
+            ws.onopen = function() {
+                feed.tries = 0;
+                feed.keyWant = true;
+                net.note('feed: sending to ' + feed.url.split('?')[0]);
+            };
+            ws.onmessage = function(ev) {
+                var now = performance.now();
+                if (ev && ev.data === 'key' && now - feed.keyAskAt >= FEED_KEY_ASK_MS) {
+                    feed.keyAskAt = now;
+                    feed.keyWant = true;
+                }
+                /* A game watching hasn't got this host's mod: mods.js puts
+                   it on the feed (feedUp), at its https address. */
+                var mod = ev && typeof ev.data === 'string' ? /^mod ([0-9a-f]{64})$/.exec(ev.data) : null;
+                if (mod && net.isHost && Module.jkMods && Module.jkMods.feedUp)
+                    Module.jkMods.feedUp(feed.url.replace(/^ws/, 'http'), mod[1], function() { return net.feed === feed; });
+                /* A spectator's message, "<name> (watching): <text>" (the
+                   feed made it): the engine puts it in the match's chat on
+                   its next frame (wsrelay_js_feed_take_say). */
+                var said = ev && typeof ev.data === 'string' ? /^say ([\x20-\x7e]{1,126})$/.exec(ev.data) : null;
+                if (said && net.isHost && feed.said.length < FEED_SAID_MAX) feed.said.push(said[1]);
+            };
+            ws.onclose = function(ev) {
+                if (net.feed !== feed || feed.ws !== ws) return;
+                feed.ws = null;
+                var code = ev && ev.code;
+                /* The feed ended it, or another socket of this game took its
+                   place: no more. Otherwise (a network blip, the feed
+                   restarting) try again soon, then less often: 1, 2, 4, 8,
+                   8 and 8 s, for about half a minute. What's sent meanwhile
+                   is lost, and watchers set it right from the keyframe that
+                   follows (keyWant). */
+                if (code === 1000 || code === 1003 || code === 1008 || code === 4001 || code === 4002 || feed.tries >= FEED_RETRIES) {
+                    net.feedStop('closed (' + code + ')');
+                    return;
+                }
+                feed.tries++;
+                setTimeout(function() { if (net.feed === feed && !feed.ws) net.feedOpen(feed); },
+                           Math.min(1000 * Math.pow(2, feed.tries - 1), FEED_RETRY_MAX_MS));
+            };
+        };
+        /* A chunk of this kind of these records, as the feed takes it. */
+        net.feedChunk = function(kind, parts, size) {
+            var out = new Uint8Array(1 + size), at = 1;
+            out[0] = kind;
+            for (var i = 0; i < parts.length; i++) {
+                out.set(parts[i], at);
+                at += parts[i].length;
+            }
+            return out;
+        };
+        net.feedRecord = function(bytes) {
+            var rec = new Uint8Array(2 + bytes.length);
+            rec[0] = bytes.length & 255;
+            rec[1] = bytes.length >> 8;
+            rec.set(bytes, 2);
+            return rec;
+        };
+        /* The packets so far, as a chunk in the queue. */
+        net.feedClose = function(feed) {
+            if (!feed.size) return;
+            feed.out.push(net.feedChunk(0, feed.parts, feed.size));
+            feed.parts = [];
+            feed.size = 0;
+        };
+        net.feedCopy = function(bytes) {
+            var feed = net.feed;
+            if (!feed || !feed.ws || feed.ws.readyState !== 1 || bytes.length > 0xffff) return;
+            if (feed.size + 2 + bytes.length > FEED_MAX_CHUNK) net.feedClose(feed);
+            var rec = net.feedRecord(bytes);
+            feed.parts.push(rec);
+            feed.size += rec.length;
+            feed.packets++;
+        };
+        /* Whether the host's game is to make a keyframe now (it does at
+           once: feedKeyBegin, feedKeyAdd for each message, feedKeyEnd). */
+        net.feedKeyWanted = function(newLevel) {
+            var feed = net.feed;
+            if (!feed || !net.isHost || !feed.ws || feed.ws.readyState !== 1 || feed.key || feed.out.length > 8) return 0;
+            var now = performance.now();
+            if (!newLevel && !feed.keyWant && now - feed.keyAt < FEED_KEY_MS) return 0;
+            feed.keyWant = false;
+            feed.keyAt = now;
+            return 1;
+        };
+        net.feedKeyBegin = function(head) {
+            var feed = net.feed;
+            if (!feed) return;
+            net.feedClose(feed);
+            feed.key = { parts: [], size: 0, kind: 1, chunks: [], bytes: 0, packets: 0, failed: '' };
+            net.feedKeyAdd(head);
+        };
+        net.feedKeyAdd = function(bytes) {
+            var key = net.feed && net.feed.key;
+            if (!key || key.failed) return;
+            if (bytes.length > 0xffff) {
+                key.failed = 'a message of ' + bytes.length + ' bytes';
+                return;
+            }
+            if (key.size + 2 + bytes.length > FEED_MAX_CHUNK) {
+                key.chunks.push(net.feedChunk(key.kind, key.parts, key.size));
+                key.parts = [];
+                key.size = 0;
+                key.kind = 2;
+            }
+            var rec = net.feedRecord(bytes);
+            key.parts.push(rec);
+            key.size += rec.length;
+            key.bytes += rec.length;
+            key.packets++;
+            if (key.bytes > FEED_KEY_MAX) key.failed = 'over ' + (FEED_KEY_MAX / 1048576) + ' MiB';
+        };
+        net.feedKeyEnd = function() {
+            var feed = net.feed, key = feed && feed.key;
+            if (!key) return;
+            /* Its last packet says it's whole: a viewer starts playing what
+               came after it once it has all of it. */
+            net.feedKeyAdd(new TextEncoder().encode('JKF1' + JSON.stringify({ v: 1, end: true })));
+            feed.key = null;
+            if (key.failed) {
+                net.note('feed: keyframe not sent, ' + key.failed);
+                return;
+            }
+            if (key.size) key.chunks.push(net.feedChunk(key.kind, key.parts, key.size));
+            Array.prototype.push.apply(feed.out, key.chunks);
+            feed.keys++;
+            net.note('feed: keyframe, ' + key.packets + ' packets in ' + key.chunks.length + ' chunks, ' + (key.bytes / 1024).toFixed(1) + ' KiB');
+        };
+        net.feedFlush = function() {
+            var feed = net.feed;
+            if (!feed) return;
+            var now = performance.now();
+            if (feed.ws && feed.ws.readyState === 1) {
+                net.feedClose(feed);
+                for (var n = 0; n < FEED_SENDS && feed.out.length; n++) {
+                    var chunk = feed.out.shift();
+                    try {
+                        feed.ws.send(chunk.buffer);
+                        feed.chunks++;
+                        feed.bytes += chunk.length;
+                    } catch (e) {}
+                }
+                /* Too far behind: watchers start again from the next keyframe. */
+                if (feed.out.length > FEED_QUEUE_MAX) {
+                    feed.out = [];
+                    feed.keyWant = true;
+                    net.note('feed: too far behind, starting again from a keyframe');
+                }
+            } else {
+                /* Nothing goes while it's closed, and what watchers missed
+                   takes a keyframe once it's back. */
+                feed.parts = [];
+                feed.size = 0;
+                feed.out = [];
+                feed.keyWant = true;
+            }
+            if (now - feed.since >= FEED_LOG_MS) {
+                var secs = (now - feed.since) / 1000;
+                net.note('feed: ' + feed.packets + ' packets in ' + feed.chunks + ' chunks, ' + (feed.bytes / 1024).toFixed(1) + ' KiB in ' +
+                         Math.round(secs) + ' s (' + (feed.bytes / 1024 / secs).toFixed(2) + ' KiB/s)' +
+                         (feed.keys ? ', ' + feed.keys + (feed.keys > 1 ? ' keyframes' : ' keyframe') : ''));
+                feed.packets = 0;
+                feed.chunks = 0;
+                feed.bytes = 0;
+                feed.keys = 0;
+                feed.since = now;
+            }
+        };
+        net.feedStop = function(why) {
+            var feed = net.feed;
+            if (!feed) return;
+            net.feed = null;
+            clearInterval(feed.timer);
+            if (feed.ws) {
+                try { feed.ws.close(1000, 'bye'); } catch (e) {}
+            }
+            if (why) net.note('feed: stopped, ' + why);
         };
 
         /* Outside a game, reconnects a lost socket after a while (the lobby
@@ -1542,7 +1790,10 @@ EM_JS(int, wsrelay_js_send_text, (const char* pText), {
     // A host's entry goes with rehost; hosting, joining or leaving ends the
     // seat this game had.
     if ((op === 'host' || op === 'update') && sp > 0) net.entry = text.substring(sp + 1);
-    if (op === 'host' || op === 'join' || op === 'leave') net.seat = null;
+    if (op === 'host' || op === 'join' || op === 'leave') {
+        net.seat = null;
+        if (net.feedStop) net.feedStop('left the room');
+    }
     if (net.state !== 1) return 0;
     net.ws.send(text);
     return 1;
@@ -1590,6 +1841,553 @@ EM_JS(int, wsrelay_js_send_packet, (const void* pData, int len, int idTo, int ow
     if (net.isHost && idTo > 1) net.sentPlayAt[idTo] = performance.now();
     return net.sendPacket(HEAPU8.slice(pData, pData + len), net.route(idTo), ownPos ? net.nextSeq(idTo) : undefined);
 });
+
+// A message this game sends everyone, for its room's feed (net.feedCopy),
+// while it has one.
+EM_JS(void, wsrelay_js_feed_copy, (const void* pData, int len), {
+    var net = Module.jkNet;
+    if (net && net.feed) net.feedCopy(HEAPU8.subarray(pData, pData + len));
+});
+
+// The next spectator's message the feed brought the host's game (net.feed's
+// said), into pOut; 0 when there's none.
+EM_JS(int, wsrelay_js_feed_take_say, (char* pOut, int maxLen), {
+    var net = Module.jkNet;
+    var line = net && net.feed && net.feed.said.length ? net.feed.said.shift() : '';
+    if (!line) return 0;
+    stringToUTF8(line, pOut, maxLen);
+    return 1;
+});
+
+// Whether the host's game is to send its room's feed a keyframe now
+// (net.feedKeyWanted); newLevel: the level isn't the last keyframe's.
+EM_JS(int, wsrelay_js_feed_key_wanted, (int newLevel), {
+    var net = Module.jkNet;
+    return net && net.feedKeyWanted ? net.feedKeyWanted(newLevel) : 0;
+});
+
+// A keyframe's start: its first packet is JKF1 and a line of JSON on the
+// level, for a viewer to load it and for pages to read without the game.
+EM_JS(void, wsrelay_js_feed_key_begin, (const char* pEpisode, const char* pMap, uint32_t gameMs, int modeFlags, uint32_t checksum, int mots), {
+    var net = Module.jkNet;
+    if (!net || !net.feedKeyBegin) return;
+    // tail: the host's mod as the lobby lists it ("" for none), which a
+    // viewer needs to be running.
+    // sha: the SHA-256 of the episode's GOB, as joiners get it (maps.js), so
+    // a viewer without it can get it from the Level Library; '' for a retail
+    // one, or until it's been hashed.
+    // lib: the Mod Library's id for the host's mod, when the library saved it
+    // (mods.js libId), so a viewer without it can get it from there.
+    var episode = UTF8ToString(pEpisode);
+    var sha = Module.jkMaps && Module.jkMaps.hostedSha ? Module.jkMaps.hostedSha(episode, mots ? 'goo' : 'gob') : '';
+    var modLib = Module.jkMods && Module.jkMods.libId ? Module.jkMods.libId() : '';
+    var head = 'JKF1' + JSON.stringify({ v: 1, game: mots ? 'mots' : 'jk1', episode: episode, map: UTF8ToString(pMap),
+                                         t: gameMs >>> 0, mode: modeFlags, sum: checksum >>> 0,
+                                         tail: Module.jkMods ? Module.jkMods.tail() : '', sha: sha || undefined,
+                                         lib: modLib || undefined });
+    net.feedKeyBegin(new TextEncoder().encode(head));
+});
+
+// One of a keyframe's messages, from cogMsgId on (net.feedKeyAdd).
+EM_JS(void, wsrelay_js_feed_key_packet, (const void* pData, int len), {
+    var net = Module.jkNet;
+    if (net && net.feedKeyAdd) net.feedKeyAdd(HEAPU8.subarray(pData, pData + len));
+});
+
+EM_JS(void, wsrelay_js_feed_key_end, (), {
+    var net = Module.jkNet;
+    if (net && net.feedKeyEnd) net.feedKeyEnd();
+});
+
+// ---- Watching a match in the game (spectator mode), the feed's side. The
+// page starts the engine with Module.jkWatchRoom, and this game plays that
+// room's feed (the one pages watch, jkdf2mp-bb-server's src/feed.js) as a
+// player with no body who sends nothing (see "Watching a match in the game"
+// further down for the engine's side). Module.jkView reads the feed: it
+// keeps the latest keyframe and what came after it until the engine is in
+// that level, hands it all over at once while the engine synchronizes (as a
+// joiner takes its host's big sync), then the rest at the pace it came,
+// JITTER_MS behind the newest. A record's packets were sent over the batch
+// before it (net.feedFlush), so they play spread over SPREAD_MS. What it
+// tells the player goes to the page's Module.jkViewNotice, and the console.
+
+// The room the page's "Watch in the game" picked, once.
+EM_JS(int, wsrelay_js_take_watch_room, (), {
+    var room = Number(Module['jkWatchRoom']);
+    delete Module['jkWatchRoom'];
+    return room > 0 && room < 1e9 ? Math.floor(room) : 0;
+});
+
+// Opens the room's feed, beside the lobby: wss://<host>/feed/<room>. 0
+// without an address for it.
+EM_JS(int, wsrelay_js_view_open, (int room), {
+    /* LATE_MS: further behind than this, and it waits for the feed again;
+       WAIT_MS: how long it waits for a keyframe to start from; RETRIES: how
+       many times it opens the feed again after it drops. CATCH_MS: the
+       newest record due more than this past JITTER_MS from now (it waited
+       for the feed, LATE_MS, and the rest came at once), and it plays
+       CATCH_RATE faster until it isn't, so each hold-up doesn't add to how
+       far behind the match it is for the rest of it. */
+    var JITTER_MS = 500, SPREAD_MS = 250, LATE_MS = 2000, WAIT_MS = 90000, RETRIES = 3, CATCH_MS = 1000, CATCH_RATE = 0.1;
+    var old = Module.jkView;
+    if (old) old.close();
+    var base = Module['jkRelayUrl'];
+    if (!base && typeof location !== 'undefined' && location)
+        base = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/relay';
+    if (!base) return 0;
+    var cut = base.indexOf('?');
+    if (cut >= 0) base = base.substring(0, cut);
+    cut = base.lastIndexOf('/relay');
+    /* phase: wait (no keyframe yet), level (one held, from recs[0]), sync
+       (the engine is synchronizing in the level want: found once it has
+       that level's keyframe), live (in the level), with recs[ri] and its
+       packet pi next. lastMs: the time of the last record played. */
+    var view = { url: (cut >= 0 ? base.substring(0, cut) : base) + '/feed/' + room, room: room, ws: null, tries: 0,
+                 delay: -1, recs: [], ri: 0, pi: 0, phase: 'wait', since: performance.now(), level: null, want: null,
+                 found: false, keyDone: false, syncAt: 0, offset: 0, lastMs: -1, late: 0, caught: 0, recvAt: 0, ended: '',
+                 closed: false, waitMs: WAIT_MS,
+                 resync: false, rekey: false, box: !!Module['jkWatchBox'] };
+    Module.jkView = view;
+    view.say = function(text) {
+        console.log('OpenJKDF2: watching room ' + room + ': ' + text);
+        if (typeof Module['jkViewNotice'] === 'function') {
+            try { Module['jkViewNotice'](text); } catch (e) {}
+        }
+    };
+    /* Nothing more comes; the engine leaves once it has played what it has. */
+    view.end = function(why, text) {
+        if (view.ended) return;
+        view.ended = why;
+        if (text) view.say(text);
+        var ws = view.ws;
+        view.ws = null;
+        if (ws) {
+            try { ws.close(1000); } catch (e) {}
+        }
+    };
+    /* The engine left the match. */
+    view.close = function() {
+        view.closed = true;
+        view.end('closed', '');
+        if (Module.jkView === view) Module.jkView = null;
+    };
+    view.open = function() {
+        var ws;
+        try {
+            /* The game in a viewing page's box (index.html's #watch-<room>-embed):
+               its page is counted in the room's watching, so the feed leaves
+               this one out (?box=1). */
+            ws = new WebSocket(view.url + (view.box ? '?box=1' : ''));
+        } catch (e) {
+            view.end('error', 'The match could not be reached.');
+            return;
+        }
+        ws.binaryType = 'arraybuffer';
+        view.ws = ws;
+        ws.onopen = function() { view.tries = 0; };
+        ws.onmessage = function(ev) {
+            if (view.ws !== ws) return;
+            var d = ev && ev.data;
+            if (typeof d !== 'string') {
+                if (d) view.take(d);
+                return;
+            }
+            var parts = d.split(' ');
+            if (parts[0] !== 'feed') return;
+            if (parts[1] === 'ended') {
+                var why = parts.slice(2).join(' ') || 'over';
+                view.end(why, why === 'room ended' ? 'The match is over.' :
+                              why === 'watching off' ? 'The host turned watching off.' : 'The match stopped sending.');
+            } else if (parts[1] === 'waiting') {
+                if (view.phase === 'wait') view.say('Waiting for the match to send a picture to start from.');
+            } else if (parseInt(parts[1], 10) >= 0) {
+                view.delay = parseInt(parts[1], 10);
+            }
+        };
+        ws.onclose = function() {
+            if (view.ws !== ws) return;
+            view.ws = null;
+            if (view.ended) return;
+            /* What came meanwhile is lost: the next keyframe sets it right. */
+            if (view.phase === 'live') view.resync = true;
+            if (view.tries >= RETRIES) {
+                view.end('lost', 'Lost the match.');
+                return;
+            }
+            view.tries++;
+            setTimeout(function() {
+                if (Module.jkView === view && !view.ws && !view.ended) view.open();
+            }, 1000 * view.tries);
+        };
+    };
+    /* A keyframe's JKF1 packets: its level (head) and its end (keyEnd). */
+    view.marker = function(rec, pkt) {
+        if (pkt.length < 5 || pkt[0] !== 74 || pkt[1] !== 75 || pkt[2] !== 70 || pkt[3] !== 49) return false;
+        var h = null;
+        try { h = JSON.parse(new TextDecoder().decode(pkt.subarray(4))); } catch (e) {}
+        if (h && h.v === 1 && h.end) rec.keyEnd = true;
+        else if (h && h.v === 1 && typeof h.episode === 'string' && typeof h.map === 'string' && rec.kind === 1) rec.head = h;
+        return true;
+    };
+    /* A batch of records: u32 length (LE), u32 ms, u8 kind, u8 seat, then
+       packets, each u16 length and its bytes. */
+    view.take = function(buf) {
+        var bytes = new Uint8Array(buf), dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), at = 0;
+        while (at + 10 <= bytes.length) {
+            var len = dv.getUint32(at, true), end = at + 4 + len;
+            if (len < 6 || end > bytes.length) break;
+            var rec = { ms: dv.getUint32(at + 4, true), kind: bytes[at + 8], seat: bytes[at + 9], packets: [], head: null, keyEnd: false };
+            for (var p = at + 10; p + 2 <= end; ) {
+                var n = bytes[p] | (bytes[p + 1] << 8);
+                if (p + 2 + n > end) break;
+                var pkt = bytes.slice(p + 2, p + 2 + n);
+                if (rec.kind === 0 || !view.marker(rec, pkt)) rec.packets.push(pkt);
+                p += 2 + n;
+            }
+            at = end;
+            view.add(rec);
+        }
+    };
+    view.same = function(h, want) {
+        function name(s) {
+            s = String(s || '').toLowerCase();
+            var dot = s.lastIndexOf('.');
+            return dot > 0 ? s.substring(0, dot) : s;
+        }
+        return !!h && !!want && name(h.episode) === name(want.episode) && name(h.map) === name(want.map);
+    };
+    view.isKey = function(rec) { return rec.kind === 1 && !!rec.head; };
+    view.add = function(rec) {
+        /* Until the engine is in the level, only the latest keyframe and what
+           came after it are any use. */
+        if (view.phase === 'wait' || view.phase === 'level') {
+            if (view.isKey(rec)) {
+                view.recs = [rec];
+                view.ri = 0;
+                view.pi = 0;
+                view.level = rec.head;
+                view.phase = 'level';
+            } else if (view.phase === 'level') {
+                view.recs.push(rec);
+            }
+            return;
+        }
+        if (view.phase === 'sync' && !view.found) {
+            if (view.isKey(rec) && view.same(rec.head, view.want)) {
+                view.recs = [rec];
+                view.ri = 0;
+                view.pi = 0;
+                view.found = true;
+            }
+            return;
+        }
+        view.recs.push(rec);
+    };
+    /* The engine is synchronizing in this level (the first, or the host's
+       next): from its latest keyframe held, or the next to come. */
+    view.sync = function(want) {
+        view.want = want;
+        view.phase = 'sync';
+        view.found = false;
+        view.keyDone = false;
+        view.syncAt = performance.now();
+        for (var i = view.recs.length - 1; i >= 0; i--) {
+            if (view.isKey(view.recs[i]) && view.same(view.recs[i].head, want)) {
+                view.recs = view.recs.slice(i);
+                view.ri = 0;
+                view.pi = 0;
+                view.found = true;
+                return;
+            }
+        }
+        view.recs = [];
+        view.ri = 0;
+        view.pi = 0;
+    };
+    view.trim = function() {
+        if (view.ri > 200) {
+            view.recs = view.recs.slice(view.ri);
+            view.ri = 0;
+        }
+    };
+    /* The next packet due: [bytes, seat]; or 0 for none yet, -1 for the
+       welcome (it's caught up to the feed), -2 once it ended. */
+    view.recv = function() {
+        var now = performance.now(), r;
+        if (view.phase === 'sync') {
+            if (view.found) {
+                while (view.ri < view.recs.length) {
+                    r = view.recs[view.ri];
+                    view.lastMs = r.ms;
+                    if (view.pi < r.packets.length) return [r.packets[view.pi++], r.seat];
+                    /* Whole: its end, or the host's game going on after it
+                       (it sends its keyframe's chunks before anything else). */
+                    if (r.keyEnd || (view.ri > 0 && r.kind === 0 && r.seat === 1)) view.keyDone = true;
+                    view.ri++;
+                    view.pi = 0;
+                }
+                if (view.keyDone && !view.ended) {
+                    view.phase = 'live';
+                    view.offset = now - view.lastMs + JITTER_MS;
+                    view.trim();
+                    return -1;
+                }
+            }
+            if (view.ended) return -2;
+            if (now - view.syncAt > view.waitMs) {
+                view.end('wait', 'Nothing came from the match to start from.');
+                return -2;
+            }
+            return 0;
+        }
+        if (view.phase !== 'live') return view.ended ? -2 : 0;
+        /* Catching up (CATCH_MS): the time since it was last asked, at most
+           100 ms of it, CATCH_RATE of that off the offset. caught: how much
+           in all. */
+        if (view.recs.length) {
+            var ahead = view.recs[view.recs.length - 1].ms + view.offset - now - JITTER_MS - CATCH_MS;
+            var step = view.recvAt ? Math.min(now - view.recvAt, 100) * CATCH_RATE : 0;
+            if (ahead > 0 && step > 0) {
+                step = Math.min(step, ahead);
+                view.offset -= step;
+                view.caught += step;
+            }
+        }
+        view.recvAt = now;
+        while (view.ri < view.recs.length) {
+            r = view.recs[view.ri];
+            /* Keyframes are for starting, and for after the feed dropped
+               (resync): the first one newer than what played sets right what
+               was missed (rekey, to its end). What's older than what played
+               came again after the feed was opened again. */
+            if (r.kind === 0) view.rekey = false;
+            else if (view.pi === 0 && view.resync && view.isKey(r) && view.same(r.head, view.want) && r.ms >= view.lastMs) {
+                view.resync = false;
+                view.rekey = true;
+            }
+            if ((r.kind !== 0 && !view.rekey) || r.ms < view.lastMs || !r.packets.length) {
+                if (r.keyEnd) view.rekey = false;
+                view.ri++;
+                view.pi = 0;
+                continue;
+            }
+            var due = r.ms + view.offset;
+            if (view.pi === 0 && now - due > LATE_MS) {
+                view.offset = now - r.ms + JITTER_MS;
+                due = r.ms + view.offset;
+                view.late++;
+            }
+            if (now < due - SPREAD_MS + SPREAD_MS * (view.pi + 1) / r.packets.length) return 0;
+            view.lastMs = r.ms;
+            var out = [r.packets[view.pi++], r.seat];
+            if (view.pi >= r.packets.length) {
+                if (r.keyEnd) view.rekey = false;
+                view.ri++;
+                view.pi = 0;
+            }
+            view.trim();
+            return out;
+        }
+        return view.ended ? -2 : 0;
+    };
+    view.open();
+    return 1;
+});
+
+// The level of the feed's latest keyframe: 1 with its episode and map, and
+// pInfo its multiplayer mode flags and 1 for MotS; 0 while there's none yet;
+// -1 if it can't be watched here (the player has been told why).
+EM_JS(int, wsrelay_js_view_level, (char* pEpisode, int episodeLen, char* pMap, int mapLen, int* pInfo), {
+    var view = Module.jkView;
+    if (!view || view.ended) return -1;
+    if (view.phase === 'wait') {
+        if (performance.now() - view.since > view.waitMs) {
+            view.end('wait', 'Nothing came from the match to start from. Try again in a minute.');
+            return -1;
+        }
+        return 0;
+    }
+    /* The match's mod and MotS Remastered pack (its tail, mods.js) and this
+       game's, by their fingerprints (a mod folder's name may differ). When
+       they aren't the same, 2: mods.js gets the match's (view_fetch_mod) and
+       the engine restarts into it, once (jkWatchModFor). */
+    var h = view.level, tail = Module.jkMods ? Module.jkMods.tail() : '';
+    var lib = Module.jkMods && Module.jkMods.lib;
+    var want = (lib && lib.parseTail(h.tail || '')) || {}, have = (lib && lib.parseTail(tail)) || {};
+    var same = (h.tail || '') === tail ||
+               (!!lib && !want.bad && (want.fp || null) === (have.fp || null) && (want.pack || null) === (have.pack || null));
+    if (!same) {
+        var why = '';
+        if (!lib || !Module.jkMods.viewFetch)
+            why = h.tail ? "This match is played with a mod, and this game can't get onto it."
+                         : 'This match is played without a mod. To watch it here, start the game without one first.';
+        else if (want.bad)
+            why = "This match is played with a mod this game can't read.";
+        else if (Module.jkWatchModFor === (h.tail || ''))
+            why = "This game couldn't start with the mod this match is played with.";
+        if (why) {
+            view.end('mod', why);
+            return -1;
+        }
+        return 2;
+    }
+    delete Module.jkWatchModFor;
+    stringToUTF8(h.episode, pEpisode, episodeLen);
+    stringToUTF8(h.map, pMap, mapLen);
+    HEAP32[pInfo >> 2] = h.mode | 0;
+    HEAP32[(pInfo >> 2) + 1] = h.game === 'mots' ? 1 : 0;
+    return 1;
+});
+
+// The engine is synchronizing in this level (view.sync).
+EM_JS(void, wsrelay_js_view_sync, (const char* pEpisode, const char* pMap), {
+    var view = Module.jkView;
+    if (view) view.sync({ episode: UTF8ToString(pEpisode), map: UTF8ToString(pMap) });
+});
+
+// The next packet due (view.recv), from cogMsgId on, into pBuf: its length,
+// with the seat it came from (the player's net id) in pFrom; or 0 for none
+// yet, -1 for the welcome, -2 once the feed ended.
+EM_JS(int, wsrelay_js_view_recv, (void* pBuf, int maxLen, int* pFrom), {
+    var view = Module.jkView;
+    if (!view) return -2;
+    for (;;) {
+        var got = view.recv();
+        if (typeof got === 'number') return got;
+        var pkt = got[0];
+        if (pkt.length < 4 || pkt.length > maxLen) continue;
+        HEAPU8.set(pkt, pBuf);
+        HEAP32[pFrom >> 2] = got[1];
+        return pkt.length;
+    }
+});
+
+// The engine can't play the feed on, for this reason (said to the player).
+EM_JS(void, wsrelay_js_view_end, (const char* pWhy, const char* pText), {
+    var view = Module.jkView;
+    if (view) view.end(UTF8ToString(pWhy), UTF8ToString(pText));
+});
+
+// A viewer's message, on the feed's socket: "say <name>\t<text>", the name
+// as the feed shows it (printable ASCII, at most 16). 0 when the feed isn't
+// open.
+EM_JS(int, wsrelay_js_view_say, (const char16_t* pName, const char* pText), {
+    var view = Module.jkView;
+    if (!view || view.ended || !view.ws || view.ws.readyState !== 1) return 0;
+    var chars = [];
+    for (var i = 0; pName && i < 31; i++) {
+        var ch = HEAPU16[(pName >> 1) + i];
+        if (!ch) break;
+        chars.push(ch);
+    }
+    // No \s here: the C compiler reads an EM_JS body as a string and makes
+    // \s an s. Past the first replace, a space is the only white space left.
+    var name = String.fromCharCode.apply(null, chars).replace(/[^\x20-\x7e]/g, '?').replace(/ +/g, ' ').trim().substring(0, 16).trim();
+    try {
+        view.ws.send('say ' + (name || 'Someone') + '\t' + UTF8ToString(pText));
+    } catch (e) {
+        return 0;
+    }
+    return 1;
+});
+
+// Starts getting this game onto the match's mod and Remastered pack, as the
+// keyframe says the host runs them (mods.js viewFetch, with the Mod Library's
+// id for the mod if it has one, and the feed to ask the host's game by: "mod
+// <fp>" on the feed's socket); wsrelay_js_mod_state says when it's done. How
+// far along a download is shows over the game, at most once a second and
+// when it's all in.
+EM_JS(void, wsrelay_js_view_fetch_mod, (), {
+    var view = Module.jkView, mods = Module.jkMods;
+    if (!view || !view.level || !mods || !mods.viewFetch) return;
+    var h = view.level, shown = '', last = 0;
+    var feed = { url: view.url.replace(/^ws/, 'http'), ask: function(fp) {
+        if (view.ws && view.ws.readyState === 1) {
+            try { view.ws.send('mod ' + fp); } catch (e) {}
+        }
+    } };
+    mods.viewFetch(h.tail || '', h.lib || '', function(done, total, from) {
+        var pct = total ? Math.floor(100 * Math.min(done, total) / total) : 0, now = performance.now();
+        var text = from === 'host' && !total ? "Asking the host's game for this match's mod." :
+                   "Getting this match's mod from " + (from === 'host' ? 'its host' : 'the Mod Library') + ': ' + pct + ' percent';
+        if (text === shown || (now - last < 1000 && pct < 100)) return;
+        shown = text;
+        last = now;
+        view.say(text);
+    }, feed);
+});
+
+// Why mods.js couldn't get the match's mod (viewError), "" for nothing to say.
+EM_JS(void, wsrelay_js_view_mod_error, (char* pOut, int maxLen), {
+    var mods = Module.jkMods;
+    stringToUTF8(mods && mods.viewError ? mods.viewError() : '', pOut, maxLen);
+});
+
+// The engine restarts into the match's mod: it watches the same room again
+// once it has (stdComm_WSRelay_Startup takes it again), and the page doesn't
+// take the player back. jkWatchModFor: the tail it restarted for, so it
+// doesn't restart for it again if that didn't work.
+EM_JS(void, wsrelay_js_view_restart, (int room), {
+    var view = Module.jkView;
+    Module['jkWatchModFor'] = view && view.level ? view.level.tail || '' : '';
+    if (view) view.close();
+    Module['jkWatchRoom'] = room;
+});
+
+// Starts getting the feed's level as the host runs it, when its keyframe
+// says which (sha) and this player may not have it (maps.js viewFetch): 1
+// started (wsrelay_js_map_state says when it's done), 0 nothing to get.
+// How far along it is shows over the game.
+EM_JS(int, wsrelay_js_view_fetch_level, (const char* pExt), {
+    var view = Module.jkView, h = view && view.level;
+    if (!h || !h.sha || !Module.jkMaps || !Module.jkMaps.viewFetch) return 0;
+    var name = h.episode, ext = UTF8ToString(pExt), shown = 0, said = -1;
+    function say(text) {
+        if (typeof Module['jkViewNotice'] === 'function') {
+            try { Module['jkViewNotice'](text); } catch (e) {}
+        }
+    }
+    Module.jkMaps.viewFetch(name, ext, h.sha, function(done, total) {
+        var now = performance.now(), all = total > 0 && done >= total;
+        if (!(total > 0) || (now - shown < 1000 && !all) || said === 100) return;
+        shown = now;
+        said = all ? 100 : Math.floor(100 * done / total);
+        say("Getting this match's level from the Level Library: " + said + ' percent');
+    });
+    return 1;
+});
+
+// The view is still on (the feed hasn't ended, nor the player left it).
+EM_JS(int, wsrelay_js_view_alive, (), {
+    var view = Module.jkView;
+    return view && !view.ended ? 1 : 0;
+});
+
+// The engine left the match, or never got into it. 1 if the page takes the
+// player back to watching (Module.jkViewLeft, which loads the lobby page
+// again), so this game needn't be anything more.
+EM_JS(int, wsrelay_js_view_close, (int room), {
+    var view = Module.jkView;
+    if (view) view.close();
+    if (typeof Module['jkViewLeft'] !== 'function') return 0;
+    try {
+        return Module['jkViewLeft'](room) ? 1 : 0;
+    } catch (e) {
+        return 0;
+    }
+});
+
+// Watching a match in the game: the room, this game's net id (no player's:
+// the relay numbers them from 1), and where it's at (see "Watching a match in
+// the game" further down).
+int stdComm_WSRelay_bViewer = 0;
+static int wsrelay_viewRoom = 0;
+#define WSRELAY_VIEWER_ID (0x7FFF5657)
+static int wsrelay_bViewSyncing = 0;
+static int wsrelay_bViewEnded = 0;
+#define WSRELAY_VIEW_NONE (0)
+#define WSRELAY_VIEW_WELCOME (-1)
+#define WSRELAY_VIEW_ENDED (-2)
 
 // Starts a session's WebRTC side: a client offers a data channel to the host,
 // and a host answers the offers its clients send.
@@ -2603,6 +3401,8 @@ void Hack_ResetClients()
 
     if (stdComm_bIsServer)
         stdComm_dplayIdSelf = 1;
+    else if (stdComm_WSRelay_bViewer) // Added: watching a match in the game
+        stdComm_dplayIdSelf = WSRELAY_VIEWER_ID;
     else
         stdComm_dplayIdSelf = wsrelay_id;
 }
@@ -2624,6 +3424,17 @@ void stdComm_WSRelay_Startup()
     int room = wsrelay_js_take_join_room();
     if (room > 0)
         wsrelay_pendingRoom = room;
+
+    // Added: watching a match in the game (Main_StartupViewer): no part in
+    // the lobby, not even its live counts. Once: back from the match, this
+    // is a game like any other.
+    room = wsrelay_js_take_watch_room();
+    if (room > 0)
+    {
+        wsrelay_viewRoom = room;
+        stdComm_WSRelay_bViewer = 1;
+        return;
+    }
 
     // Counted in the landing page's live counts from the start, not only once
     // the player opens the Join screen.
@@ -2961,6 +3772,376 @@ void stdComm_WSRelay_NoteMotion(int otherId, double bufferMs, uint32_t steps, ui
     wsrelay_js_net_motion(otherId, bufferMs, (int)steps, (int)carried, (int)held, (int)jumps, (int)warps, (int)restarts);
 }
 
+// ---- Watching a match in the game (spectator mode), the engine's side. A
+// viewer is a joiner whose host is the room's feed (Module.jkView, above):
+// Main_StartupViewer waits for the feed's level (stdComm_WSRelay_ViewerOpen)
+// and loads it as a joiner does; the Synchronizing screen takes the feed's
+// keyframe and what came after it, leaving out what's over by now (shots,
+// sounds, hits); and the welcome a joiner's host sends once it has the world
+// comes from here (wsrelay_ViewerWelcome), into a slot no player has. Like
+// the dedicated host's, its player has no body, and a free camera that
+// follows the players (sithMulti_IsSpectating, sithControl.c). It sends
+// nothing at all (DirectPlay_Send), so no game in the match knows it's
+// there, and it takes no part in the lobby: not its live counts, its rooms or
+// the match record.
+
+// The viewer is done: from here on this game is one like any other, in the
+// lobby's live counts too (stdComm_WSRelay_Startup).
+static void wsrelay_ViewerOff()
+{
+    int bPageTakesOver = wsrelay_js_view_close(wsrelay_viewRoom);
+    stdComm_WSRelay_bViewer = 0;
+    // As stdComm_CloseConnection leaves the join screen's connection, which
+    // the viewer opened without one (stdComm_WSRelay_ViewerOpen).
+    stdComm_dword_8321E0 = 0;
+    stdComm_dword_8321DC = 0;
+    stdComm_dplayIdSelf = 0;
+    stdComm_bIsServer = 0;
+    // A page that doesn't take the player back leaves them a game to play,
+    // in the lobby as any player is.
+    if (bPageTakesOver)
+        return;
+    wsrelay_js_presence(jkPlayer_playerShortName, &Main_bMotsCompat);
+    wsrelay_js_connect(STDCOMM_WSRELAY_NETCODE);
+}
+
+// The level of the match watched isn't in this game's files: a joiner gets
+// it from the host (packaging/wasm/maps.js), but the viewer asks it nothing.
+void stdComm_WSRelay_ViewerNoLevel(const char* pEpisode)
+{
+    char aText[160];
+    stdPlatform_Printf("OpenJKDF2: Watching room %d: no episode %s here.\n", wsrelay_viewRoom, pEpisode);
+    snprintf(aText, sizeof(aText), "Your game files don't have this match's level (%s). Join a match on it once to get it, then watch it in the game.", pEpisode);
+    wsrelay_js_view_end("level", aText);
+}
+
+// The players' looks (model, saber, sparks: DSS_SABERINFO1-3) as the feed's
+// keyframe and what came after it gave them. Once Synchronizing is over, the
+// level's start (jkMain, jkPlayer_InitSaber) puts every player back on the
+// default green saber, which a joiner sets right from what each player sends
+// it when it joins. A viewer joins no one, so it plays these again then
+// (stdComm_WSRelay_ViewerInLevel). Each: u16 length, u16 0, i32 seat, then
+// the message from cogMsgId on.
+#define WSRELAY_VIEW_LOOKS_MAX (32 * 1024)
+static uint8_t wsrelay_aViewLooks[WSRELAY_VIEW_LOOKS_MAX];
+static int wsrelay_viewLooksLen = 0;
+static int wsrelay_viewLooksAt = -1; // the next to play again, -1 until due
+
+static void wsrelay_ViewerKeepLooks(const uint8_t* pMsg, int len, int from)
+{
+    if (wsrelay_viewLooksAt >= 0 || len <= 0 || len > 0xffff || wsrelay_viewLooksLen + 8 + len > WSRELAY_VIEW_LOOKS_MAX)
+        return;
+    uint8_t* p = wsrelay_aViewLooks + wsrelay_viewLooksLen;
+    uint16_t len16 = (uint16_t)len, zero = 0;
+    int32_t from32 = from;
+    memcpy(p, &len16, 2);
+    memcpy(p + 2, &zero, 2);
+    memcpy(p + 4, &from32, 4);
+    memcpy(p + 8, pMsg, len);
+    wsrelay_viewLooksLen += 8 + len;
+}
+
+// In the level, after jkPlayer_InitSaber: the looks kept are due.
+void stdComm_WSRelay_ViewerInLevel()
+{
+    if (!stdComm_WSRelay_bViewer)
+        return;
+    wsrelay_viewLooksAt = 0;
+    stdPlatform_Printf("OpenJKDF2: Watching room %d: the players' looks again, %d bytes.\n", wsrelay_viewRoom, wsrelay_viewLooksLen);
+}
+
+// The next look kept, as DirectPlay_Receive gives a message: 0, or -1 when
+// there's none left.
+static int wsrelay_ViewerNextLooks(int* pIdOut, int* pMsgIdOut, int* pLenOut, int maxLen)
+{
+    if (wsrelay_viewLooksAt < 0)
+        return -1;
+    while (wsrelay_viewLooksAt + 8 <= wsrelay_viewLooksLen)
+    {
+        uint8_t* p = wsrelay_aViewLooks + wsrelay_viewLooksAt;
+        uint16_t len16;
+        int32_t from32;
+        memcpy(&len16, p, 2);
+        memcpy(&from32, p + 4, 4);
+        wsrelay_viewLooksAt += 8 + len16;
+        if ((int)len16 > maxLen)
+            continue;
+        memcpy(pMsgIdOut, p + 8, len16);
+        *pIdOut = from32;
+        *pLenOut = len16;
+        return 0;
+    }
+    wsrelay_viewLooksLen = 0;
+    wsrelay_viewLooksAt = -1;
+    return -1;
+}
+
+// The match is played with another mod (or none) or Remastered pack than
+// this game runs: mods.js gets the host's, as a joiner's game does but
+// without asking the host, and the engine restarts into it to watch the same
+// room again (as wsrelay_JoinRoom restarts for a joiner).
+// STDCOMM_WSRELAY_VIEW_RESTART once it's restarting, 0 if it can't (the
+// player has been told why).
+static int wsrelay_ViewerGetMod()
+{
+    wsrelay_js_view_fetch_mod();
+    int got;
+    while ((got = wsrelay_js_mod_state()) == WSRELAY_MAP_BUSY)
+    {
+        if (!wsrelay_js_view_alive())
+            wsrelay_js_mod_abort("cancelled");
+        emscripten_sleep(50);
+    }
+    if (got == WSRELAY_MOD_RESTART)
+    {
+        char path[sizeof(openjkdf2_aRestartPath)];
+        wsrelay_js_mod_restart(path, sizeof(path));
+        stdPlatform_Printf("OpenJKDF2: Watching room %d: restarting with mod path \"%s\".\n", wsrelay_viewRoom, path);
+        wsrelay_js_view_restart(wsrelay_viewRoom);
+        stdComm_WSRelay_bViewer = 0;
+        stdString_SafeStrCopy(openjkdf2_aRestartPath, path, sizeof(openjkdf2_aRestartPath));
+        openjkdf2_restartMode = OPENJKDF2_RESTART_PATH;
+        g_should_exit = 1;
+        return STDCOMM_WSRELAY_VIEW_RESTART;
+    }
+    char aText[400];
+    wsrelay_js_view_mod_error(aText, sizeof(aText));
+    stdPlatform_Printf("OpenJKDF2: Watching room %d: can't get onto the match's mod.\n", wsrelay_viewRoom);
+    if (wsrelay_js_view_alive())
+        wsrelay_js_view_end("mod", aText[0] ? aText : "This game couldn't get onto the mod this match is played with.");
+    wsrelay_ViewerOff();
+    return 0;
+}
+
+int stdComm_WSRelay_ViewerOpen(char* pEpisode, int episodeLen, char* pMap, int mapLen, int* pModeFlags)
+{
+    if (!stdComm_WSRelay_bViewer)
+        return 0;
+    wsrelay_bViewSyncing = 0;
+    wsrelay_bViewEnded = 0;
+    wsrelay_viewLooksLen = 0;
+    wsrelay_viewLooksAt = -1;
+    if (!wsrelay_js_view_open(wsrelay_viewRoom))
+    {
+        wsrelay_ViewerOff();
+        return 0;
+    }
+    stdPlatform_Printf("OpenJKDF2: Watching room %d: waiting for its feed.\n", wsrelay_viewRoom);
+
+    int aInfo[2] = {0, 0};
+    int state;
+    while ((state = wsrelay_js_view_level(pEpisode, episodeLen, pMap, mapLen, aInfo)) == 0)
+        emscripten_sleep(50);
+    if (state == 2)
+        return wsrelay_ViewerGetMod();
+    if (state > 0 && aInfo[1] != Main_bMotsCompat)
+    {
+        wsrelay_js_view_end("game", aInfo[1] ? "This match is in Mysteries of the Sith. Watch it from a MotS room."
+                                              : "This match is in Jedi Knight. Watch it from a Jedi Knight room.");
+        state = -1;
+    }
+    if (state < 0)
+    {
+        stdPlatform_Printf("OpenJKDF2: Watching room %d: can't.\n", wsrelay_viewRoom);
+        wsrelay_ViewerOff();
+        return 0;
+    }
+    stdPlatform_Printf("OpenJKDF2: Watching room %d: episode %s, level %s.\n", wsrelay_viewRoom, pEpisode, pMap);
+    *pModeFlags = aInfo[0];
+
+    // The host's version of its level: the player's own, one saved from an
+    // earlier game, or the Level Library's (maps.js viewFetch).
+    if (wsrelay_js_view_fetch_level(JKRES_GOB_EXT))
+    {
+        int got;
+        while ((got = wsrelay_js_map_state()) == WSRELAY_MAP_BUSY)
+        {
+            if (!wsrelay_js_view_alive())
+                wsrelay_js_map_abort("cancelled");
+            emscripten_sleep(50);
+        }
+        if (got != WSRELAY_MAP_READY)
+        {
+            char aText[200];
+            stdPlatform_Printf("OpenJKDF2: Watching room %d: couldn't get episode %s.\n", wsrelay_viewRoom, pEpisode);
+            if (wsrelay_js_view_alive())
+            {
+                snprintf(aText, sizeof(aText), "Your game files don't have this match's level (%s), and the Level Library doesn't have the host's version of it.", pEpisode);
+                wsrelay_js_view_end("level", aText);
+            }
+            wsrelay_ViewerOff();
+            return 0;
+        }
+    }
+
+    // As stdComm_Open leaves a joiner, under an id no player has.
+    stdComm_dword_8321DC = 1;
+    stdComm_dword_8321E0 = 1;
+    stdComm_dword_8321E8 = 0;
+    stdComm_bIsServer = 0;
+    stdComm_dplayIdSelf = WSRELAY_VIEWER_ID;
+    return 1;
+}
+
+// The viewer's slot: one with a player thing and nobody in it, from the top,
+// so past the room's players where the level has room (it has a thing for
+// each of the 32, sithThing_AddSharedStarts), else the last a joiner would
+// be given.
+static int wsrelay_ViewerSlot()
+{
+    for (int i = JKPLAYER_NUM_INFOS - 1; i >= 0; i--)
+    {
+        SithPlayer* pInfo = &jkPlayer_playerInfos[i];
+        if (pInfo->pLocalPlayer && !(pInfo->flags & 1) && (!pInfo->playerNetId || (int)pInfo->playerNetId == stdComm_dplayIdSelf))
+            return i;
+    }
+    return -1;
+}
+
+void stdComm_WSRelay_ViewerJoined(int slot)
+{
+    if (slot < 0 || slot >= JKPLAYER_NUM_INFOS)
+        return;
+    // As the dedicated host's player (sithMulti_StartupServer): in nobody's
+    // list of players, this one's included, and no body.
+    SithPlayer* pInfo = &jkPlayer_playerInfos[slot];
+    pInfo->flags = 6;
+    if (pInfo->pLocalPlayer)
+    {
+        pInfo->pLocalPlayer->flags |= SITH_TF_DISABLED;
+        pInfo->pLocalPlayer->attach_flags = 0;
+    }
+    stdPlatform_Printf("OpenJKDF2: Watching room %d from slot %d.\n", wsrelay_viewRoom, slot);
+    sithControl_SpectatorNext(1);
+}
+
+// Messages a viewer leaves out while it catches up, before it's in the level:
+// what's over by now (shots, hits, sounds, animations, chat) and what was
+// between other games, as against what still stands (where things are, what
+// they're doing, who's playing).
+static int wsrelay_ViewerSkipsWhileSyncing(int id)
+{
+    switch (id)
+    {
+        case DSS_CHAT:
+        case DSS_FIREPROJECTILE:
+        case DSS_DAMAGE:
+        case DSS_PLAYKEY:
+        case DSS_PLAYSOUND:
+        case DSS_PLAYKEYMODE:
+        case DSS_STOPKEY:
+        case DSS_STOPSOUND:
+        case DSS_SYNCPALEFFECTS:
+        case DSS_WELCOME:
+        case DSS_JOINREQUEST:
+        case DSS_JOINING:
+        case DSS_PLAYSOUNDMODE:
+        case DSS_PING:
+        case DSS_PINGREPLY:
+        case DSS_RESET:
+        case DSS_HUDTARGET:
+        case DSS_JKPRINTUNISTRING:
+            return 1;
+    }
+    return 0;
+}
+
+// The welcome a joiner's host sends once it's had the world (sithMulti_Update's
+// big sync), as if from the host: into the viewer's slot, under its id.
+static int wsrelay_ViewerWelcome(int* pIdOut, int* pMsgIdOut, int* pLenOut, int maxLen)
+{
+    int slot = wsrelay_ViewerSlot();
+    char16_t aName[16];
+    if (slot < 0 || maxLen < 12 + (int)sizeof(aName))
+    {
+        stdPlatform_Printf("OpenJKDF2: Watching room %d: no slot to watch from.\n", wsrelay_viewRoom);
+        wsrelay_js_view_end("full", "This match has no room left to watch it from.");
+        wsrelay_bViewEnded = 1;
+        return -1;
+    }
+    memset(aName, 0, sizeof(aName));
+    stdString_SafeWStrCopy(aName, jkPlayer_playerShortName, 16);
+
+    uint8_t* p = (uint8_t*)pMsgIdOut;
+    uint16_t msgId = DSS_WELCOME;
+    uint16_t resendId = 0;
+    int32_t playerNum = slot;
+    int32_t idPlayer = stdComm_dplayIdSelf;
+    memcpy(p, &msgId, 2);
+    memcpy(p + 2, &resendId, 2);
+    memcpy(p + 4, &playerNum, 4);
+    memcpy(p + 8, &idPlayer, 4);
+    memcpy(p + 12, aName, sizeof(aName));
+    *pIdOut = sithNet_serverNetId ? (int)sithNet_serverNetId : 1;
+    *pLenOut = 12 + (int)sizeof(aName);
+    return 0;
+}
+
+// DirectPlay_Receive for a viewer: the feed's packets as if from the players
+// who sent them (the feed's seat is their net id), then the welcome, then, once
+// it's ended, the host gone, as for a joiner.
+static int wsrelay_ViewerReceive(int* pIdOut, int* pMsgIdOut, int* pLenOut, int maxLen)
+{
+    int bSync = (g_submodeFlags & 8) != 0;
+    if (bSync && !wsrelay_bViewSyncing)
+        wsrelay_js_view_sync(jkRes_episodeGobName, jkMain_aLevelJklFname);
+    wsrelay_bViewSyncing = bSync;
+
+    // The match is on for as long as its feed is: a gap in it (the feed
+    // restarting, and waiting for a keyframe of age) is no host gone quiet.
+    // Once it has ended, the host is gone (below).
+    if (!wsrelay_bViewEnded)
+    {
+        for (uint32_t i = 0; i < jkPlayer_maxPlayers && i < JKPLAYER_NUM_INFOS; i++)
+            jkPlayer_playerInfos[i].msecLastCommTime = sithTime_g_msecGameTime;
+    }
+
+    // In the level: the players' looks from before it started, first.
+    if (!bSync && wsrelay_ViewerNextLooks(pIdOut, pMsgIdOut, pLenOut, maxLen) == 0)
+        return 0;
+
+    while (1)
+    {
+        int from = 0;
+        int len = wsrelay_js_view_recv(wsrelay_recvBuf, sizeof(wsrelay_recvBuf), &from);
+        if (len == WSRELAY_VIEW_NONE)
+            return -1;
+        if (len == WSRELAY_VIEW_ENDED)
+        {
+            if (wsrelay_bViewEnded)
+                return -1;
+            wsrelay_bViewEnded = 1;
+            stdPlatform_Printf("OpenJKDF2: Leaving the match: its feed ended.\n");
+            // Synchronizing gives up at its next join request
+            // (DirectPlay_Send); in the level, the host is gone.
+            if (bSync)
+                return -1;
+            *pIdOut = sithNet_serverNetId ? (int)sithNet_serverNetId : 1;
+            return 2;
+        }
+        if (len == WSRELAY_VIEW_WELCOME)
+        {
+            if (!bSync)
+                continue;
+            return wsrelay_ViewerWelcome(pIdOut, pMsgIdOut, pLenOut, maxLen);
+        }
+        if (len < 4 || len > maxLen)
+            continue;
+        uint16_t id = 0;
+        memcpy(&id, wsrelay_recvBuf, 2);
+        // Hit what you see's claims and answers are between the players'
+        // games, and nothing a viewer takes part in.
+        if (id == STDCOMM_WSRELAY_HITS_MSG || (bSync && wsrelay_ViewerSkipsWhileSyncing(id)))
+            continue;
+        if (bSync && (id == DSS_SABERINFO1 || id == DSS_SABERINFO2 || id == DSS_SABERINFO3))
+            wsrelay_ViewerKeepLooks(wsrelay_recvBuf, len, from);
+        memcpy(pMsgIdOut, wsrelay_recvBuf, len);
+        *pIdOut = from;
+        *pLenOut = len;
+        return 0;
+    }
+}
+
 int DirectPlay_Receive(int *pIdOut, int *pMsgIdOut, int *pLenOut)
 {
     if (stdComm_Imperial_bActive) // Added: the Imperial Network Protocol connection
@@ -2969,6 +4150,10 @@ int DirectPlay_Receive(int *pIdOut, int *pMsgIdOut, int *pLenOut)
     int maxLen = *pLenOut;
     *pIdOut = 0;
     *pLenOut = 0;
+
+    // Added: watching a match in the game: what comes is the room's feed.
+    if (stdComm_WSRelay_bViewer)
+        return wsrelay_ViewerReceive(pIdOut, pMsgIdOut, pLenOut, maxLen);
 
     Hack_ResetClients();
 
@@ -3059,10 +4244,155 @@ static int wsrelay_IsOwnPosition(const void* pData, uint32_t size)
     return sithPlayer_g_pLocalPlayerThing && *(const int32_t*)&p[4] == sithPlayer_g_pLocalPlayerThing->guid;
 }
 
+// Spectators' messages (stdComm_WSRelay_ViewerSay and FeedFrame). At most
+// one every WSRELAY_SAY_MS from a viewer, as the feed takes them; what it
+// said in the last WSRELAY_SAID_KEEP_MS is kept to know it coming back.
+#define WSRELAY_SAY_MS (3000)
+#define WSRELAY_SAY_MAX (96)
+#define WSRELAY_SAID_MAX (4)
+#define WSRELAY_SAID_KEEP_MS (120000)
+static char16_t wsrelay_saidWStr[256];
+static char wsrelay_aSaid[WSRELAY_SAID_MAX][WSRELAY_SAY_MAX + 1];
+static uint32_t wsrelay_aSaidMs[WSRELAY_SAID_MAX];
+static int wsrelay_saidNext = 0;
+static uint32_t wsrelay_saidLastMs = 0;
+
+// As the feed cleans a message: printable ASCII ('?' for the rest), runs of
+// spaces as one, no space at either end, at most max characters.
+static void wsrelay_SayClean(char* pOut, const char* pIn, int max)
+{
+    int n = 0, space = 0;
+    for (const unsigned char* p = (const unsigned char*)pIn; *p && n < max; p++)
+    {
+        unsigned char c = *p;
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v')
+        {
+            space = n > 0;
+            continue;
+        }
+        if (space && n < max - 1)
+            pOut[n++] = ' ';
+        space = 0;
+        pOut[n++] = (c >= 0x20 && c <= 0x7e) ? (char)c : '?';
+    }
+    while (n > 0 && pOut[n - 1] == ' ')
+        n--;
+    pOut[n] = 0;
+}
+
+void stdComm_WSRelay_ViewerSay(const char* pStr)
+{
+    char text[WSRELAY_SAY_MAX + 1];
+    if (!stdComm_WSRelay_bViewer || !pStr)
+        return;
+    wsrelay_SayClean(text, pStr, WSRELAY_SAY_MAX);
+    if (!text[0])
+        return;
+    uint32_t now = stdPlatform_GetTimeMsec();
+    if (wsrelay_saidLastMs && now - wsrelay_saidLastMs < WSRELAY_SAY_MS)
+    {
+        sithConsole_PrintString("Not sent: one message every 3 seconds while watching.");
+        return;
+    }
+    if (!wsrelay_js_view_say(jkPlayer_playerShortName, text))
+    {
+        sithConsole_PrintString("Not sent: the match can't be reached right now.");
+        return;
+    }
+    wsrelay_saidLastMs = now;
+    stdString_SafeStrCopy(wsrelay_aSaid[wsrelay_saidNext], text, sizeof(wsrelay_aSaid[0]));
+    wsrelay_aSaidMs[wsrelay_saidNext] = now ? now : 1;
+    wsrelay_saidNext = (wsrelay_saidNext + 1) % WSRELAY_SAID_MAX;
+}
+
+int stdComm_WSRelay_ViewerOwnEcho(const char* pLine)
+{
+    if (!stdComm_WSRelay_bViewer || !pLine)
+        return 0;
+    const char* p = strstr(pLine, " (watching): ");
+    if (!p)
+        return 0;
+    p += strlen(" (watching): ");
+    uint32_t now = stdPlatform_GetTimeMsec();
+    for (int i = 0; i < WSRELAY_SAID_MAX; i++)
+    {
+        if (wsrelay_aSaidMs[i] && now - wsrelay_aSaidMs[i] < WSRELAY_SAID_KEEP_MS && !strcmp(p, wsrelay_aSaid[i]))
+        {
+            wsrelay_aSaidMs[i] = 0;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// Called by stdComm_SendToPlayer with each message sent to everyone, once,
+// before it goes to each player: a copy for the room's feed, when the lobby
+// asked for one (see the top of this file). The bytes are from cogMsgId on.
+void stdComm_WSRelay_FeedCopy(const void* pData, uint32_t size)
+{
+    if (stdComm_Imperial_bActive || (!wsrelay_bHosting && !wsrelay_bJoined))
+        return;
+    wsrelay_js_feed_copy(pData, (int)size);
+}
+
+// The id a keyframe's messages are sent to (sithMulti_FeedKeyframe):
+// DirectPlay_Send hands them to the room's feed, never to the network. The
+// relay numbers players from 1, so no player has it.
+#define WSRELAY_FEED_KEY_ID (0x7FFF4B46)
+static int wsrelay_bKeyframing = 0;
+// The level ("<episode>/<map>") of the last keyframe: a new level gets one at
+// once, since what came before is of no use to a viewer.
+static char wsrelay_feedKeyLevel[80];
+
+void stdComm_WSRelay_FeedFrame()
+{
+    if (stdComm_Imperial_bActive || !wsrelay_bHosting || !stdComm_bIsServer || !sithWorld_g_pCurrentWorld)
+        return;
+    // Spectators' messages (stdComm_WSRelay_ViewerSay), as the feed made
+    // them: in the chat, here and for everyone, and so through the feed for
+    // those watching.
+    char said[128];
+    while (wsrelay_js_feed_take_say(said, sizeof(said)))
+    {
+        if (!said[0])
+            continue;
+        jk_snwprintf(wsrelay_saidWStr, 256, u"%S", said);
+        sithConsole_AlertSound();
+        sithConsole_PrintWString(wsrelay_saidWStr);
+        sithMulti_SendChat(said, -1, -1);
+    }
+    char level[80];
+    snprintf(level, sizeof(level), "%s/%s", jkRes_episodeGobName, jkMain_aLevelJklFname);
+    if (!wsrelay_js_feed_key_wanted(strcmp(level, wsrelay_feedKeyLevel) != 0))
+        return;
+    stdString_SafeStrCopy(wsrelay_feedKeyLevel, level, sizeof(wsrelay_feedKeyLevel));
+    wsrelay_js_feed_key_begin(jkRes_episodeGobName, jkMain_aLevelJklFname, sithTime_g_msecGameTime,
+                              (int)sithNet_MultiModeFlags, (uint32_t)sithNet_checksum, Main_bMotsCompat);
+    wsrelay_bKeyframing = 1;
+    sithMulti_FeedKeyframe(WSRELAY_FEED_KEY_ID);
+    wsrelay_bKeyframing = 0;
+    wsrelay_js_feed_key_end();
+}
+
 BOOL DirectPlay_Send(DPID idFrom, DPID idTo, void *lpData, DWORD dwDataSize)
 {
+    // Added: a keyframe's messages go to the room's feed, never to the
+    // network (stdComm_WSRelay_FeedFrame).
+    if (idTo == WSRELAY_FEED_KEY_ID)
+    {
+        if (wsrelay_bKeyframing)
+            wsrelay_js_feed_key_packet(lpData, (int)dwDataSize);
+        return 1;
+    }
+
     if (stdComm_Imperial_bActive) // Added: the Imperial Network Protocol connection
         return stdComm_Imperial_Send(idFrom, idTo, lpData, dwDataSize);
+
+    // Added: a viewer watching a match in the game sends nothing, and says
+    // it did, but for its join request once the feed has ended: that's how
+    // Synchronizing gives up (jkGuiMultiplayer_idk).
+    if (stdComm_WSRelay_bViewer)
+        return !(wsrelay_bViewEnded && dwDataSize >= 2 && *(const uint16_t*)lpData == DSS_JOINREQUEST);
 
     Hack_ResetClients();
 
@@ -3236,6 +4566,13 @@ void stdComm_Close()
     if (stdComm_Imperial_bActive) // Added: the Imperial Network Protocol connection
     {
         stdComm_Imperial_Close();
+        return;
+    }
+
+    // Added: the viewer left the match it watched.
+    if (stdComm_WSRelay_bViewer)
+    {
+        wsrelay_ViewerOff();
         return;
     }
 
@@ -3738,7 +5075,7 @@ void stdComm_WSRelay_MatchStart(void)
 {
     // The lobby's rooms only: a match on the Imperial Network Protocol relay
     // isn't one of its.
-    if (!sithNet_isMulti || !sithWorld_g_pCurrentWorld || stdComm_Imperial_bActive)
+    if (!sithNet_isMulti || !sithWorld_g_pCurrentWorld || stdComm_Imperial_bActive || stdComm_WSRelay_bViewer)
         return;
     wsrelay_matchKind = 0;
     wsrelay_bMatchOn = 1;

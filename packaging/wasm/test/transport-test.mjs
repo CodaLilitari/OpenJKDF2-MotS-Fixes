@@ -99,6 +99,7 @@ function makeLobby(world) {
         turnMs: 100,           // how long getting them takes
         turnTtl: 86400,        // how many seconds they last, 0 for none (only STUN)
         pw: false,             // says "pw": it checks room passwords, so its list carries none
+        feed: false,           // says "feed": it takes a feed of a watched room's match
         listed: '3 1 ' + '00'.repeat(240), // what it answers list with: <room> <players> <entry>
         delay: 20,             // how long the lobby takes to pass something on
         said: [],              // the control lines games sent it, but signal and ping
@@ -112,7 +113,8 @@ function makeLobby(world) {
         },
         opened(ws) {
             lobby.send(ws, 'ice ' + btoa(JSON.stringify(STUN)));
-            const can = (lobby.links ? ['links'] : []).concat(lobby.turn ? ['turn'] : [], lobby.pw ? ['pw'] : []);
+            const can = (lobby.links ? ['links'] : []).concat(lobby.turn ? ['turn'] : [], lobby.pw ? ['pw'] : [],
+                                                                lobby.feed ? ['feed'] : []);
             if (can.length) lobby.send(ws, 'lobby ' + can.join(' '));
         },
         send(ws, data) {
@@ -192,6 +194,24 @@ function makeWebSocket(world) {
             this.url = url;
             this.readyState = 0;
             this.binaryType = 'blob';
+            // A room's feed (jkdf2mp-bb-server's src/feed.js): it keeps what
+            // it's sent, in world.feeds.
+            if (url.indexOf('/feed/') >= 0) {
+                this.feed = true;
+                this.sent = [];
+                (world.feeds = world.feeds || []).push(this);
+                world.later(() => {
+                    if (this.readyState !== 0) return;
+                    // A feed out of reach (world.feedDown): it never opens.
+                    if (world.feedDown) {
+                        this.end(1006);
+                        return;
+                    }
+                    this.readyState = 1;
+                    if (this.onopen) this.onopen();
+                }, 1);
+                return;
+            }
             world.lobby.accept(this);
             world.later(() => {
                 this.readyState = 1;
@@ -201,10 +221,21 @@ function makeWebSocket(world) {
         }
         send(data) {
             if (this.readyState !== 1) throw new Error('InvalidStateError');
+            if (this.feed) {
+                this.sent.push(typeof data === 'string' ? data : copy(data));
+                return;
+            }
             world.lobby.receive(this, typeof data === 'string' ? data : copy(data));
         }
-        close() {
+        close(code) {
             this.readyState = 3;
+            this.closedWith = code || 1005;
+        }
+        // The feed closes it, with this code.
+        end(code) {
+            if (this.readyState === 3) return;
+            this.readyState = 3;
+            if (this.onclose) this.onclose({ code, reason: '' });
         }
         // The lobby goes away.
         drop() {
@@ -376,10 +407,23 @@ function makeGame(world, { id, old = false, netsim, relayUrl = 'ws://lobby/relay
     clock.later = (fn, ms) => world.later(fn, ms);
     clock.random = seeded(id * 7919);
     const mem = new ArrayBuffer(1 << 16);
+    const heap = new Uint8Array(mem);
     const env = {
         Module,
-        HEAPU8: new Uint8Array(mem), HEAPU16: new Uint16Array(mem), HEAP32: new Int32Array(mem),
-        UTF8ToString: () => '', stringToUTF8: () => 0, lengthBytesUTF8: () => 0,
+        HEAPU8: heap, HEAPU16: new Uint16Array(mem), HEAP32: new Int32Array(mem),
+        UTF8ToString: p => {
+            let end = p;
+            while (p && heap[end]) end++;
+            return new TextDecoder().decode(heap.slice(p, end));
+        },
+        stringToUTF8: (str, p, max) => {
+            const b = new TextEncoder().encode(String(str));
+            const n = Math.max(0, Math.min(b.length, (max | 0) - 1));
+            heap.set(b.subarray(0, n), p);
+            heap[p + n] = 0;
+            return n;
+        },
+        lengthBytesUTF8: () => 0,
         performance: { now: () => world.now() },
         setTimeout: (fn, ms) => world.later(fn, ms), clearTimeout: t => world.cancel(t),
         setInterval: (fn, ms) => world.every(fn, ms), clearInterval: t => world.cancel(t),
@@ -1953,6 +1997,842 @@ test('a player who left, or whose number someone new has, has nothing waiting fo
     pumps = 0;
     host.js.wsrelay_js_map_pump();
     assert.equal(pumps, 1);
+});
+
+// ---- A watched room's feed.
+
+// The engine copies a message sent to everyone (stdComm_WSRelay_FeedCopy):
+// its bytes from cogMsgId on.
+function feedCopy(game, body) {
+    game.mem.set(body, 4096);
+    game.js.wsrelay_js_feed_copy(4096, body.length);
+}
+// The packets in a chunk the feed got: its kind, and each packet's bytes.
+function chunkOf(data) {
+    const b = new Uint8Array(data), out = [];
+    for (let at = 1; at < b.length;) {
+        const len = b[at] | (b[at + 1] << 8);
+        out.push([...b.subarray(at + 2, at + 2 + len)]);
+        at += 2 + len;
+    }
+    return { kind: b[0], packets: out };
+}
+const TOKEN = 'ab'.repeat(16);
+
+test('a game in a room asks a lobby that takes feeds for one; other lobbies, and ?netold, are never asked', async () => {
+    let world = makeWorld();
+    world.lobby.feed = true;
+    let [host, joiner] = await room(world, [2]);
+    assert.deepEqual(world.lobby.said.filter(l => l === 'feed').length, 2, 'the host and its joiner each ask once seated');
+    world = makeWorld();
+    [host, joiner] = await room(world, [2]);
+    assert.deepEqual(world.lobby.said.filter(l => l === 'feed'), []);
+    world = makeWorld();
+    world.lobby.feed = true;
+    await room(world, [{ id: 2, old: true }], { hostOld: true });
+    assert.deepEqual(world.lobby.said.filter(l => l === 'feed'), []);
+});
+
+test('with a feed, what the game sends everyone goes there in a chunk every 250 ms, and nothing without', async () => {
+    const world = makeWorld();
+    world.lobby.feed = true;
+    const [host] = await room(world, [2]);
+    feedCopy(host, [1, 2, 3]);       // no feed yet: dropped
+    host.net.ws.deliver('feed 1 ' + TOKEN);
+    assert.ok(host.net.ws.onmessage, 'the line is the JavaScript\'s, not the engine\'s');
+    assert.ok(!host.net.queue.some(d => typeof d === 'string' && d.startsWith('feed')));
+    await world.run(5);
+    const feed = world.feeds.at(-1);
+    assert.equal(feed.url.split('?')[0], 'ws://lobby/feed/1', 'beside the lobby');
+    assert.equal(feed.url.split('?')[1], 'up=' + TOKEN);
+    feedCopy(host, [4, 5]);
+    feedCopy(host, [6]);
+    await world.run(300);
+    assert.equal(feed.sent.length, 1);
+    assert.deepEqual(chunkOf(feed.sent[0]), { kind: 0, packets: [[4, 5], [6]] });
+    await world.run(1000);
+    assert.equal(feed.sent.length, 1, 'nothing to send: nothing sent');
+    // A big burst goes in more than one chunk, none over 60,000 bytes.
+    const big = new Uint8Array(20000).fill(7);
+    for (let i = 0; i < 5; i++) feedCopy(host, big);
+    await world.run(300);
+    assert.equal(feed.sent.length, 4, 'two, two and one');
+    assert.ok(feed.sent.every(c => c.byteLength <= 60001));
+    assert.equal(feed.sent.slice(1).reduce((n, c) => n + chunkOf(c).packets.length, 0), 5);
+    // The same line again changes nothing.
+    host.net.ws.deliver('feed 1 ' + TOKEN);
+    await world.run(5);
+    assert.equal(world.feeds.length, 1);
+});
+
+test('feed off, leaving the room, or the feed closing it stop the copies; a dropped feed is tried again', async () => {
+    const world = makeWorld();
+    world.lobby.feed = true;
+    const [host] = await room(world, [2]);
+    host.net.ws.deliver('feed 1 ' + TOKEN);
+    await world.run(5);
+    let feed = world.feeds.at(-1);
+    host.net.ws.deliver('feed off');
+    assert.equal(feed.closedWith, 1000);
+    feedCopy(host, [1]);
+    await world.run(300);
+    assert.deepEqual(feed.sent, []);
+    assert.equal(host.net.feed, null);
+    assert.ok(host.net.log.some(l => /feed: stopped, the lobby stopped it/.test(l)));
+    // Bad lines are ignored.
+    host.net.ws.deliver('feed 1 nope');
+    host.net.ws.deliver('feed x ' + TOKEN);
+    assert.equal(host.net.feed, null);
+    // Leaving.
+    host.net.ws.deliver('feed 1 ' + TOKEN);
+    await world.run(5);
+    feed = world.feeds.at(-1);
+    const text = new TextEncoder().encode('leave\0');
+    host.mem.set(text, 2048);
+    host.js.wsrelay_js_send_text(2048);
+    assert.equal(feed.closedWith, 1000);
+    assert.equal(host.net.feed, null);
+    // A blip: tried again, with the same address; the feed's own close: not.
+    host.net.ws.deliver('feed 1 ' + TOKEN);
+    await world.run(5);
+    feed = world.feeds.at(-1);
+    feed.end(1006);
+    await world.run(2500);
+    const again = world.feeds.at(-1);
+    assert.notEqual(again, feed);
+    assert.equal(again.url, feed.url);
+    again.end(4001);
+    await world.run(10000);
+    assert.equal(world.feeds.at(-1), again);
+    assert.equal(host.net.feed, null);
+    // A feed that stays out of reach: tried again after 1, 2, 4, 8, 8 and 8 s,
+    // then no more.
+    host.net.ws.deliver('feed 1 ' + TOKEN);
+    await world.run(5);
+    const first = world.feeds.length;
+    world.feedDown = true;
+    const dropped = world.now();
+    world.feeds.at(-1).end(1006);
+    const made = [];
+    for (let i = 0; i < 6; i++) {
+        const n = world.feeds.length;
+        while (world.feeds.length === n)
+            await world.run(10);
+        made.push(world.now());
+    }
+    // Each fails a millisecond after it's made, then waits.
+    const waits = made.map((t, i) => Math.round((t - (i ? made[i - 1] : dropped)) / 100) / 10);
+    assert.deepEqual(waits, [1, 2, 4, 8, 8, 8]);
+    await world.run(30000);
+    assert.equal(world.feeds.length, first + 6);
+    assert.equal(host.net.feed, null);
+    assert.ok(host.net.log.some(l => /feed: stopped, closed \(1006\)/.test(l)));
+});
+
+test('every minute the network log says how much the feed took', async () => {
+    const world = makeWorld();
+    world.lobby.feed = true;
+    const [host] = await room(world, [2]);
+    host.net.ws.deliver('feed 1 ' + TOKEN);
+    await world.run(5);
+    const stop = world.every(() => feedCopy(host, new Uint8Array(68)), 20);   // 50 positions a second
+    await world.run(60000);
+    world.cancel(stop);
+    const line = host.net.log.find(l => /feed: \d+ packets/.test(l));
+    assert.ok(line, 'a line');
+    const m = /feed: (\d+) packets in (\d+) chunks, ([\d.]+) KiB in (\d+) s/.exec(line);
+    assert.ok(Number(m[1]) >= 2990 && Number(m[1]) <= 3000, m[1]);
+    assert.ok(Number(m[2]) >= 239 && Number(m[2]) <= 240, m[2]);
+});
+
+// A keyframe, as stdComm_WSRelay_FeedFrame makes one: its start (the level),
+// each message, its end.
+function feedKey(game, packets, { episode = 'JK1MP.GOB', map = 'm2.jkl', t = 123456, mode = 4, sum = 0xdeadbeef, mots = 0 } = {}) {
+    const enc = new TextEncoder();
+    game.mem.set([...enc.encode(episode), 0], 1024);
+    game.mem.set([...enc.encode(map), 0], 1536);
+    game.js.wsrelay_js_feed_key_begin(1024, 1536, t, mode, sum | 0, mots);
+    for (const body of packets) {
+        game.mem.set(body, 8192);
+        game.js.wsrelay_js_feed_key_packet(8192, body.length);
+    }
+    game.js.wsrelay_js_feed_key_end();
+}
+// A keyframe chunk's first packet: JKF1 and the level, as JSON.
+function keyHead(packet) {
+    const text = new TextDecoder().decode(new Uint8Array(packet));
+    assert.equal(text.slice(0, 4), 'JKF1');
+    return JSON.parse(text.slice(4));
+}
+
+test('the host makes a keyframe once its feed is open, at a new level, every minute and when the feed asks; a joiner never', async () => {
+    const world = makeWorld();
+    world.lobby.feed = true;
+    const [host, joiner] = await room(world, [2]);
+    assert.equal(host.js.wsrelay_js_feed_key_wanted(1), 0, 'no feed yet');
+    host.net.ws.deliver('feed 1 ' + TOKEN);
+    joiner.net.ws.deliver('feed 1 ' + 'cd'.repeat(16));
+    assert.equal(host.js.wsrelay_js_feed_key_wanted(0), 0, 'not before it\'s open');
+    await world.run(5);
+    assert.equal(joiner.js.wsrelay_js_feed_key_wanted(1), 0, 'a joiner never');
+    assert.equal(host.js.wsrelay_js_feed_key_wanted(0), 1, 'once open');
+    feedKey(host, [[1]]);
+    assert.equal(host.js.wsrelay_js_feed_key_wanted(0), 0);
+    assert.equal(host.js.wsrelay_js_feed_key_wanted(1), 1, 'a new level: at once');
+    feedKey(host, [[1]]);
+    await world.run(30000);
+    assert.equal(host.js.wsrelay_js_feed_key_wanted(0), 0);
+    // The feed asks (a page is waiting): once, and not again within 5 s.
+    const feed = world.feeds.find(f => f.url.endsWith(TOKEN));
+    feed.onmessage({ data: 'key' });
+    assert.equal(host.js.wsrelay_js_feed_key_wanted(0), 1, 'asked');
+    feedKey(host, [[1]]);
+    feed.onmessage({ data: 'key' });
+    assert.equal(host.js.wsrelay_js_feed_key_wanted(0), 0, 'asked again too soon');
+    await world.run(60000);
+    assert.equal(host.js.wsrelay_js_feed_key_wanted(0), 1, 'a minute on');
+    // While the feed is down, none; and one once it's back.
+    feedKey(host, [[1]]);
+    feed.end(1006);
+    await world.run(300);
+    assert.equal(host.js.wsrelay_js_feed_key_wanted(0), 0);
+    await world.run(2500);
+    assert.equal(host.js.wsrelay_js_feed_key_wanted(0), 1, 'back: what was missed takes a keyframe');
+});
+
+test('a keyframe goes in order between the packets, as kind 1 then 2, at most 4 chunks a tick, with the level first', async () => {
+    const world = makeWorld();
+    world.lobby.feed = true;
+    const [host] = await room(world, [2]);
+    host.net.ws.deliver('feed 1 ' + TOKEN);
+    await world.run(5);
+    const feed = world.feeds.at(-1);
+    feedCopy(host, [9, 9]);
+    assert.equal(host.js.wsrelay_js_feed_key_wanted(0), 1);
+    const big = new Uint8Array(25000).fill(3);
+    feedKey(host, [[1, 2], big, big, big, big, big, big, [4]], { episode: 'JK1MP.GOB', map: 'm10.jkl', t: 98765, mots: 0 });
+    feedCopy(host, [8]);
+    await world.run(250);
+    assert.equal(feed.sent.length, 4, 'four a tick');
+    await world.run(500);
+    const chunks = feed.sent.map(chunkOf);
+    assert.deepEqual(chunks.map(c => c.kind), [0, 1, 2, 2, 0], 'packets before, the keyframe, packets after');
+    assert.deepEqual(chunks[0].packets, [[9, 9]]);
+    assert.deepEqual(chunks[4].packets, [[8]]);
+    assert.ok(feed.sent.every(c => c.byteLength <= 60001));
+    const key = chunks.slice(1, 4).flatMap(c => c.packets);
+    assert.equal(key.length, 10, 'the level, the eight messages and its end');
+    assert.deepEqual(keyHead(key[0]), { v: 1, game: 'jk1', episode: 'JK1MP.GOB', map: 'm10.jkl', t: 98765, mode: 4, sum: 0xdeadbeef, tail: '' });
+    assert.deepEqual(key[1], [1, 2]);
+    assert.deepEqual(key[8], [4]);
+    assert.deepEqual(keyHead(key[9]), { v: 1, end: true });
+    assert.ok(host.net.log.some(l => /feed: keyframe, 10 packets in 3 chunks, [\d.]+ KiB/.test(l)), host.net.log.join('\n'));
+    // MotS says so.
+    await world.run(60000);
+    assert.equal(host.js.wsrelay_js_feed_key_wanted(0), 1);
+    feedKey(host, [[1]], { mots: 1 });
+    await world.run(250);
+    assert.equal(keyHead(chunkOf(feed.sent.at(-1)).packets[0]).game, 'mots');
+    // The minute's line counts keyframes.
+    assert.ok(host.net.log.some(l => /feed: \d+ packets in \d+ chunks, .* KiB\/s\), \d+ keyframes?/.test(l)), host.net.log.join('\n'));
+});
+
+test('a keyframe over 4 MiB is not sent, and says so', async () => {
+    const world = makeWorld();
+    world.lobby.feed = true;
+    const [host] = await room(world, [2]);
+    host.net.ws.deliver('feed 1 ' + TOKEN);
+    await world.run(5);
+    const feed = world.feeds.at(-1);
+    assert.equal(host.js.wsrelay_js_feed_key_wanted(0), 1);
+    const big = new Uint8Array(50000).fill(5);
+    feedKey(host, Array.from({ length: 90 }, () => big));
+    await world.run(10000);
+    assert.equal(feed.sent.length, 0);
+    assert.ok(host.net.log.some(l => /feed: keyframe not sent, over 4 MiB/.test(l)));
+});
+
+
+// ---- Watching a match in the game: the engine plays a room's feed.
+
+// A record as the feed hands pages them (src/feed.js): u32 length, u32 ms,
+// u8 kind, u8 seat, then each packet as u16 length and its bytes.
+function feedRecord(ms, kind, seat, packets) {
+    const parts = packets.map(p => p instanceof Uint8Array ? p : new Uint8Array(p));
+    const size = 10 + parts.reduce((n, p) => n + 2 + p.length, 0);
+    const rec = new Uint8Array(size), dv = new DataView(rec.buffer);
+    dv.setUint32(0, size - 4, true);
+    dv.setUint32(4, ms, true);
+    rec[8] = kind;
+    rec[9] = seat;
+    let at = 10;
+    for (const p of parts) {
+        rec[at] = p.length & 255;
+        rec[at + 1] = p.length >> 8;
+        rec.set(p, at + 2);
+        at += 2 + p.length;
+    }
+    return rec;
+}
+// Records in one message, as the feed sends a batch.
+function feedBatch(...recs) {
+    const out = new Uint8Array(recs.reduce((n, r) => n + r.length, 0));
+    let at = 0;
+    for (const r of recs) {
+        out.set(r, at);
+        at += r.length;
+    }
+    return out.buffer;
+}
+// A keyframe's JKF1 packets.
+const jkf1 = obj => new TextEncoder().encode('JKF1' + JSON.stringify(obj));
+const keyLevel = (episode = 'JK1MP', map = 'm2.jkl', more = {}) => jkf1({ v: 1, game: 'jk1', episode, map, t: 5, mode: 4, sum: 7, tail: '', ...more });
+const keyEnd = () => jkf1({ v: 1, end: true });
+// A game message with this DSS id, numbered n.
+function dss(id, n) {
+    const b = new Uint8Array(8), dv = new DataView(b.buffer);
+    dv.setUint16(0, id, true);
+    dv.setUint32(4, n, true);
+    return b;
+}
+const nOf = bytes => new DataView(bytes.buffer, bytes.byteOffset).getUint32(4, true);
+
+// A page's engine set to watch room 1 (wsrelay_js_view_open), and its feed.
+async function viewer(world, room = 1) {
+    const game = makeGame(world, { id: 9 });
+    await world.run(5);
+    const before = (world.feeds || []).length;
+    assert.equal(game.js.wsrelay_js_view_open(room), 1);
+    await world.run(5);
+    return { game, feed: world.feeds[before] };
+}
+// What the engine asks: the level (wsrelay_js_view_level).
+function viewLevel(game) {
+    const r = game.js.wsrelay_js_view_level(200, 32, 300, 32, 400);
+    const str = p => new TextDecoder().decode(game.mem.slice(p, game.mem.indexOf(0, p)));
+    const info = new Int32Array(game.mem.buffer, 400, 2);
+    return r > 0 ? { r, episode: str(200), map: str(300), mode: info[0], mots: info[1] } : { r };
+}
+// The engine synchronizing in a level (wsrelay_js_view_sync).
+function viewSync(game, episode = 'JK1MP', map = 'm2.jkl') {
+    const enc = new TextEncoder();
+    game.mem.set([...enc.encode(episode), 0], 600);
+    game.mem.set([...enc.encode(map), 0], 700);
+    game.js.wsrelay_js_view_sync(600, 700);
+}
+// The packets due now (wsrelay_js_view_recv), until none: [seat, n] each,
+// 'welcome' or 'ended'.
+function viewRecv(game) {
+    const out = [];
+    for (;;) {
+        const len = game.js.wsrelay_js_view_recv(4096, 2048, 100);
+        if (len === 0) return out;
+        if (len === -1) { out.push('welcome'); continue; }
+        if (len === -2) { out.push('ended'); return out; }
+        out.push([new Int32Array(game.mem.buffer, 100, 1)[0], nOf(game.mem.slice(4096, 4096 + len))]);
+    }
+}
+
+test('the game in a viewing page\'s box (Module.jkWatchBox) opens the feed with ?box=1, so the feed leaves it out of the count', async () => {
+    const world = makeWorld();
+    const game = makeGame(world, { id: 9 });
+    await world.run(5);
+    game.Module.jkWatchBox = true;
+    const before = (world.feeds || []).length;
+    assert.equal(game.js.wsrelay_js_view_open(7), 1);
+    await world.run(5);
+    const feed = world.feeds[before];
+    assert.equal(feed.url, 'ws://lobby/feed/7?box=1');
+    assert.equal(game.Module.jkView.url, 'ws://lobby/feed/7', 'the mod\'s parts still come from beside it');
+});
+
+test('a viewer opens the room\'s feed beside the lobby, and has a level once a keyframe comes, from its JKF1 packet', async () => {
+    const world = makeWorld();
+    const { game, feed } = await viewer(world, 7);
+    assert.equal(feed.url, 'ws://lobby/feed/7', 'as a page watches it, without a token');
+    assert.equal(viewLevel(game).r, 0, 'nothing yet');
+    const said = [];
+    game.Module.jkViewNotice = t => said.push(t);
+    feed.deliver('feed 30');
+    feed.deliver('feed waiting');
+    assert.equal(game.Module.jkView.delay, 30);
+    assert.ok(said.some(t => /Waiting for the match/.test(t)), said.join('\n'));
+    // Packets before any keyframe are no use.
+    feed.deliver(feedBatch(feedRecord(100, 0, 1, [dss(1, 1)])));
+    assert.equal(viewLevel(game).r, 0);
+    feed.deliver(feedBatch(feedRecord(200, 1, 1, [keyLevel('JK1CTF', 'm5.jkl', { mode: 0x24 }), dss(11, 2), keyEnd()])));
+    assert.deepEqual(viewLevel(game), { r: 1, episode: 'JK1CTF', map: 'm5.jkl', mode: 0x24, mots: 0 });
+    // A newer one takes its place.
+    feed.deliver(feedBatch(feedRecord(60200, 1, 1, [keyLevel('JK1MP', 'm2.jkl', { game: 'mots' }), keyEnd()])));
+    assert.deepEqual(viewLevel(game), { r: 1, episode: 'JK1MP', map: 'm2.jkl', mode: 4, mots: 1 });
+});
+
+test('a viewer can\'t watch a match with another mod than the one it runs, and says why', async () => {
+    const world = makeWorld();
+    const { game, feed } = await viewer(world);
+    const said = [];
+    game.Module.jkViewNotice = t => said.push(t);
+    feed.deliver(feedBatch(feedRecord(200, 1, 1, [keyLevel('JK1MP', 'm2.jkl', { tail: 'abc' }), keyEnd()])));
+    assert.equal(viewLevel(game).r, -1);
+    assert.ok(said.some(t => /played with a mod/.test(t)), said.join('\n'));
+    assert.equal(feed.readyState, 3, 'and closes the feed');
+    // The same mod: fine.
+    const w2 = makeWorld();
+    const v2 = await viewer(w2);
+    v2.game.Module.jkMods = { tail: () => 'abc' };
+    v2.feed.deliver(feedBatch(feedRecord(200, 1, 1, [keyLevel('JK1MP', 'm2.jkl', { tail: 'abc' }), keyEnd()])));
+    assert.equal(viewLevel(v2.game).r, 1);
+});
+
+test('a viewer whose mod or Remastered pack isn\'t the match\'s goes to get it (2), as mods.js reads the tails', async () => {
+    // mods.js's parseTail, for these made-up tails. M2 is M's mod under
+    // another folder name.
+    const TAILS = { P1: { fp: null, name: null, pack: 'aa' }, P2: { fp: null, name: null, pack: 'bb' },
+                    M: { fp: 'ff', name: 'M', pack: null }, M2: { fp: 'ff', name: 'Other', pack: null }, X: { bad: true } };
+    async function watch(hostTail, ownTail, mods = {}) {
+        const world = makeWorld();
+        const { game, feed } = await viewer(world);
+        game.Module.jkMods = { tail: () => ownTail, lib: { parseTail: t => TAILS[t] || null }, viewFetch: () => {}, ...mods };
+        const said = [];
+        game.Module.jkViewNotice = t => said.push(t);
+        feed.deliver(feedBatch(feedRecord(200, 1, 1, [keyLevel('JKMP', 'mdm02.jkl', { game: 'mots', tail: hostTail }), keyEnd()])));
+        return { r: viewLevel(game).r, said: said.join('\n'), game, feed };
+    }
+    for (const [host, own] of [['P1', ''], ['P1', 'P2'], ['', 'P1'], ['M', 'P1'], ['', 'M'], ['M', '']]) {
+        const v = await watch(host, own);
+        assert.equal(v.r, 2, host + ' watched from ' + own);
+        assert.equal(v.said, '');
+        assert.equal(v.feed.readyState, 1, 'the feed stays open');
+    }
+    let v = await watch('X', '');
+    assert.equal(v.r, -1);
+    assert.match(v.said, /can't read/);
+    // Without mods.js's viewFetch (an older page), it says it can't.
+    v = await watch('M', '', { viewFetch: undefined });
+    assert.equal(v.r, -1);
+    assert.match(v.said, /played with a mod, and this game can't get onto it/);
+    // Restarted for this match's mod already, and still not on it: once only.
+    const world = makeWorld();
+    const { game, feed } = await viewer(world);
+    game.Module.jkMods = { tail: () => '', lib: { parseTail: t => TAILS[t] || null }, viewFetch: () => {} };
+    game.Module.jkWatchModFor = 'M';
+    const said = [];
+    game.Module.jkViewNotice = t => said.push(t);
+    feed.deliver(feedBatch(feedRecord(200, 1, 1, [keyLevel('JKMP', 'mdm02.jkl', { game: 'mots', tail: 'M' }), keyEnd()])));
+    assert.equal(viewLevel(game).r, -1);
+    assert.match(said.join('\n'), /couldn't start with the mod this match is played with/);
+    // The same pack, or the same mod in a folder of another name: it watches,
+    // and forgets the restart.
+    v = await watch('P1', 'P1');
+    assert.equal(v.r, 1);
+    v = await watch('M', 'M2', {});
+    assert.equal(v.r, 1);
+    v.game.Module.jkWatchModFor = 'M';
+    assert.equal(viewLevel(v.game).r, 1);
+    assert.equal('jkWatchModFor' in v.game.Module, false);
+});
+
+test('a viewer gets the match\'s mod with mods.js, says how far along it is, and restarts to watch the same room', async () => {
+    const world = makeWorld();
+    const { game, feed } = await viewer(world, 12);
+    const said = [], asked = [];
+    let left = 0, error = '';
+    game.Module.jkViewNotice = t => said.push(t);
+    game.Module.jkViewLeft = () => { left++; return true; };
+    game.Module.jkMods = {
+        tail: () => '', lib: { parseTail: t => (t ? { fp: 'ff', name: 'Saber Pack', pack: null } : null) },
+        viewFetch: (tail, lib, onProgress, src) => {
+            asked.push([tail, lib, src]);
+            onProgress(1, 4, 'library'); onProgress(2, 4, 'library'); onProgress(3, 4, 'library'); onProgress(4, 4, 'library');
+        },
+        viewError: () => error
+    };
+    feed.deliver(feedBatch(feedRecord(200, 1, 1, [keyLevel('JK1MP', 'm2.jkl', { tail: 'T', lib: '634' }), keyEnd()])));
+    assert.equal(viewLevel(game).r, 2);
+    game.js.wsrelay_js_view_fetch_mod();
+    assert.deepEqual(asked.map(a => a.slice(0, 2)), [['T', '634']], "the host's tail and the Mod Library's id from the keyframe");
+    assert.deepEqual(said.filter(t => /Mod Library/.test(t)), ["Getting this match's mod from the Mod Library: 25 percent",
+                                                                "Getting this match's mod from the Mod Library: 100 percent"],
+                     'at most once a second, and when it is all in');
+    // The feed, for the host's game: its https address, and asking it on
+    // the feed's socket.
+    const src = asked[0][2];
+    assert.equal(src.url, feed.url.replace(/^ws/, 'http'));
+    assert.match(src.url, /^https?:[/][/][^/]+[/]feed[/]12$/);
+    const before = feed.sent.length;
+    src.ask('ab'.repeat(32));
+    assert.deepEqual(feed.sent.slice(before), ['mod ' + 'ab'.repeat(32)]);
+    said.length = 0;
+    game.Module.jkMods.viewFetch = (tail, lib, onProgress) => {
+        onProgress(0, 0, 'host'); onProgress(0, 0, 'host'); onProgress(5, 10, 'host');
+    };
+    game.js.wsrelay_js_view_fetch_mod();
+    assert.deepEqual(said, ["Asking the host's game for this match's mod."], 'from the host, the same at most once a second');
+    await world.run(1100);
+    game.js.wsrelay_js_view_fetch_mod();
+    assert.deepEqual(said.slice(1), ["Asking the host's game for this match's mod."]);
+    game.js.wsrelay_js_view_mod_error(1000, 100);
+    assert.equal(game.mem[1000], 0, 'nothing to say yet');
+    error = "The Mod Library's copy isn't it.";
+    game.js.wsrelay_js_view_mod_error(1000, 100);
+    assert.equal(new TextDecoder().decode(game.mem.slice(1000, game.mem.indexOf(0, 1000))), error);
+    // Restarting: the page isn't asked to take the player back, the feed
+    // closes, and the same room is watched again after the restart.
+    game.js.wsrelay_js_view_restart(12);
+    assert.equal(left, 0);
+    assert.equal(game.Module.jkWatchRoom, 12);
+    assert.equal(game.Module.jkWatchModFor, 'T');
+    assert.equal(game.Module.jkView, null);
+    assert.equal(feed.readyState, 3);
+    // No keyframe, or no mods.js: nothing is asked.
+    const w2 = makeWorld();
+    const v2 = await viewer(w2);
+    v2.game.Module.jkMods = { viewFetch: () => assert.fail('asked') };
+    v2.game.js.wsrelay_js_view_fetch_mod();
+    v2.game.Module.jkMods = undefined;
+    v2.game.js.wsrelay_js_view_mod_error(1000, 100);
+    assert.equal(v2.game.mem[1000], 0);
+});
+
+test('a game watching asks for the host\'s mod: the host\'s game has mods.js put it on the feed, at its https address', async () => {
+    const world = makeWorld();
+    world.lobby.feed = true;
+    const [host, other] = await room(world, [2, 3]);
+    const ups = [];
+    for (const g of [host, other])
+        g.Module.jkMods = { tail: () => '', feedUp: (url, fp, alive) => { ups.push([g === host, url, fp, alive]); return true; } };
+    host.net.ws.deliver('feed 1 ' + TOKEN);
+    other.net.ws.deliver('feed 1 ' + 'cd'.repeat(16));
+    await world.run(5);
+    const [hf, of] = world.feeds.slice(-2);
+    const fp = 'cd'.repeat(32);
+    hf.deliver('mod ' + fp);
+    of.deliver('mod ' + fp);
+    hf.deliver('mod nope');
+    hf.deliver('key');
+    assert.equal(ups.length, 1, "only the host's game, only for a fingerprint");
+    assert.equal(ups[0][0], true);
+    assert.equal(ups[0][1], hf.url.replace(/^ws/, 'http'));
+    assert.match(ups[0][1], /^https?:[/][/][^/]+[/]feed[/]1[?]up=[0-9a-f]{32}$/);
+    assert.equal(ups[0][2], fp);
+    assert.equal(ups[0][3](), true, 'while that is its feed');
+    host.net.ws.deliver('feed off');
+    assert.equal(ups[0][3](), false);
+});
+
+test('a spectator\'s message: the game watching sends it on its feed socket, the host\'s game takes what the feed made of it', async () => {
+    const world = makeWorld();
+    world.lobby.feed = true;
+    const [host, other] = await room(world, [2, 3]);
+    host.net.ws.deliver('feed 1 ' + TOKEN);
+    other.net.ws.deliver('feed 1 ' + 'cd'.repeat(16));
+    await world.run(5);
+    const [hf, of] = world.feeds.slice(-2);
+    const take = g => {
+        const lines = [];
+        while (g.js.wsrelay_js_feed_take_say(1000, 128))
+            lines.push(new TextDecoder().decode(g.mem.slice(1000, g.mem.indexOf(0, 1000))));
+        return lines;
+    };
+    hf.deliver('say Rogue (watching): hello there');
+    of.deliver('say Rogue (watching): not the host');
+    hf.deliver('say ');
+    hf.deliver('say bad\u00e9line');
+    assert.deepEqual(take(host), ['Rogue (watching): hello there'], "the host's game, a line the chat can show");
+    assert.deepEqual(take(other), []);
+    for (let i = 0; i < 12; i++)
+        hf.deliver('say n' + i);
+    assert.equal(take(host).length, 8, 'at most 8 waiting');
+    host.net.ws.deliver('feed off');
+    assert.deepEqual(take(host), []);
+
+    // The game watching: its name (as the engine has it, UTF-16) and the text.
+    const v = await viewer(makeWorld());
+    const name = 'Kyle  Katarn\u00e9 of the New Republic';
+    new Uint16Array(v.game.mem.buffer, 2000, 64).set([...name].map(c => c.charCodeAt(0)).concat(0));
+    v.game.mem.set([...new TextEncoder().encode('gg wp'), 0], 3000);
+    const before = v.feed.sent.length;
+    assert.equal(v.game.js.wsrelay_js_view_say(2000, 3000), 1);
+    assert.deepEqual(v.feed.sent.slice(before), ['say Kyle Katarn? of\tgg wp']);
+    new Uint16Array(v.game.mem.buffer, 2000, 4).set([32, 0]);
+    assert.equal(v.game.js.wsrelay_js_view_say(2000, 3000), 1);
+    assert.equal(v.feed.sent.at(-1), 'say Someone\tgg wp', 'no name');
+    v.game.Module.jkView.end('over', '');
+    assert.equal(v.game.js.wsrelay_js_view_say(2000, 3000), 0, 'once the feed is closed');
+});
+
+test('the host\'s keyframe names the Mod Library\'s id for its mod, when it has one', async () => {
+    const world = makeWorld();
+    world.lobby.feed = true;
+    const [host] = await room(world, [2]);
+    let id = '634';
+    host.Module.jkMods = { tail: () => 'm-1234', libId: () => id };
+    host.net.ws.deliver('feed 1 ' + TOKEN);
+    await world.run(5);
+    const feed = world.feeds.at(-1);
+    feedKey(host, [[1]]);
+    await world.run(250);
+    assert.equal(keyHead(chunkOf(feed.sent.at(-1)).packets[0]).lib, '634');
+    id = '';
+    feedKey(host, [[1]]);
+    await world.run(250);
+    assert.equal(keyHead(chunkOf(feed.sent.at(-1)).packets[0]).lib, undefined, 'none for a mod the library didn\'t save');
+});
+
+test('synchronizing, a viewer gets the keyframe and all after it at once, then the welcome, then the rest at its pace', async () => {
+    const world = makeWorld();
+    const { game, feed } = await viewer(world);
+    feed.deliver('feed 30');
+    feed.deliver(feedBatch(
+        feedRecord(1000, 0, 2, [dss(1, 99)]),                                  // before the keyframe: left out
+        feedRecord(1000, 1, 1, [keyLevel(), dss(12, 1), dss(11, 2)]),
+        feedRecord(1100, 0, 2, [dss(1, 3)]),                                   // a player, between the keyframe's chunks
+        feedRecord(1100, 2, 1, [dss(11, 4), keyEnd()]),
+        feedRecord(1250, 0, 1, [dss(1, 5), dss(10, 6)]),
+        feedRecord(1250, 0, 2, [dss(1, 7)])));
+    assert.equal(viewLevel(game).r, 1);
+    assert.deepEqual(viewRecv(game), [], 'nothing before the engine is in the level');
+    // More while the level loads.
+    await world.run(250);
+    feed.deliver(feedBatch(feedRecord(1500, 0, 2, [dss(1, 8)])));
+    viewSync(game, 'jk1mp.gob', 'M2.JKL');
+    assert.deepEqual(viewRecv(game), [[1, 1], [1, 2], [2, 3], [1, 4], [1, 5], [1, 6], [2, 7], [2, 8], 'welcome'],
+                     'in order, the seat each came from, the keyframe\'s JKF1 packets left out');
+    // Then each record plays 500 ms after the newest when it caught up, its
+    // packets spread over the 250 ms before.
+    feed.deliver(feedBatch(feedRecord(1750, 0, 1, [dss(1, 10), dss(1, 11)]), feedRecord(1750, 2, 1, [dss(11, 12)])));
+    assert.deepEqual(viewRecv(game), []);
+    await world.run(624);
+    assert.deepEqual(viewRecv(game), []);
+    await world.run(1);
+    assert.deepEqual(viewRecv(game), [[1, 10]], '1750 - 1500 + 500 - 250 + 125');
+    await world.run(124);
+    assert.deepEqual(viewRecv(game), []);
+    await world.run(1);
+    assert.deepEqual(viewRecv(game), [[1, 11]], 'a keyframe in the level is for starting, and skipped');
+});
+
+test('a viewer waits for the whole keyframe, and for the keyframe of the level it\'s in', async () => {
+    const world = makeWorld();
+    const { game, feed } = await viewer(world);
+    feed.deliver(feedBatch(feedRecord(1000, 1, 1, [keyLevel('JK1MP', 'm2.jkl'), dss(12, 1)])));
+    viewSync(game, 'JK1MP', 'm3.jkl');
+    assert.deepEqual(viewRecv(game), [], 'another level\'s');
+    feed.deliver(feedBatch(feedRecord(2000, 0, 2, [dss(1, 2)])));
+    assert.deepEqual(viewRecv(game), [], 'nor what came after it');
+    feed.deliver(feedBatch(feedRecord(3000, 1, 1, [keyLevel('JK1MP', 'm3.jkl'), dss(12, 3)])));
+    assert.deepEqual(viewRecv(game), [[1, 3]], 'that level\'s, but not whole yet');
+    feed.deliver(feedBatch(feedRecord(3000, 0, 2, [dss(1, 4)])));
+    assert.deepEqual(viewRecv(game), [[2, 4]], 'still not');
+    feed.deliver(feedBatch(feedRecord(3100, 2, 1, [dss(11, 5)]), feedRecord(3250, 0, 1, [dss(1, 6)])));
+    assert.deepEqual(viewRecv(game), [[1, 5], [1, 6], 'welcome'], 'the host\'s game going on after it says it\'s whole too');
+});
+
+test('a viewer more than 2 s behind waits for the feed again; what it played before, the feed opened again, is left out', async () => {
+    const world = makeWorld();
+    const { game, feed } = await viewer(world);
+    feed.deliver(feedBatch(feedRecord(1000, 1, 1, [keyLevel(), keyEnd()])));
+    viewSync(game);
+    assert.deepEqual(viewRecv(game), ['welcome']);
+    // Due at +500 (one packet: at its time); comes at +3000.
+    await world.run(3000);
+    feed.deliver(feedBatch(feedRecord(1000, 0, 2, [dss(1, 1)])));
+    assert.deepEqual(viewRecv(game), [], 'late: 500 ms behind it again');
+    await world.run(500);
+    assert.deepEqual(viewRecv(game), [[2, 1]]);
+    assert.equal(game.Module.jkView.late, 1);
+    // The feed drops; opened again, it starts at a keyframe before what played.
+    feed.end(1006);
+    await world.run(1000);
+    const again = world.feeds.at(-1);
+    assert.notEqual(again, feed, 'opened again');
+    assert.equal(again.url, feed.url);
+    await world.run(5);
+    again.deliver(feedBatch(feedRecord(900, 1, 1, [keyLevel(), keyEnd()]), feedRecord(950, 0, 2, [dss(1, 2)]),
+                            feedRecord(1250, 0, 2, [dss(1, 3)])));
+    await world.run(1000);
+    assert.deepEqual(viewRecv(game), [[2, 3]]);
+});
+
+test('after the feed held up, a viewer plays 10% faster until it\'s near the feed again, rather than staying behind', async () => {
+    const world = makeWorld();
+    const { game, feed } = await viewer(world);
+    feed.deliver(feedBatch(feedRecord(1000, 1, 1, [keyLevel(), keyEnd()])));
+    viewSync(game);
+    assert.deepEqual(viewRecv(game), ['welcome']);
+    const view = game.Module.jkView;
+    const played = [];
+    let ms = 1000, n = 0;
+    // Every 250 ms the host's game sends a record; the engine asks every 50 ms.
+    const step = async (deliver = true, held = null) => {
+        ms += 250;
+        const rec = feedRecord(ms, 0, 2, [dss(1, ++n)]);
+        if (held) held.push(rec);
+        else if (deliver) feed.deliver(feedBatch(rec));
+        for (let f = 0; f < 5; f++) {
+            for (const p of viewRecv(game)) played.push(p[1]);
+            await world.run(50);
+        }
+    };
+    for (let i = 0; i < 40; i++) await step();
+    assert.equal(view.late, 0);
+    assert.equal(view.caught, 0, 'on time: nothing to catch up');
+    const offset = view.offset;
+    // Nothing for 3.5 s, then all of it at once.
+    const held = [];
+    for (let i = 0; i < 14; i++) await step(true, held);
+    feed.deliver(feedBatch(...held));
+    for (const p of viewRecv(game)) played.push(p[1]);
+    assert.equal(view.late, 1, 'it waited for the feed');
+    assert.equal(Math.round(view.offset - offset), 3250, '3.25 s further behind');
+    for (let i = 0; i < 40; i++) await step();
+    assert.ok(Math.abs(view.caught - 1000) < 30, 'over the next 10 s, 1 s of it back: ' + view.caught);
+    for (let i = 0; i < 200; i++) await step();
+    const left = view.offset - offset;
+    assert.ok(left > 600 && left < 1050, 'back to about 1.5 s past the newest, less than 1 s more behind than before: ' + left);
+    assert.equal(view.late, 1, 'it never got late from it');
+    assert.deepEqual(played, Array.from({ length: played.length }, (_, i) => i + 1), 'each record once, in order');
+    assert.ok(played.length > n - 8, 'all of them but the last second\'s: ' + played.length + ' of ' + n);
+});
+
+test('after its feed drops, a viewer sets right what it missed from the next keyframe; otherwise it leaves keyframes out', async () => {
+    const world = makeWorld();
+    const { game, feed } = await viewer(world);
+    feed.deliver(feedBatch(feedRecord(1000, 1, 1, [keyLevel(), keyEnd()])));
+    viewSync(game);
+    assert.deepEqual(viewRecv(game), ['welcome']);
+    // A keyframe while all is well: left out.
+    feed.deliver(feedBatch(feedRecord(1250, 0, 2, [dss(1, 1)]), feedRecord(1500, 1, 1, [keyLevel(), dss(12, 2), keyEnd()]),
+                           feedRecord(1750, 0, 2, [dss(1, 3)])));
+    await world.run(1500);
+    assert.deepEqual(viewRecv(game), [[2, 1], [2, 3]]);
+    // The feed restarts: nothing for 30 s, then its first keyframe (in two
+    // parts) and on.
+    feed.end(1006);
+    await world.run(1000);
+    const again = world.feeds.at(-1);
+    assert.notEqual(again, feed);
+    await world.run(29000);
+    again.deliver(feedBatch(feedRecord(31000, 1, 1, [keyLevel(), dss(12, 4)]), feedRecord(31000, 2, 1, [dss(13, 5), keyEnd()]),
+                            feedRecord(31250, 0, 2, [dss(1, 6)])));
+    await world.run(1000);
+    assert.deepEqual(viewRecv(game), [[1, 4], [1, 5], [2, 6]]);
+    // And the keyframe after that is left out again.
+    again.deliver(feedBatch(feedRecord(31500, 1, 1, [keyLevel(), dss(12, 7), keyEnd()]), feedRecord(31750, 0, 2, [dss(1, 8)])));
+    await world.run(5);
+    assert.deepEqual(viewRecv(game), [[2, 8]]);
+});
+
+test('a viewer\'s feed that ends, or drops more than 3 times, ends watching once what it has played', async () => {
+    const world = makeWorld();
+    const { game, feed } = await viewer(world);
+    const said = [];
+    game.Module.jkViewNotice = t => said.push(t);
+    feed.deliver(feedBatch(feedRecord(1000, 1, 1, [keyLevel(), keyEnd()])));
+    viewSync(game);
+    assert.deepEqual(viewRecv(game), ['welcome']);
+    feed.deliver(feedBatch(feedRecord(1250, 0, 1, [dss(1, 1)])));
+    feed.deliver('feed ended room ended');
+    assert.ok(said.includes('The match is over.'), said.join('\n'));
+    assert.deepEqual(viewRecv(game), [], 'what it has first');
+    await world.run(800);
+    assert.deepEqual(viewRecv(game), [[1, 1], 'ended']);
+    // Synchronizing, it ends at once.
+    const w2 = makeWorld();
+    const v2 = await viewer(w2);
+    v2.feed.deliver(feedBatch(feedRecord(1000, 1, 1, [keyLevel(), dss(12, 1)])));
+    viewSync(v2.game);
+    assert.deepEqual(viewRecv(v2.game), [[1, 1]]);
+    // It drops, and three times it can't be opened again (1, 2 and 3 s on).
+    let f = v2.feed;
+    f.end(1006);
+    for (let i = 1; i <= 3; i++) {
+        await w2.run(1000 * i);
+        assert.notEqual(w2.feeds.at(-1), f, 'opened again');
+        f = w2.feeds.at(-1);
+        assert.equal(f.readyState, 0);
+        f.end(1006);
+    }
+    await w2.run(10000);
+    assert.equal(w2.feeds.at(-1), f, 'not a fourth time');
+    assert.deepEqual(viewRecv(v2.game), ['ended']);
+    // And the engine closing it closes the feed.
+    const w3 = makeWorld();
+    const v3 = await viewer(w3);
+    assert.equal(v3.game.js.wsrelay_js_view_close(1), 0, 'no page to go back to');
+    assert.equal(v3.feed.readyState, 3);
+    assert.equal(v3.game.Module.jkView, null);
+    // A page takes the player back to watching that room.
+    const w4 = makeWorld();
+    const v4 = await viewer(w4, 7);
+    const left = [];
+    v4.game.Module.jkViewLeft = room => { left.push(room); return true; };
+    assert.equal(v4.game.js.wsrelay_js_view_close(7), 1);
+    assert.deepEqual(left, [7]);
+    assert.equal(v4.feed.readyState, 3);
+});
+
+test('a viewer with nothing to start from gives up after 90 s', async () => {
+    const world = makeWorld();
+    const { game } = await viewer(world);
+    await world.run(89000);
+    assert.equal(viewLevel(game).r, 0);
+    await world.run(2000);
+    assert.equal(viewLevel(game).r, -1);
+});
+
+test('the host\'s keyframe says the mod it runs', async () => {
+    const world = makeWorld();
+    world.lobby.feed = true;
+    const [host] = await room(world, [2]);
+    host.Module.jkMods = { tail: () => 'm-1234' };
+    host.net.ws.deliver('feed 1 ' + TOKEN);
+    await world.run(5);
+    const feed = world.feeds.at(-1);
+    assert.equal(host.js.wsrelay_js_feed_key_wanted(0), 1);
+    feedKey(host, [[1]]);
+    await world.run(250);
+    assert.equal(keyHead(chunkOf(feed.sent.at(-1)).packets[0]).tail, 'm-1234');
+});
+
+test('the host\'s keyframe says which version of its level it runs, and a viewer gets that one', async () => {
+    const world = makeWorld();
+    world.lobby.feed = true;
+    const [host] = await room(world, [2]);
+    const SHA = 'ab'.repeat(32);
+    const asked = [];
+    host.Module.jkMaps = { hostedSha: (name, ext) => (asked.push([name, ext]), name === 'mymap' ? SHA : '') };
+    host.net.ws.deliver('feed 1 ' + TOKEN);
+    await world.run(5);
+    const feed = world.feeds.at(-1);
+    feedKey(host, [[1]], { episode: 'mymap' });
+    await world.run(250);
+    assert.equal(keyHead(chunkOf(feed.sent.at(-1)).packets[0]).sha, SHA);
+    feedKey(host, [[1]], { episode: 'JK1MP', mots: 1 });
+    await world.run(250);
+    assert.equal(keyHead(chunkOf(feed.sent.at(-1)).packets[0]).sha, undefined, 'none to give');
+    assert.deepEqual(asked, [['mymap', 'gob'], ['JK1MP', 'goo']]);
+
+    // The viewer: nothing to get without a sha, or without maps.js.
+    const w2 = makeWorld();
+    const { game, feed: vfeed } = await viewer(w2);
+    const said = [], fetched = [];
+    game.Module.jkViewNotice = t => said.push(t);
+    vfeed.deliver(feedBatch(feedRecord(200, 1, 1, [keyLevel('mymap', 'ctf.jkl'), keyEnd()])));
+    assert.equal(viewLevel(game).r, 1);
+    game.mem.set([...new TextEncoder().encode('gob'), 0], 900);
+    assert.equal(game.js.wsrelay_js_view_fetch_level(900), 0, 'no sha');
+    vfeed.deliver(feedBatch(feedRecord(300, 1, 1, [keyLevel('mymap', 'ctf.jkl', { sha: SHA }), keyEnd()])));
+    assert.equal(viewLevel(game).r, 1);
+    assert.equal(game.js.wsrelay_js_view_fetch_level(900), 0, 'no maps.js');
+    game.Module.jkMaps = { viewFetch: (name, ext, sha, onProgress) => { fetched.push([name, ext, sha]); onProgress(1, 4); onProgress(2, 4); } };
+    assert.equal(game.js.wsrelay_js_view_fetch_level(900), 1);
+    assert.deepEqual(fetched, [['mymap', 'gob', SHA]]);
+    assert.deepEqual(said.filter(t => /Level Library/.test(t)), ["Getting this match's level from the Level Library: 25 percent"],
+                     'at most once a second');
+    assert.equal(game.js.wsrelay_js_view_alive(), 1);
+    vfeed.deliver('feed ended room ended');
+    assert.equal(game.js.wsrelay_js_view_alive(), 0);
 });
 
 let failed = 0;
