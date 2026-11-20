@@ -64,7 +64,7 @@ static inline int rdMaterial_DiscardMip(rdMaterialReadFn readFn, intptr_t file,
                                        uint32_t width, uint32_t height, uint32_t bpp)
 {
     unsigned char scratch[256];
-    if (!width || !height || (bpp != 8 && bpp != 16)) return 0;
+    if (!width || !height || (!bpp || bpp > 32 || bpp % 8)) return 0;
     size_t bytesPerPixel = bpp / 8;
     if (width > SIZE_MAX / bytesPerPixel) return 0;
     size_t rowBytes = (size_t)width * bytesPerPixel;

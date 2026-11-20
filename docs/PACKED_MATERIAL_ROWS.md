@@ -39,6 +39,6 @@ the next texture/cel header or trailing palette is read. This does not change
 `rdTexture`, renderer mip selection, or the original game's retail limitations.
 
 The asset-free regression also checks two sequential full chains followed by a
-palette sentinel, 8/16-bit pixels, square and rectangular dimensions, one-wide
+palette sentinel, 8/16/24/32-bit pixels, square and rectangular dimensions, one-wide
 chains, short reads, truncated discarded levels, fixed-capacity resident counts,
 and invalid overlong chains. Run the same sanitizer command above.

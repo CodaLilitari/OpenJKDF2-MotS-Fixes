@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <stdio.h>
 
-static unsigned char input[400000];
+static unsigned char input[800000];
 static size_t cursor, available, chunk;
 static size_t readMemory(intptr_t file, void* out, size_t count)
 {
@@ -73,7 +73,7 @@ static void checkExtendedCels(uint32_t width, uint32_t height, uint32_t mips,
             if (level < resident) {
                 size_t rowBytes = w * bytesPerPixel, stride = (rowBytes + 3) & ~(size_t)3;
                 size_t capacity = stride * h;
-                assert(capacity + 2 < sizeof(output));
+                assert(capacity + 2 <= sizeof(output));
                 memset(output, 0xcc, capacity + 2);
                 assert(rdMaterial_ReadPackedRows(readMemory, 0, output + 1, capacity, rowBytes, h, stride));
                 assert(output[0] == 0xcc && output[1 + capacity] == 0xcc);
@@ -116,6 +116,8 @@ int main(void)
     assert(rdMaterial_ValidTextureLayout(256, 1, 9, 32)); /* disk chain clamps the short axis */
     checkExtendedCels(256, 256, 9, 8, 4, 4096);
     checkExtendedCels(256, 256, 9, 16, 4, 31);
+    checkExtendedCels(256, 256, 9, 24, 4, 257);
+    checkExtendedCels(256, 256, 9, 32, 4, 509);
     checkExtendedCels(256, 1, 9, 8, 1, 1);
     checkExtendedCels(1, 128, 8, 16, 1, 3);
     checkExtendedCels(128, 32, 8, 8, 4, 7);
@@ -132,7 +134,7 @@ int main(void)
     assert(!rdMaterial_DiscardMip(readMemory, 0, 16, 16, 8));
     assert(cursor == 255); /* do not hide truncated tail behind an unchecked seek */
     cursor = 0; available = 256;
-    assert(!rdMaterial_DiscardMip(readMemory, 0, 16, 16, 24));
+    assert(!rdMaterial_DiscardMip(readMemory, 0, 16, 16, 7));
     assert(!rdMaterial_DiscardMip(readMemory, 0, 0, 16, 8));
     assert(cursor == 0);
     puts("MAT packed-row regression controls passed.");
