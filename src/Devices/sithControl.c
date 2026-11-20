@@ -32,6 +32,7 @@
 #endif
 #ifdef PLATFORM_WSRELAY
 #include "Platform/Networking/WSRelay/stdComm_WSRelay.h"
+#include "Main/jkQuakeConsole.h" // Added: sithControl_WebTyping
 #endif
 
 // Added
@@ -1361,11 +1362,24 @@ debug_controls:
             if (sithCamera_g_aCameras[i].pPrimaryFocusThing != pFocus)
                 sithCamera_SetCameraFocus(&sithCamera_g_aCameras[i], pFocus, NULL);
         }
-        if (sithCamera_g_pCurCamera != &sithCamera_g_aCameras[0] && sithCamera_g_pCurCamera != &sithCamera_g_aCameras[1])
-            sithCamera_SetCurrentToCycleCamera();
+        // Following a player: their eyes or behind them, as the camera key
+        // picked (the cycle camera). The free camera is its own eye only
+        // (kit 174's camera key took it behind a body it hasn't got): the
+        // key does nothing there (jkControl_HandleHudKeys), and following a
+        // player again goes back to the view picked for that.
+        SithCamera* pWant = &sithCamera_g_aCameras[pFollowed && sithCamera_g_curCycleCamNum == 1 ? 1 : 0];
+        if (sithCamera_g_pCurCamera != pWant)
+            sithCamera_SetCurrentCamera(pWant);
+#ifdef PLATFORM_WSRELAY
+        // A spectator's own flashes (its body takes no hits, picks nothing
+        // up) would never fade: none. A viewer following a player in first
+        // person shows theirs, as their game tells the room's feed.
+        stdComm_WSRelay_ViewerPovFrame(pFollowed ? sithControl_followingPlayer : -1);
+#else
         // A spectator's own flashes (its body takes no hits, picks nothing
         // up) would never fade: none.
         stdPalEffects_FlushAllAdds();
+#endif
 #ifdef ARCH_WASM
         sithControl_ViewSays();
 #endif
@@ -1517,14 +1531,27 @@ debug_controls:
 }
 
 static void sithControl_SpectatorMoveTo(SithThing *player, const rdVector3 *dir, flex_t dist);
+#ifdef PLATFORM_WSRELAY
+static void sithControl_SpectatorFlyTo(SithThing *player, const rdVector3 *dir, flex_t dist);
+#endif
 
 // Added: a spectator's free camera (sithMulti_IsSpectating) turns and looks
-// up and down as a player does and flies where it looks, through adjoins but
-// not walls: Forward/Back and Slide move it, Jump takes it up and Duck down,
-// Run (Fast) goes faster. Its body has no physics (it's disabled), so this
-// turns and moves it itself, keeping its sector.
+// up and down as a player does and flies where it looks: Forward/Back and
+// Slide move it, Jump takes it up and Duck down, Run (Fast) goes faster. A
+// game watching a match flies it through everything, walls and doors too
+// (sithControl_SpectatorFlyTo: kit 174's stopped at them, and a door it
+// couldn't open shut it in a room); the dedicated host's goes through
+// adjoins only, as its game's view runs the level's cogs
+// (sithControl_SpectatorMoveTo). Its body has no physics (it's disabled), so
+// this turns and moves it itself, keeping its sector.
 #define SITHCONTROL_SPECTATOR_SPEED (2.0)
 #define SITHCONTROL_SPECTATOR_PITCH_MAX (85.0)
+// Down, in the camera behind (sithCamera_g_aCameras[1]): it sits 0.2 behind
+// and 0.06 above the eyes and looks at a point 0.3 ahead (sithCamera_trans),
+// so it looks straight down at about 83 degrees, and past that rdMatrix_LookAt
+// turns it over (kit 171: looking down far enough flipped the view). A little
+// short of that.
+#define SITHCONTROL_SPECTATOR_PITCH_DOWN_BEHIND (80.0)
 void sithControl_SpectatorFly(SithThing *player, flex_t deltaSecs)
 {
     if (!player || !player->sector || deltaSecs <= 0.0)
@@ -1539,10 +1566,14 @@ void sithControl_SpectatorFly(SithThing *player, flex_t deltaSecs)
 #endif
                  + sithControl_GetKeyAsAxis(INPUT_FUNC_PITCH) * 90.0 * deltaSecs;
     rdVector3* pHead = &player->actorParams.headPYR;
+    // Every frame, so going to the camera behind looking far down comes up
+    // to its limit at once.
+    flex_t pitchDown = sithCamera_g_pCurCamera == &sithCamera_g_aCameras[1] ? SITHCONTROL_SPECTATOR_PITCH_DOWN_BEHIND
+                                                                           : SITHCONTROL_SPECTATOR_PITCH_MAX;
     if (sithControl_GetKey(INPUT_FUNC_CENTER, 0))
         pHead->x = 0.0;
-    else if (pitch != 0.0)
-        pHead->x = stdMath_Clamp(pHead->x + pitch, -SITHCONTROL_SPECTATOR_PITCH_MAX, SITHCONTROL_SPECTATOR_PITCH_MAX);
+    else
+        pHead->x = stdMath_Clamp(pHead->x + pitch, -pitchDown, SITHCONTROL_SPECTATOR_PITCH_MAX);
     pHead->y = 0.0;
     pHead->z = 0.0;
 
@@ -1606,6 +1637,13 @@ void sithControl_SpectatorFly(SithThing *player, flex_t deltaSecs)
     if (dist <= 0.0)
         return;
 
+#ifdef PLATFORM_WSRELAY
+    if (stdComm_WSRelay_bViewer)
+    {
+        sithControl_SpectatorFlyTo(player, &move, dist);
+        return;
+    }
+#endif
     sithControl_SpectatorMoveTo(player, &move, dist);
 }
 
@@ -1667,6 +1705,54 @@ static void sithControl_SpectatorMoveTo(SithThing *player, const rdVector3 *dir,
 }
 
 #ifdef PLATFORM_WSRELAY
+// Added: the sector of the level that pos is in, from pNear through adjoins,
+// else any of them; NULL outside them all.
+static SithSector* sithControl_SectorAt(SithSector *pNear, const rdVector3 *from, const rdVector3 *pos)
+{
+    if (pNear)
+    {
+        rdVector3 to = *pos;
+        SithSector* pSector = sithCollision_FindSectorInRadius(pNear, from, &to, 0.0);
+        if (pSector && sithIntersect_IsSphereInSector(pos, 0.0, pSector))
+            return pSector;
+    }
+    if (!sithWorld_g_pCurrentWorld)
+        return NULL;
+    for (int i = 0; i < sithWorld_g_pCurrentWorld->numSectors; i++)
+    {
+        SithSector* pSector = &sithWorld_g_pCurrentWorld->aSectors[i];
+        if (sithIntersect_IsSphereInSector(pos, 0.0, pSector))
+            return pSector;
+    }
+    return NULL;
+}
+
+// Added: moves a watching game's free camera dist along dir, through
+// anything: walls, doors, players. Between the level's sectors it keeps the
+// last one it was in, and its view draws every sector in sight from there
+// (sithControl_SpectatorDrawAll), as noclip does.
+static void sithControl_SpectatorFlyTo(SithThing *player, const rdVector3 *dir, flex_t dist)
+{
+    if (!player->sector || dist <= 0.0)
+        return;
+    rdVector3 from = player->position;
+    rdVector_ScaleAdd3Acc(&player->position, dir, dist);
+    SithSector* pSector = sithControl_SectorAt(player->sector, &from, &player->position);
+    if (pSector && pSector != player->sector)
+        sithThing_SetSector(player, pSector, 0);
+}
+
+// Added: whether this frame's view, from pEye in pSector, is a watching
+// game's free camera outside the level's sectors (it flies through walls,
+// sithControl_SpectatorFlyTo): every sector in view is drawn then
+// (sithRender_Draw, as with noclip).
+int sithControl_SpectatorDrawAll(const rdVector3 *pEye, SithSector *pSector)
+{
+    if (!stdComm_WSRelay_bViewer || !sithMulti_IsSpectating() || sithControl_followingPlayer >= 0)
+        return 0;
+    return !pSector || !sithIntersect_IsSphereInSector(pEye, 0.0, pSector);
+}
+
 // Added: the host's slot in the match, -1 while it isn't in this game's
 // player list (or has no body in a level yet). A dedicated host has no body
 // to follow (its own is out of the world): the first player who has, then.
@@ -1697,6 +1783,14 @@ static int sithControl_SpectatorHost()
     return host >= 0 ? first : -1;
 }
 #endif
+
+// Added: the player a spectator's camera follows, -1 for the free camera.
+int sithControl_SpectatorFollowing()
+{
+    if (!sithMulti_IsSpectating())
+        return -1;
+    return sithControl_followingPlayer;
+}
 
 // Added: a spectator's camera (sithMulti_IsSpectating) on to the next player
 // in the match (dir 1) or the one before (-1). Past the last, the free
@@ -3147,5 +3241,13 @@ EMSCRIPTEN_KEEPALIVE const char* sithControl_WebFunctionName(int funcIdx)
     if (funcIdx < 0 || funcIdx >= INPUT_FUNC_MAX)
         return "";
     return sithControl_aFunctionStrs[funcIdx];
+}
+
+// Added: for the viewing page's box (index.html): whether the player is
+// typing (a message to the players, or the console), when every key is
+// theirs. Otherwise H shows or hides the box's Controls.
+EMSCRIPTEN_KEEPALIVE int sithControl_WebTyping()
+{
+    return (jkHud_bChatOpen || jkQuakeConsole_bOpen) ? 1 : 0;
 }
 #endif // ARCH_WASM
