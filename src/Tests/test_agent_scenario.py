@@ -150,6 +150,16 @@ class ScenarioTests(unittest.TestCase):
         self.assertFalse(self.tool.mismatches({'player': {'position': [0, 2, 3]}},
                                               {'player.position.1': {'min': 1, 'max': 3}}))
 
+    def test_inventory_bins_are_addressed_by_number(self):
+        state = {'player': {'weapon': 7, 'inventory': {'7': 1, '15': 30, '60': 0}, 'orientationPYR': [0, 90, 0]}}
+        self.tool.validate_expect({'player.inventory.7': 1, 'player.inventory.15': {'min': 1}})
+        self.assertFalse(self.tool.mismatches(state, {'player.inventory.7': 1, 'player.inventory.15': {'min': 1},
+                                                      'player.weapon': 7, 'player.orientationPYR.1': {'min': 89}}))
+        self.assertTrue(self.tool.mismatches(state, {'player.inventory.60': {'min': 1}}))
+        missing = self.tool.mismatches(state, {'player.inventory.8': 0})
+        self.assertTrue(missing and missing[0]['missing'])  # an unregistered bin is absent, not zero
+        self.assertTrue(self.tool.mismatches({'player': {'inventory': None}}, {'player.inventory.7': 1}))
+
     def test_real_protocol_scenario_checks_movement_and_clean_shutdown(self):
         result, runtime = self.run_fixture(self.args())
         self.assertEqual(result['status'], 'passed')

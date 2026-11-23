@@ -8,6 +8,7 @@
 #include "Platform/std3D.h"
 #include "Win95/Window.h"
 #include "World/sithWorld.h"
+#include "Primitives/rdMatrix.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -194,7 +195,30 @@ static void state_response(const stdAgentCommand* command, uint64_t now)
         fputs(",\"velocity\":", file);
         if (player->moveType == SITH_MT_PHYSICS) json_vector(file, &player->physicsParams.vel); else fputs("null", file);
         fputs(",\"health\":", file); json_number(file, player->actorParams.health);
-        fputs(",\"headPYR\":", file); json_vector(file, &player->actorParams.headPYR); fputc('}', file);
+        fputs(",\"headPYR\":", file); json_vector(file, &player->actorParams.headPYR);
+        /* The body's own pitch, yaw and roll in degrees, as JKL thing orientations
+           write them: yaw 0 looks along +y and a positive yaw turns left. */
+        rdVector3 bodyPYR;
+        rdMatrix_ExtractAngles34(&player->orient, &bodyPYR);
+        fputs(",\"orientationPYR\":", file); json_vector(file, &bodyPYR);
+        /* Read-only inventory: the selected weapon bin and the amount in every
+           registered bin, keyed by bin number (items.dat). The same rule as the
+           player thing applies: only follow a player record inside the table. */
+        SithPlayer* info = player->actorParams.pPlayer;
+        if (array_member(info, jkPlayer_playerInfos, JKPLAYER_NUM_INFOS, sizeof(SithPlayer))) {
+            fprintf(file, ",\"weapon\":%d,\"inventory\":{", info->curWeaponID);
+            int firstBin = 1;
+            const int bins = (int)(sizeof(info->aItems)/sizeof(info->aItems[0])) < SITHBIN_NUMBINS
+                ? (int)(sizeof(info->aItems)/sizeof(info->aItems[0])) : SITHBIN_NUMBINS;
+            for (int bin = 0; bin < bins; ++bin) {
+                if (!(sithInventory_g_aTypes[bin].flags & SITHINVENTORY_TYPE_REGISTERED)) continue;
+                fprintf(file, "%s\"%d\":", firstBin ? "" : ",", bin);
+                json_number(file, info->aItems[bin].amount);
+                firstBin = 0;
+            }
+            fputc('}', file);
+        } else fputs(",\"weapon\":null,\"inventory\":null", file);
+        fputc('}', file);
     } else fputs("null", file);
     fputc('}', file);
     int failed = ferror(file);

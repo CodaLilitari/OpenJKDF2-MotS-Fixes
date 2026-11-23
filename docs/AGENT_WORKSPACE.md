@@ -136,9 +136,21 @@ for short presses, periodic input commands for an intentional longer hold, and
 
 `state` returns the current GUI/menu/level flags, monotonic and game time,
 held inputs, window sizes, and a player snapshot when the current world is
-valid. The snapshot includes position, velocity, health, sector, thing ID and
-head orientation. During loads or states without a valid player, `player` is
-`null`. Test the availability flags rather than assuming every query is in play.
+valid. The snapshot includes position, velocity, health, sector, thing ID,
+head orientation (`headPYR`, the look pitch), the body's orientation
+(`orientationPYR`: pitch, yaw and roll in degrees as a JKL Thing writes them,
+so yaw 0 looks along +y and a positive yaw turns left), the selected weapon bin
+(`weapon`) and the amount in every registered inventory bin (`inventory`, an
+object keyed by bin number as in `misc/items.dat`: in Jedi Knight `"7"` is the
+rail detonator, `"15"` rail charges, `"60"` shields). `weapon` and `inventory`
+are `null` when the player has no player record. During loads or states without
+a valid player, `player` is `null`. Test the availability flags rather than
+assuming every query is in play.
+
+Every field is read from the running game; nothing in the reply changes it.
+`orientationPYR` lets a script turn to a bearing without walking to measure
+one, which also works in water and against a wall. The inventory makes a pickup
+assertable: compare a bin before and after walking over an item.
 
 `capture` writes `agent/frame-ID.ppm` only after a rendered frame is read and
 the file is complete. Its response names the relative file, dimensions, frame

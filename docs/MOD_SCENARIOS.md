@@ -140,10 +140,13 @@ engine units from an earlier checkpoint's player position. Use a small `max`
 tolerance to check restoration after an ordinary save/load sequence. The tool
 never restores the checkpoint itself.
 
-The current state interface does not expose ammunition, inventory, COG variables,
-menu text, active enemy counts, or the origin of a selected resource. Check
-screenshots where those observations matter. `headPYR` is head orientation;
-`thingCapacity` is array capacity.
+Inventory bins are keyed by number, so `"player.inventory.7": 1` asserts that a
+Jedi Knight player holds the rail detonator and `"player.inventory.60": {"min": 1}`
+that shields are up; `"player.weapon"` is the selected weapon bin. The state
+interface does not expose COG variables, menu text, active enemy counts, or the
+origin of a selected resource. Check screenshots where those observations
+matter. `headPYR` is the look pitch; `orientationPYR` is the body's pitch, yaw
+and roll; `thingCapacity` is array capacity.
 
 ### Loading and bounded retries
 
