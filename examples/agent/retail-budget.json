@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "name": "JK Nar Shaddaa retail draw budget along the opening route",
+  "launch": {
+    "game": "jk",
+    "episode": "jk1",
+    "map": "01narshadda.jkl"
+  },
+  "steps": [
+    {
+      "op": "wait",
+      "name": "level-ready",
+      "expect": {
+        "levelActive": true,
+        "menuActive": false,
+        "paused": false,
+        "world": "01narshadda.jkl",
+        "player": {"notNull": true},
+        "render": {"notNull": true}
+      },
+      "timeout": 60,
+      "stableFor": 0.2,
+      "retryTap": {"key": "Enter", "seconds": 0.1, "every": 1}
+    },
+    {
+      "op": "assert",
+      "name": "spawn-room-light",
+      "expect": {"player.sectorLight.ambient": {"min": 0, "max": 1}, "player.sectorLight": {"notNull": true}}
+    },
+    {"op": "tap", "name": "walk", "key": "Up", "seconds": 1.5},
+    {"op": "tap", "name": "look-around", "key": "Left", "seconds": 1.0},
+    {"op": "sleep", "name": "settle", "seconds": 0.3},
+    {
+      "op": "assert",
+      "name": "within-retail-draw-limits",
+      "expect": {
+        "render.framesOverRetailSectors": 0,
+        "render.framesOverRetailAlpha": 0,
+        "render.peakVisibleSectors": {"min": 1, "max": 128},
+        "render.retailLimits.visibleSectors": 128
+      }
+    },
+    {"op": "checkpoint", "name": "after-route"}
+  ]
+}

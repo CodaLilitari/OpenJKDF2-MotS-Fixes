@@ -23,6 +23,45 @@ static float pointerX, pointerY;
 static stdAgentCommand pendingCapture;
 static uint64_t captureDeadline, presentedFrames;
 
+/* Retail JK 1.01 draws at most 128 sectors and 32 translucent portal faces a
+   frame and leaves the rest of the frame black; this engine's limits can be
+   higher, so a level that is fine here can fail in retail. Each presented world
+   frame's counts are sampled here, read-only, with peaks and the number of
+   frames over the retail limits since the level last loaded. */
+#define STDAGENT_RETAIL_VISIBLE_SECTORS 128
+#define STDAGENT_RETAIL_ALPHA_ADJOINS 32
+static struct {
+    const void* world;
+    uint32_t lastGameTimeMs;
+    int unloaded;
+    uint64_t frames, framesOverRetailSectors, framesOverRetailAlpha, framesAtEngineLimit;
+    int visibleSectors, alphaAdjoins, peakVisibleSectors, peakAlphaAdjoins;
+} renderStats;
+
+static void sample_render_stats(void)
+{
+    SithWorld* world = sithWorld_g_pCurrentWorld;
+    if (!(sith_bOpen && sithWorld_bLoaded && world)) { renderStats.unloaded = 1; return; }
+    if (!jkMain_bLevelActive || jkGuiRend_IsMenuActive()) return;
+    /* Start over for another world, after an unload, or when game time runs
+       backwards: a reload or a restored save can reuse the world's address. */
+    const uint32_t gameTimeMs = sithTime_g_msecGameTime;
+    if (renderStats.world != (const void*)world || renderStats.unloaded || gameTimeMs < renderStats.lastGameTimeMs) {
+        memset(&renderStats, 0, sizeof(renderStats));
+        renderStats.world = world;
+    }
+    renderStats.lastGameTimeMs = gameTimeMs;
+    const int sectors = sithRender_g_numVisibleSectors, alpha = sithRender_numAlphaAdjoins;
+    ++renderStats.frames;
+    renderStats.visibleSectors = sectors;
+    renderStats.alphaAdjoins = alpha;
+    if (sectors > renderStats.peakVisibleSectors) renderStats.peakVisibleSectors = sectors;
+    if (alpha > renderStats.peakAlphaAdjoins) renderStats.peakAlphaAdjoins = alpha;
+    if (sectors > STDAGENT_RETAIL_VISIBLE_SECTORS) ++renderStats.framesOverRetailSectors;
+    if (alpha > STDAGENT_RETAIL_ALPHA_ADJOINS) ++renderStats.framesOverRetailAlpha;
+    if (sectors >= SITH_MAX_VISIBLE_SECTORS || alpha >= SITH_MAX_VISIBLE_ALPHA_SURFACES) ++renderStats.framesAtEngineLimit;
+}
+
 int stdAgent_IsActive(void) { return active; }
 int stdAgent_IsQuitRequested(void) { return quitRequested; }
 
@@ -181,6 +220,19 @@ static void state_response(const stdAgentCommand* command, uint64_t now)
         json_name(file, world->map_jkl_fname, sizeof(world->map_jkl_fname));
         fprintf(file, ",\"thingCapacity\":%d,\"sectorCount\":%d", world->numThingsLoaded, world->numSectors);
     } else fputs("null,\"thingCapacity\":null,\"sectorCount\":null", file);
+    /* The last presented world frame's draw counts and their peaks since this
+       world loaded, against retail JK 1.01's limits and this build's own. */
+    if (worldReady && renderStats.world == (const void*)world && renderStats.frames) {
+        fprintf(file, ",\"render\":{\"frames\":%llu,\"visibleSectors\":%d,\"alphaAdjoins\":%d,\"peakVisibleSectors\":%d,"
+            "\"peakAlphaAdjoins\":%d,\"framesOverRetailSectors\":%llu,\"framesOverRetailAlpha\":%llu,\"framesAtEngineLimit\":%llu,"
+            "\"retailLimits\":{\"visibleSectors\":%d,\"alphaAdjoins\":%d},\"engineLimits\":{\"visibleSectors\":%d,\"alphaAdjoins\":%d}}",
+            (unsigned long long)renderStats.frames, renderStats.visibleSectors, renderStats.alphaAdjoins,
+            renderStats.peakVisibleSectors, renderStats.peakAlphaAdjoins,
+            (unsigned long long)renderStats.framesOverRetailSectors, (unsigned long long)renderStats.framesOverRetailAlpha,
+            (unsigned long long)renderStats.framesAtEngineLimit,
+            STDAGENT_RETAIL_VISIBLE_SECTORS, STDAGENT_RETAIL_ALPHA_ADJOINS,
+            (int)SITH_MAX_VISIBLE_SECTORS, (int)SITH_MAX_VISIBLE_ALPHA_SURFACES);
+    } else fputs(",\"render\":null", file);
     fputs(",\"player\":", file);
     /* Loads and modal GUI draws can reenter the event pump. Never follow a
        previous world's player pointer, even if it has not yet been cleared. */
@@ -192,6 +244,15 @@ static void state_response(const stdAgentCommand* command, uint64_t now)
             sector = (int)(((uintptr_t)player->sector - (uintptr_t)world->aSectors)/sizeof(SithSector));
         fprintf(file, "{\"thingId\":%u,\"signature\":%u,\"sector\":%d,\"position\":", player->idx, player->signature, sector);
         json_vector(file, &player->position);
+        /* The player's sector light: a model is lit by its sector's ambient, so a
+           level whose rooms bake to different ambients shows it here. */
+        if (sector >= 0) {
+            const SithSector* room = &world->aSectors[sector];
+            fputs(",\"sectorLight\":{\"ambient\":", file); json_number(file, room->ambientLight);
+            fputs(",\"extraLight\":", file); json_number(file, room->extraLight);
+            fputs(",\"tint\":", file); json_vector(file, &room->tint);
+            fputc('}', file);
+        } else fputs(",\"sectorLight\":null", file);
         fputs(",\"velocity\":", file);
         if (player->moveType == SITH_MT_PHYSICS) json_vector(file, &player->physicsParams.vel); else fputs("null", file);
         fputs(",\"health\":", file); json_number(file, player->actorParams.health);
@@ -299,6 +360,7 @@ void stdAgent_BeforeSwap(void)
 {
     if (!active) return;
     ++presentedFrames;
+    sample_render_stats();
     if (!pendingCapture.id) return;
     unsigned char* pixels = NULL; int width = 0, height = 0;
     int ok = 0;

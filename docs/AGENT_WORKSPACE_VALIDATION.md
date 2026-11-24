@@ -143,3 +143,45 @@ press depends on scene content, bindings, load, and frame cadence. Captures
 include the real HUD/menus and may catch an intermediate frame during a
 transition; callers must wait for the state they intend to inspect. There is
 no frame stepping, teleporting, invulnerability, or simulation override.
+
+## Render statistics and sector light — 2026-11-24
+
+This increment adds two read-only parts to `state`: `render`, the per-frame
+sector and translucent-portal counts against retail JK 1.01's limits, sampled
+in the existing pre-swap hook, and `player.sectorLight`. It changes no
+rendering, physics, COG, game-time, save or network code. The build and tools
+were Ubuntu 24.04, GCC 13.3 and CMake 3.28.3, with Xvfb and Mesa software
+OpenGL for the live runs.
+
+| Check | Observed result |
+| --- | --- |
+| Host regression gate | All 15 groups passed, on the final source |
+| Native agent tests | All 3 groups passed with ASan and UBSan |
+| Python suites | Workspace 22, scenario 15 (one new), report 21: all passed |
+| Included recipe `examples/agent/retail-budget.json` | Passes the scenario schema check in the suite |
+
+The new scenario test asserts that a frame over 128 sectors fails a route that
+this engine drew, that a range on `player.sectorLight.ambient` works, and that
+a comparison against a `null` `render` fails rather than passing on absence.
+
+**Live runs.** The level was Lumen Cistern, a 185-room multiplayer deathmatch level in
+progress, staged as a single-player test copy whose player start had
+been moved, run through an external scenario runner on this binary
+(SHA-256 begins `a623293d2ed214b3`). Each run waited for play, turned the
+player in place for six seconds, and asserted the retail limits.
+
+| Start | Frames | Peak sectors | Peak translucent faces | Frames over retail | `sectorLight` |
+| --- | --- | --- | --- | --- | --- |
+| A main-hall gallery | 290 | 101 | 16 | 0 and 0 | ambient 0.684, extra 0.05, tint 1, 1, 1 |
+| The water's edge | 180 | 101 | 16 | 0 and 0 | ambient 0.0505, extra 0, tint 1, 1, 1 |
+
+Both `sectorLight` rows match the values in the level file. The level editor
+RED computes the level's worst frame as 101 rooms with its own retail-model
+sweep (`renderBudget`), from different standing points; the two agree on the
+peak. `framesAtEngineLimit` stayed 0.
+
+**Not run live here.** The included recipe against the stock first level
+(the stock single-player episode was not in this workspace), a reload or a
+restored save (the counts start over when the world changes, after an unload,
+or when game time runs backwards), MotS, and any frame actually over a retail
+limit: the over-limit path is covered by the scenario test only.

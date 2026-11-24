@@ -142,7 +142,15 @@ never restores the checkpoint itself.
 
 Inventory bins are keyed by number, so `"player.inventory.7": 1` asserts that a
 Jedi Knight player holds the rail detonator and `"player.inventory.60": {"min": 1}`
-that shields are up; `"player.weapon"` is the selected weapon bin. The state
+that shields are up; `"player.weapon"` is the selected weapon bin.
+
+For a level meant for retail JK, `"render.framesOverRetailSectors": 0` and
+`"render.framesOverRetailAlpha": 0` at the end of a route assert that no frame
+on the way drew more than retail's 128 sectors or 32 translucent portal faces
+(retail would have left the rest black), and `"render.peakVisibleSectors"`
+gives the margin. `"player.sectorLight.ambient"` is the light the game gives a
+model in the player's sector. [`examples/agent/retail-budget.json`](../examples/agent/retail-budget.json)
+walks forward and checks both. The state
 interface does not expose COG variables, menu text, active enemy counts, or the
 origin of a selected resource. Check screenshots where those observations
 matter. `headPYR` is the look pitch; `orientationPYR` is the body's pitch, yaw

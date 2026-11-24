@@ -152,6 +152,25 @@ Every field is read from the running game; nothing in the reply changes it.
 one, which also works in water and against a wall. The inventory makes a pickup
 assertable: compare a bin before and after walking over an item.
 
+The player snapshot also carries the light of the sector it stands in
+(`sectorLight`: `ambient`, `extraLight` and `tint`). A Thing's model is lit by
+its sector's ambient light, so a level whose rooms bake to different ambients
+lights the same model differently from room to room; this shows the value the
+game is using.
+
+`render` reports what the renderer drew in the last presented world frame:
+`visibleSectors` and `alphaAdjoins` (translucent portal faces), their peaks
+since the level last loaded (a reload or a restored save starts them over), how
+many frames went over the retail limits
+(`framesOverRetailSectors`, `framesOverRetailAlpha`) and how many reached this
+build's own caps (`framesAtEngineLimit`), with both sets of limits. Retail
+JK 1.01 draws at most 128 sectors and 32 translucent portal faces a frame and
+leaves the rest of the frame black; this engine's caps can be far higher, so a
+level can look complete here and black in retail. Assert
+`"render.framesOverRetailSectors": 0` after walking a route to check it in the
+same run. Frames are counted only while a world is active and no menu is open;
+`render` is `null` before the first such frame.
+
 `capture` writes `agent/frame-ID.ppm` only after a rendered frame is read and
 the file is complete. Its response names the relative file, dimensions, frame
 counter and monotonic timestamp. Files are new and never silently overwritten.

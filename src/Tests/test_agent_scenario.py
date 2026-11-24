@@ -160,6 +160,26 @@ class ScenarioTests(unittest.TestCase):
         self.assertTrue(missing and missing[0]['missing'])  # an unregistered bin is absent, not zero
         self.assertTrue(self.tool.mismatches({'player': {'inventory': None}}, {'player.inventory.7': 1}))
 
+    def test_render_budget_and_sector_light_are_assertable(self):
+        state = {'render': {'frames': 240, 'visibleSectors': 96, 'alphaAdjoins': 12, 'peakVisibleSectors': 131,
+                            'peakAlphaAdjoins': 17, 'framesOverRetailSectors': 3, 'framesOverRetailAlpha': 0,
+                            'framesAtEngineLimit': 0, 'retailLimits': {'visibleSectors': 128, 'alphaAdjoins': 32},
+                            'engineLimits': {'visibleSectors': 1024, 'alphaAdjoins': 1024}},
+                 'player': {'sectorLight': {'ambient': 0.684, 'extraLight': 0, 'tint': [0, 0, 0]}}}
+        budget = {'render.framesOverRetailSectors': 0, 'render.framesOverRetailAlpha': 0,
+                  'render.peakVisibleSectors': {'max': 128}}
+        self.tool.validate_expect(budget)
+        failed = {row['field'] for row in self.tool.mismatches(state, budget)}
+        # A frame over retail's 128 sectors fails the route even though this engine drew it.
+        self.assertEqual(failed, {'render.framesOverRetailSectors', 'render.peakVisibleSectors'})
+        self.assertFalse(self.tool.mismatches(state, {'render.framesOverRetailAlpha': 0,
+                                                      'render.retailLimits.visibleSectors': 128,
+                                                      'player.sectorLight.ambient': {'min': 0.6, 'max': 0.7}}))
+        # Before the first world frame render is null: a comparison fails rather than passing on absence.
+        self.assertTrue(self.tool.mismatches({'render': None}, {'render.framesOverRetailSectors': 0}))
+        example = json.loads((ROOT / 'examples' / 'agent' / 'retail-budget.json').read_text())
+        self.tool.validate_scenario(example)
+
     def test_real_protocol_scenario_checks_movement_and_clean_shutdown(self):
         result, runtime = self.run_fixture(self.args())
         self.assertEqual(result['status'], 'passed')
