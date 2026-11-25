@@ -1,5 +1,6 @@
 #include "sithMain.h"
 #include "Main/stdCapture.h"
+#include "Engine/sithIntersect.h"
 
 #include "Main/jkGame.h"
 #include "Main/Main.h"
@@ -186,6 +187,9 @@ int sithOpenMulti(char *fpath)
 
 int sithOpen()
 {
+#ifdef SITH_FLOOR_MISS_CACHE
+    sithIntersect_OpenFloorMissCache();
+#endif
     jkPlayer_currentTickIdx = 0;
     sithRender_lastRenderTick = 1;
     sithWorld_ResetRenderState(sithWorld_g_pCurrentWorld);
@@ -204,6 +208,9 @@ int sithOpen()
 
 void sithClose()
 {
+#ifdef SITH_FLOOR_MISS_CACHE
+    sithIntersect_CloseFloorMissCache();
+#endif
     if ( sith_bOpen )
     {
         sithSoundMixer_StopSong();
@@ -235,6 +242,9 @@ int sithMain_tickEndMs;
 // MOTS altered
 int sithUpdate()
 {
+#ifdef SITH_FLOOR_MISS_CACHE
+    sithIntersect_AdvanceFloorMissCache();
+#endif
 #if 0
     if (sithWorld_g_pCurrentWorld) {
         for (int i = 0; i < sithWorld_g_pCurrentWorld->numKeyframes; i++) {

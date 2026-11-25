@@ -100,3 +100,7 @@ in the same host group. The
 host workflow also runs on `agent/**` branch pushes. See
 [the workspace guide](../../docs/AGENT_WORKSPACE.md) for actual game launches,
 which are separate from this asset-free gate.
+
+## Exact floor-query cache
+
+The optional [exact floor-query cache](../../docs/FLOOR_MISS_CACHE.md) has a standalone synthetic regression. Run `python3 -B src/Tests/run_floor_miss_cache_test.py` from the source root.
