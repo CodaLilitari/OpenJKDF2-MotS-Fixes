@@ -70,6 +70,7 @@
 #include "Dss/jkDSS.h"
 #include "Main/InstallHelper.h"
 #include "Main/stdCapture.h"
+#include "Main/stdAgent.h"
 #include "Main/stdAutostartCharacter.h"
 #include "sithCvar.h"
 
@@ -408,7 +409,11 @@ int Main_Startup(const char *cmdline)
         }
     }
     stdStartup(&hs); // Added
-    if (!stdCapture_IsActive()) InstallHelper_SetCwd(); // Capture uses only its explicit staged CWD.
+    if (!stdCapture_IsActive()
+#ifdef OPENJKDF2_AGENT_HOOKS
+        && !stdAgent_IsActive()
+#endif
+    ) InstallHelper_SetCwd(); // Explicit capture/agent sessions retain their private staged CWD.
 
     wuRegistry_Startup(HKEY_LOCAL_MACHINE, "Software\\LucasArts Entertainment Company\\JediKnight\\v1.0", (BYTE*)"0.1");
     //stdStartup(&hs); // Moved
@@ -791,6 +796,14 @@ void Main_ParseCmdLine(char *cmdline)
         {
             if (!stdCapture_IsActive()) { fprintf(stderr, "capture: missing or invalid request\n"); exit(6); }
             Main_bNoHUD = 1;
+        }
+        else if (!__strcmpi(pArgTok, "-agent") || !__strcmpi(pArgTok, "/agent"))
+        {
+#ifdef OPENJKDF2_AGENT_HOOKS
+            if (!stdAgent_IsActive()) { fprintf(stderr, "agent: missing or invalid private session\n"); exit(6); }
+#else
+            fprintf(stderr, "agent: this build does not include OPENJKDF2_AGENT_HOOKS\n"); exit(6);
+#endif
         }
         else if (!__strcmpi(pArgTok, "-verboseNetworking") || !__strcmpi(pArgTok, "/verboseNetworking") )
         {

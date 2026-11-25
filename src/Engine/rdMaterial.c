@@ -266,7 +266,7 @@ int rdMaterial_LoadEntry_Common(char *mat_fpath, rdMaterial *material, int creat
         // Added: reject bad/short headers before their mip count indexes fixed arrays.
         if (!rdMaterial_ReadExact(rdroid_g_pHS->fileRead, mat_file_, &tex_header_1, sizeof(tex_header_1)) ||
             !rdMaterial_ValidTextureLayout(tex_header_1.width, tex_header_1.height,
-                tex_header_1.num_mipmaps, sizeof(material->textures[0].texture_struct) / sizeof(material->textures[0].texture_struct[0]))) {
+                tex_header_1.num_mipmaps, 32)) {
             stdPlatform_Printf("OpenJKDF2: Material `%s` texture %d has a short or invalid header!\n", mat_fpath, tex_numa);
             rdroid_g_pHS->fileClose(mat_file_);
             return 0;
@@ -278,7 +278,8 @@ int rdMaterial_LoadEntry_Common(char *mat_fpath, rdMaterial *material, int creat
         texture->width_minus_1 = tex_header_1.width - 1;
         mipmap_num = 0;
         texture->height_minus_1 = tex_header_1.height - 1;
-        texture->num_mipmaps = tex_header_1.num_mipmaps;
+        texture->num_mipmaps = rdMaterial_ResidentMipCount(tex_header_1.width, tex_header_1.height,
+            tex_header_1.num_mipmaps, sizeof(texture->texture_struct) / sizeof(texture->texture_struct[0]));
         texture->color_transparent = tex_header_1.unk_10;
         format.width = tex_header_1.width;
         format.height = tex_header_1.height;
@@ -399,6 +400,20 @@ no_loading:
         ++texture_struct;
         if ( mipmap_num >= texture->num_mipmaps )
         {
+          // Extra disk levels are not exposed to the four-slot renderer. Consume
+          // every packed byte so the next cel/header or trailing palette aligns.
+          for (; mipmap_num < tex_header_1.num_mipmaps; ++mipmap_num) {
+              if (!format.width) format.width = 1;
+              if (!format.height) format.height = 1;
+              if (!rdMaterial_DiscardMip(rdroid_g_pHS->fileRead, mat_file__,
+                                        format.width, format.height, format.format.bpp)) {
+                  stdPlatform_Printf("OpenJKDF2: Material `%s` texture %d mip %u has a short or invalid discarded payload!\n", mat_fpath, tex_numa, mipmap_num);
+                  rdroid_g_pHS->fileClose(mat_file__);
+                  return 0;
+              }
+              format.width = (unsigned int)format.width >> 1;
+              format.height = (unsigned int)format.height >> 1;
+          }
           goto LABEL_21;
         }
       }
