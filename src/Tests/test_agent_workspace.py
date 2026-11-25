@@ -14,6 +14,7 @@ import time
 import unittest
 from contextlib import redirect_stdout
 from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/agent_workspace.py"
@@ -319,6 +320,34 @@ class WorkspaceTests(unittest.TestCase):
             if time.monotonic() >= deadline:
                 self.fail("owned descendant survived cleanup")
             time.sleep(.01)
+
+    def test_xvfb_requires_a_complete_display_line(self):
+        for label, writes, succeeds in (
+            ("split", [b"71", b"\n"], True),
+            ("truncated", [b"71"], False),
+            ("overlong", [b"1" * 33, b"\n"], False),
+        ):
+            with self.subTest(label=label):
+                directory = self.root / label
+                directory.mkdir()
+                fake = directory / "Xvfb"
+                fake.write_text(f"#!{sys.executable}\nimport os, sys, time\n"
+                                "fd = int(sys.argv[2])\n"
+                                f"for part in {writes!r}:\n"
+                                "    os.write(fd, part)\n"
+                                "    time.sleep(.05)\n"
+                                "os.close(fd)\n"
+                                "time.sleep(30)\n")
+                fake.chmod(0o700)
+                with patch.object(self.tool.shutil, "which", return_value=str(fake)):
+                    if succeeds:
+                        child, display = self.tool.start_xvfb(directory)
+                        self.addCleanup(self.tool.stop_child, child)
+                        self.assertEqual(display, ":71")
+                    else:
+                        with self.assertRaises(self.tool.AgentError):
+                            child, _ = self.tool.start_xvfb(directory)
+                            self.addCleanup(self.tool.stop_child, child)
 
     def test_signal_during_display_startup_stops_owned_child(self):
         import signal

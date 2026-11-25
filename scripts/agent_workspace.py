@@ -415,13 +415,13 @@ def start_xvfb(session, width=1024, height=768, *, interrupted=()):
             if not ready:
                 continue
             chunk = os.read(read_fd, 32)
-            if not chunk:
-                break
+            if not chunk or len(reported) + len(chunk) > 32:
+                raise AgentError("Xvfb returned an incomplete or oversized display line; inspect xvfb.log")
             reported += chunk
-        display = reported.strip().decode("ascii")
-        if not display.isdecimal() or child.poll() is not None:
+        display = reported[:-1]
+        if not display.isdigit() or child.poll() is not None:
             raise AgentError("Xvfb startup failed; inspect xvfb.log")
-        return child, ":" + display
+        return child, ":" + display.decode("ascii")
     except BaseException:
         if child:
             stop_child(child)
