@@ -34,11 +34,47 @@ static inline int rdMaterial_ReadPackedRows(rdMaterialReadFn readFn, intptr_t fi
     return 1;
 }
 
+/* The file may carry a full chain; resident arrays keep their legacy capacity. */
 static inline int rdMaterial_ValidTextureLayout(uint32_t width, uint32_t height,
                                                uint32_t mips, size_t maximumMips)
 {
     if (!width || !height || width > INT32_MAX || height > INT32_MAX || mips > maximumMips)
         return 0;
-    return !mips || (mips <= 32 && (width >> (mips - 1)) && (height >> (mips - 1)));
+    uint32_t longest = width > height ? width : height;
+    uint32_t levels = 1;
+    while (longest > 1) { longest >>= 1; ++levels; }
+    return mips <= levels;
+}
+
+/* Rasterizers shift both axes. Do not expose a resident zero-width/height mip. */
+static inline uint32_t rdMaterial_ResidentMipCount(uint32_t width, uint32_t height,
+                                                  uint32_t diskMips, size_t capacity)
+{
+    uint32_t count = 0;
+    while (count < diskMips && count < capacity && width && height) {
+        ++count;
+        width >>= 1;
+        height >>= 1;
+    }
+    return count;
+}
+
+/* Reading (rather than seeking) also detects a truncated discarded mip. */
+static inline int rdMaterial_DiscardMip(rdMaterialReadFn readFn, intptr_t file,
+                                       uint32_t width, uint32_t height, uint32_t bpp)
+{
+    unsigned char scratch[256];
+    if (!width || !height || (!bpp || bpp > 32 || bpp % 8)) return 0;
+    size_t bytesPerPixel = bpp / 8;
+    if (width > SIZE_MAX / bytesPerPixel) return 0;
+    size_t rowBytes = (size_t)width * bytesPerPixel;
+    if (height > SIZE_MAX / rowBytes) return 0;
+    size_t bytes = rowBytes * height;
+    while (bytes) {
+        size_t n = bytes < sizeof(scratch) ? bytes : sizeof(scratch);
+        if (!rdMaterial_ReadExact(readFn, file, scratch, n)) return 0;
+        bytes -= n;
+    }
+    return 1;
 }
 #endif
