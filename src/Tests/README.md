@@ -77,6 +77,13 @@ These source-level regressions and the synthetic EGL test do not launch the
 game or establish retail gameplay parity. They do not claim MotS runtime,
 multiplayer-session, ordinary screenshot-key, or Windows runtime coverage.
 
+The capture contract harness additionally covers explicit backend selection,
+observed graphics receipts, SDL failure paths and the offscreen GL loader policy.
+Its separate [real SDL offscreen check](../../docs/OFFSCREEN_CAPTURE.md#reproduce-the-graphics-check)
+requires SDL3 and GLEW development libraries and is not added to this
+submodule-free host gate. It exercises the shared production graphics boundary,
+GLSL drawing and exact PPM readback without launching a game.
+
 ## Test the runner itself
 
 ```sh
