@@ -14,6 +14,11 @@ extern stdCaptureRequest stdCapture_request;
 int stdCapture_IsRequested(void);
 int stdCapture_PreserveConsoleStreams(int argc, char** argv);
 int stdCapture_IsActive(void);
+const char* stdCapture_GraphicsBackend(void);
+const char* stdCapture_ExpectedVideoDriver(void);
+void stdCapture_ClearGraphics(void);
+int stdCapture_RecordGraphics(const char* driver, const char* sdlVersion,
+    const char* vendor, const char* renderer, const char* glVersion);
 void stdCapture_Trace(const char* message);
 int stdCapture_Parse(const char* text, stdCaptureRequest* request);
 int stdCapture_Init(int argc, char** argv);

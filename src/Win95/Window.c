@@ -44,6 +44,10 @@
 //#include <stropts.h>
 
 #include "SDL2_helper.h"
+#if !defined(TARGET_ANDROID) && !defined(TARGET_IOS) && !defined(ARCH_WASM) && !defined(RENDER_GL11)
+#include "Platform/SDL2/stdCaptureGraphics.h"
+#include "Platform/SDL2/stdCaptureGlLoader.h"
+#endif
 
 #ifdef TARGET_IOS
 #include "Platform/iOS/iosAngle.h"
@@ -1678,6 +1682,14 @@ void Window_RecreateSDL2Window()
     }
 #endif // TARGET_IOS
 
+#if !defined(TARGET_ANDROID) && !defined(TARGET_IOS) && !defined(ARCH_WASM) && !defined(RENDER_GL11)
+    if (stdCapture_IsActive()) {
+        if (!stdCapture_MakeCurrent(displayWindow, glWindowContext)) {
+            fprintf(stderr, "capture: %s\n", SDL_GetError());
+            stdCapture_Complete(0);
+        }
+    } else
+#endif
     SDL_GL_MakeCurrent(displayWindow, glWindowContext);
     SDL_GL_SetSwapInterval(jkPlayer_enableVsync); // Disable vsync
 #if !defined(TARGET_ANDROID) && !defined(TARGET_IOS)
@@ -1797,6 +1809,14 @@ int Window_Main_Linux(int argc, char** argv)
     // what iosAudioSession_Initialize() installs, so SDL leaves the session alone.
 #endif
 
+#if !defined(TARGET_ANDROID) && !defined(TARGET_IOS) && !defined(ARCH_WASM) && !defined(RENDER_GL11)
+    if (stdCapture_IsActive()) {
+        if (!stdCapture_InitVideo()) {
+            fprintf(stderr, "capture: %s\n", SDL_GetError());
+            return 6;
+        }
+    } else
+#endif
     SDL_Init(stdCapture_IsActive() ? SDL_INIT_VIDEO : SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD);
     stdCapture_CheckDeadline(SDL_GetTicks());
 
@@ -1856,7 +1876,10 @@ int Window_Main_Linux(int argc, char** argv)
 
     Window_RecreateSDL2Window();
 #if !defined(TARGET_ANDROID) && !defined(TARGET_IOS) && !defined(ARCH_WASM) && !defined(RENDER_GL11)
-    glewInit();
+    if (!stdCapture_InitGlLoader(NULL)) {
+        fprintf(stderr, "capture: offscreen OpenGL 3.3 functions could not be loaded\n");
+        return 6;
+    }
 #endif
     
     //SDL_RenderClear(displayRenderer);

@@ -63,6 +63,13 @@ alive; this does not reuse `Main_bHeadless`, which would destroy the GL context.
 The engine deadline is cooperative. It cannot interrupt a blocked driver, load,
 or script between event pumps. An outer process timeout remains mandatory.
 
+Linux capture also supports explicit [SDL offscreen capture](OFFSCREEN_CAPTURE.md)
+through EGL without a display server. Backend intent is separate from the
+unchanged capture-v1 request, and the sidecar records the initialized SDL driver,
+runtime SDL version and OpenGL vendor/renderer/version. Direct capture defaults
+to native SDL selection. The RED launcher keeps Xvfb as its default and requires
+a matching graphics report for its explicit offscreen mode.
+
 ## Camera, output and evidence
 
 The capture applies the declared position, orientation, sector and FOV after the
